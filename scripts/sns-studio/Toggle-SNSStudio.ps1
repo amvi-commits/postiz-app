@@ -13,6 +13,14 @@ function Get-SnsStudioUrl {
     }
 
     $config = ($configJson -join [Environment]::NewLine) | ConvertFrom-Json
+    $frontendUrl = [string]$config.services.postiz.environment.FRONTEND_URL
+    if (-not $frontendUrl) {
+        $frontendUrl = [string]$config.services.postiz.environment.MAIN_URL
+    }
+    if ($frontendUrl) {
+        return $frontendUrl.TrimEnd('/')
+    }
+
     $ports = @($config.services.postiz.ports)
     $webPort = $null
     $webHost = 'localhost'
