@@ -85,15 +85,30 @@ try {
         }
 
         if ($runningServices.Count -gt 0) {
-            Write-Host 'SNS Studioは起動中です。関連サービスを停止しています...'
-            & docker compose --project-directory $repoRoot -f $composeFile stop
-            if ($LASTEXITCODE -ne 0) {
-                throw 'SNS Studioのcomposeサービスを停止できませんでした。'
+            $existingUiReady = $false
+            try {
+                $existingResponse = Invoke-WebRequest -Uri $studioUrl -Method Get -MaximumRedirection 5 -TimeoutSec 8
+                $existingUiReady = ($existingResponse.StatusCode -ge 200 -and $existingResponse.StatusCode -lt 400)
+            }
+            catch {
+                $existingUiReady = $false
             }
 
-            Write-Host 'SNS Studioを停止しました。保存データはそのままです。' -ForegroundColor Green
-            Read-Host 'Enterキーを押すと閉じます'
-            exit 0
+            if ($existingUiReady) {
+                Write-Host "SNS Studioは起動済みです。管理画面を開きます: $studioUrl"
+                Start-Process -FilePath $studioUrl
+                $stopChoice = Read-Host '停止する場合は S を入力して Enter。管理画面を開いたまま閉じる場合は Enter'
+                if ($stopChoice -match '^(s|stop)$') {
+                    Write-Host 'SNS Studioのcomposeサービスを停止しています...'
+                    & docker compose --project-directory $repoRoot -f $composeFile stop
+                    if ($LASTEXITCODE -ne 0) {
+                        throw 'SNS Studioのcomposeサービスを停止できませんでした。'
+                    }
+                    Write-Host 'SNS Studioを停止しました。保存データはそのままです。' -ForegroundColor Green
+                    Read-Host 'Enterキーを押すと閉じます'
+                }
+                exit 0
+            }
         }
 
         Write-Host 'SNS Studioのcomposeサービスを起動しています...'
