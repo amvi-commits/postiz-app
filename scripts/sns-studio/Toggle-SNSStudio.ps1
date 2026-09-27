@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $composeFile = Join-Path $repoRoot 'docker-compose.yaml'
@@ -131,7 +131,7 @@ try {
         if ($runningServices.Count -gt 0) {
             $existingUiReady = $false
             try {
-                $existingResponse = Invoke-WebRequest -Uri $studioUrl -Method Get -MaximumRedirection 5 -TimeoutSec 8
+                $existingResponse = Invoke-WebRequest -Uri $studioUrl -Method Get -MaximumRedirection 5 -TimeoutSec 8 -UseBasicParsing
                 $existingUiReady = ($existingResponse.StatusCode -ge 200 -and $existingResponse.StatusCode -lt 400)
             }
             catch {
@@ -170,7 +170,7 @@ try {
     $webReady = $false
     do {
         try {
-            $response = Invoke-WebRequest -Uri $studioUrl -Method Get -MaximumRedirection 5 -TimeoutSec 8
+            $response = Invoke-WebRequest -Uri $studioUrl -Method Get -MaximumRedirection 5 -TimeoutSec 8 -UseBasicParsing
             $webReady = ($response.StatusCode -ge 200 -and $response.StatusCode -lt 400)
         }
         catch {
