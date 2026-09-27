@@ -56,6 +56,11 @@ import { FarcasterProvider } from '@gitroom/backend/services/auth/providers/farc
 import { WalletProvider } from '@gitroom/backend/services/auth/providers/wallet.provider';
 import { OauthProvider } from '@gitroom/backend/services/auth/providers/oauth.provider';
 import { StripeController } from '@gitroom/backend/api/routes/stripe.controller';
+import { SnsStudioController } from '@gitroom/backend/api/routes/sns-studio.controller';
+import { GoogleDriveStorageProvider } from '@gitroom/backend/services/sns-studio/google-drive.storage';
+import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-studio/google-drive.generation-provider';
+import { OpenAICaptionProvider } from '@gitroom/backend/services/sns-studio/openai-caption.provider';
+import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 
 const authenticatedController = [
   UsersController,
@@ -78,6 +83,7 @@ const authenticatedController = [
   OAuthAuthorizedController,
   AnnouncementsController,
   AdminController,
+  SnsStudioController,
 ];
 @Module({
   imports: [UploadModule],
@@ -125,6 +131,10 @@ const authenticatedController = [
     FarcasterProvider,
     WalletProvider,
     OauthProvider,
+    GoogleDriveStorageProvider,
+    GoogleDriveGenerationProvider,
+    OpenAICaptionProvider,
+    { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
   ],
   get exports() {
     return [...this.imports, ...this.providers];

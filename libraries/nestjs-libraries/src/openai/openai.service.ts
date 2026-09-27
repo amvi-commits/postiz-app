@@ -31,6 +31,25 @@ const ClipsPrompt = z.object({
 
 @Injectable()
 export class OpenaiService {
+  async generateInstagramCaption(sourceText: string, profile: Record<string, unknown> = {}) {
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY_NOT_CONFIGURED');
+    const completion = await openai.chat.completions.create(
+      {
+        model: 'gpt-4.1-mini',
+        max_completion_tokens: 600,
+        messages: [
+          {
+            role: 'system',
+            content: `Write one Instagram Reel caption in Japanese using the creator preferences below. Keep it under 2,200 characters, accurate to the supplied source, natural, and ready for the user to review. Do not invent claims, add disclosure-free endorsements, or include a publishing action. Return only the caption. Creator preferences: ${JSON.stringify(profile)}`,
+          },
+          { role: 'user', content: sourceText },
+        ],
+      },
+      { timeout: 60_000, maxRetries: 0 }
+    );
+    return (completion.choices[0]?.message?.content || '').trim().slice(0, 2200);
+  }
+
   // The model answers with line numbers and not times, so a clip can only
   // start and end where the transcript really has a boundary
   async pickClips(

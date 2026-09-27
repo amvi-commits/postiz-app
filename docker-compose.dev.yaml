@@ -27,6 +27,44 @@ services:
       - 6379:6379
     networks:
       - postiz-network
+  sns-instagram-worker:
+    build:
+      context: ./services/instagram-worker
+    restart: unless-stopped
+    environment:
+      IG_DATA_DIR: /data
+      IG_MEDIA_ROOT: /uploads
+      IG_CREDENTIALS_KEY: ${IG_CREDENTIALS_KEY:-}
+      SNS_STUDIO_SERVICE_TOKEN: ${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}
+      SNS_STUDIO_INSTAGRAM_MOCK: ${SNS_STUDIO_INSTAGRAM_MOCK:-false}
+    volumes:
+      - ./uploads:/uploads
+      - sns-instagram-data:/data
+    ports:
+      - 127.0.0.1:8001:8000
+    networks:
+      - postiz-network
+  sns-media-worker:
+    build:
+      context: ./services/media-worker
+    restart: unless-stopped
+    environment:
+      MEDIA_ROOT: /uploads
+      VOICEVOX_URL: http://voicevox:50021
+      SNS_STUDIO_SERVICE_TOKEN: ${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}
+    volumes:
+      - ./uploads:/uploads
+    ports:
+      - 127.0.0.1:8002:8001
+    depends_on:
+      - voicevox
+    networks:
+      - postiz-network
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-latest
+    restart: unless-stopped
+    networks:
+      - postiz-network
   postiz-pg-admin:
     # ref: https://hub.docker.com/r/dpage/pgadmin4/tags
     image: dpage/pgadmin4:latest
@@ -137,6 +175,8 @@ services:
 volumes:
   redisinsight:
   postgres-volume:
+    external: false
+  sns-instagram-data:
     external: false
 
 networks:

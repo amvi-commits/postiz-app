@@ -34,6 +34,17 @@ export const useMenuItem = () => {
 
   const firstMenu = [
     {
+      name: 'SNS Studio',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="21" height="21" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="18" height="18" rx="5" stroke="currentColor" strokeWidth="1.7" />
+          <path d="M8 15.5 11 12l2.5 2 3.5-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="8" cy="8" r="1" fill="currentColor" />
+        </svg>
+      ),
+      path: '/sns-studio',
+    },
+    {
       name: isGeneral ? t('calendar', 'Calendar') : t('launches', 'Launches'),
       icon: (
         <svg

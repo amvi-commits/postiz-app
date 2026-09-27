@@ -45,6 +45,20 @@ model Organization {
   webhooks            Webhooks[]
   oauthApp            OAuthApp[]
   oauthAuthorizations OAuthAuthorization[]
+  snsInstagramAccounts SnsInstagramAccount[]
+  snsStoryPools       SnsStoryPool[]
+  snsUrlLibrary       SnsUrlLibraryItem[]
+  snsContentInbox     SnsContentInboxItem[]
+  snsMediaAssets      SnsMediaAsset[]
+  snsEditingPresets   SnsEditingPreset[]
+  snsVariantPresets   SnsVariantPreset[]
+  snsAutomationRecipes SnsAutomationRecipe[]
+  snsPipelineRuns     SnsPipelineRun[]
+  snsPublishRecords   SnsPublishRecord[]
+  snsAnalyticsSnapshots SnsAnalyticsSnapshot[]
+  snsAppSettings      SnsAppSetting[]
+  snsVoicePresets     SnsVoicePreset[]
+  snsGenerationJobs   SnsGenerationJob[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1810,4 +1824,319 @@ model Announcement {
   description String
   color       AnnouncementColor @default(INFO)
   createdAt   DateTime          @default(now())
+}
+
+// SNS Studio's production pipeline is separate from Postiz scheduled posts.
+// Credentials and instagrapi sessions are held only in instagram-worker's encrypted store.
+model SnsInstagramAccount {
+  id                         String       @id @default(cuid())
+  organizationId              String
+  username                    String
+  status                      String       @default("NEEDS_USER_ACTION")
+  lastValidatedAt             DateTime?
+  lastPublishedAt             DateTime?
+  captionAIEnabled            Boolean      @default(false)
+  captionProfile              Json?
+  defaultStickerX             Float        @default(0.5)
+  defaultStickerY             Float        @default(0.5)
+  defaultStickerWidth         Float        @default(0.51)
+  defaultStickerHeight        Float        @default(0.26)
+  defaultStickerRotation      Float        @default(0)
+  defaultStoryPoolId          String?
+  archivedAt                  DateTime?
+  createdAt                   DateTime     @default(now())
+  updatedAt                   DateTime     @updatedAt
+  organization                Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  defaultStoryPool            SnsStoryPool? @relation("SnsDefaultStoryPool", fields: [defaultStoryPoolId], references: [id], onDelete: SetNull)
+  storyUsage                  SnsStoryPoolUsage[]
+  publishRecords              SnsPublishRecord[]
+
+  @@unique([organizationId, username])
+  @@index([organizationId, status])
+}
+
+model SnsStoryPool {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items          SnsStoryPoolItem[]
+  accounts       SnsInstagramAccount[] @relation("SnsDefaultStoryPool")
+  usage          SnsStoryPoolUsage[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, active])
+}
+
+model SnsStoryPoolItem {
+  id             String            @id @default(cuid())
+  poolId         String
+  mediaAssetId   String?
+  mediaPath      String
+  mediaType      String
+  urlLibraryId   String?
+  urlSnapshot    String?
+  position       Int               @default(0)
+  active         Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  pool           SnsStoryPool      @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  mediaAsset     SnsMediaAsset?    @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  urlLibrary     SnsUrlLibraryItem? @relation(fields: [urlLibraryId], references: [id], onDelete: SetNull)
+  usage          SnsStoryPoolUsage[]
+
+  @@index([poolId, active, position])
+}
+
+model SnsStoryPoolUsage {
+  id          String          @id @default(cuid())
+  accountId   String
+  poolId      String
+  itemId      String
+  cycle       Int
+  usedAt      DateTime        @default(now())
+  account     SnsInstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  pool        SnsStoryPool    @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  item        SnsStoryPoolItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, poolId, itemId, cycle])
+  @@index([accountId, poolId, cycle])
+}
+
+model SnsUrlLibraryItem {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  url            String
+  note           String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storyItems     SnsStoryPoolItem[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, active])
+}
+
+model SnsContentInboxItem {
+  id             String       @id @default(cuid())
+  organizationId String
+  driveFileId    String?
+  fileName       String
+  mediaType      String
+  sizeBytes      BigInt?
+  sourceCreatedAt DateTime?
+  status         String       @default("NEW")
+  previewUrl     String?
+  mediaAssetId   String?
+  recipeId       String?
+  errorCode      String?
+  errorMessage   String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  mediaAsset     SnsMediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, driveFileId])
+  @@index([organizationId, status, updatedAt])
+}
+
+model SnsMediaAsset {
+  id             String       @id @default(cuid())
+  organizationId String
+  source         String
+  storageKey     String
+  fileName       String
+  mimeType       String?
+  sizeBytes      BigInt?
+  width          Int?
+  height         Int?
+  duration       Float?
+  isOriginal     Boolean      @default(false)
+  isFinal        Boolean      @default(false)
+  publishedAt    DateTime?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storyItems     SnsStoryPoolItem[]
+  inboxItems     SnsContentInboxItem[]
+
+  @@index([organizationId, isFinal, createdAt])
+}
+
+model SnsEditingPreset {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  config         Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+}
+
+model SnsVariantPreset {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  count           Int          @default(1)
+  settings        Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+}
+
+model SnsAutomationRecipe {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  inputType      String
+  config         Json
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipelineRuns   SnsPipelineRun[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, active])
+}
+
+model SnsPipelineRun {
+  id             String       @id @default(cuid())
+  organizationId String
+  recipeId       String?
+  status         String       @default("NEW")
+  currentStep    String?
+  input          Json?
+  output         Json?
+  errorCode      String?
+  errorMessage   String?
+  approvedAt     DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recipe         SnsAutomationRecipe? @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  steps          SnsPipelineStep[]
+  publishRecords SnsPublishRecord[]
+
+  @@index([organizationId, status, updatedAt])
+}
+
+model SnsPipelineStep {
+  id             String       @id @default(cuid())
+  runId          String
+  name           String
+  status         String       @default("PENDING")
+  input          Json?
+  output         Json?
+  errorCode      String?
+  errorMessage   String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  run            SnsPipelineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, name])
+  @@index([runId, status])
+}
+
+model SnsPublishRecord {
+  id             String       @id @default(cuid())
+  organizationId String
+  accountId      String
+  pipelineRunId  String?
+  mediaId        String?
+  mediaPath      String?
+  postUrl        String?
+  publishType    String
+  status         String
+  trialReel      Boolean      @default(false)
+  caption        String?
+  publishedAt    DateTime?
+  errorCode      String?
+  errorMessage   String?
+  recipeName     String?
+  presetName     String?
+  variantSettings Json?
+  duration       Float?
+  rawResponse    Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account        SnsInstagramAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  pipelineRun    SnsPipelineRun? @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
+  snapshots      SnsAnalyticsSnapshot[]
+
+  @@index([organizationId, createdAt])
+  @@index([accountId, status, publishedAt])
+}
+
+model SnsAnalyticsSnapshot {
+  id              String       @id @default(cuid())
+  organizationId  String
+  publishRecordId String
+  capturedAt      DateTime     @default(now())
+  metrics         Json?
+  rawResponse     Json?
+  errorCode       String?
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publishRecord   SnsPublishRecord @relation(fields: [publishRecordId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, capturedAt])
+  @@index([publishRecordId, capturedAt])
+}
+
+model SnsAppSetting {
+  id             String       @id @default(cuid())
+  organizationId String
+  key            String
+  value          Json
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+}
+
+model SnsVoicePreset {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  slots          Json
+  ttsSettings    Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+}
+
+model SnsGenerationJob {
+  id             String       @id @default(cuid())
+  organizationId String
+  status         String       @default("NEW")
+  queuePath      String?
+  inputManifest  Json
+  resultManifest Json?
+  errorCode      String?
+  errorMessage   String?
+  submittedAt    DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, updatedAt])
 }

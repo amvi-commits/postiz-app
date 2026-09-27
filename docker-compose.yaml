@@ -1,6 +1,9 @@
 services:
   postiz:
-    image: ghcr.io/gitroomhq/postiz-app:latest
+    image: sns-studio/postiz:local
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     container_name: postiz
     restart: always
     environment:
@@ -8,7 +11,7 @@ services:
       MAIN_URL: 'http://localhost:4007'
       FRONTEND_URL: 'http://localhost:4007'
       NEXT_PUBLIC_BACKEND_URL: 'http://localhost:4007/api'
-      JWT_SECRET: 'random string that is unique to every install - just type random characters here!'
+      JWT_SECRET: '${JWT_SECRET:?Set JWT_SECRET in .env}'
       DATABASE_URL: 'postgresql://postiz-user:postiz-password@postiz-postgres:5432/postiz-db-local'
       REDIS_URL: 'redis://postiz-redis:6379'
       BACKEND_INTERNAL_URL: 'http://localhost:3000'
@@ -90,7 +93,7 @@ services:
       # SENTRY_SPOTLIGHT: '1'
 
       # === Misc Settings
-      OPENAI_API_KEY: ''
+      OPENAI_API_KEY: '${OPENAI_API_KEY:-}'
       # Only this OAuth client can receive verified user email claims via OIDC.
       OPENAI_OAUTH_CLIENT_ID: ''
       NEXT_PUBLIC_DISCORD_SUPPORT: ''
@@ -107,6 +110,17 @@ services:
       # === Developer Settings
       NX_ADD_PLUGINS: false
 
+      # SNS Studio local workers
+      INSTAGRAM_WORKER_URL: 'http://sns-instagram-worker:8000'
+      MEDIA_WORKER_URL: 'http://sns-media-worker:8001'
+      SNS_STUDIO_SERVICE_TOKEN: '${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}'
+      SNS_STUDIO_DATA_DIR: '/sns-studio-data'
+      SNS_STUDIO_GOOGLE_DRIVE_MOCK: '${SNS_STUDIO_GOOGLE_DRIVE_MOCK:-false}'
+      GOOGLE_DRIVE_CLIENT_ID: '${GOOGLE_DRIVE_CLIENT_ID:-}'
+      GOOGLE_DRIVE_CLIENT_SECRET: '${GOOGLE_DRIVE_CLIENT_SECRET:-}'
+      GOOGLE_DRIVE_REDIRECT_URI: '${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:4007/api/sns-studio/drive/callback}'
+      GOOGLE_DRIVE_TOKEN_KEY: '${GOOGLE_DRIVE_TOKEN_KEY:-}'
+
       # === Short Link Service Settings (Optional - leave blank if unused)
       # DUB_TOKEN: ""
       # DUB_API_ENDPOINT: "https://api.dub.co"
@@ -122,8 +136,10 @@ services:
     volumes:
       - postiz-config:/config/
       - postiz-uploads:/uploads/
+      - sns-studio-data:/sns-studio-data
+      - ./.env:/app/.env:ro
     ports:
-      - '4007:5000'
+      - '127.0.0.1:4007:5000'
     networks:
       - postiz-network
       - temporal-network
@@ -132,6 +148,61 @@ services:
         condition: service_healthy
       postiz-redis:
         condition: service_healthy
+      sns-instagram-worker:
+        condition: service_healthy
+      sns-media-worker:
+        condition: service_healthy
+    command: ["sh", "-c", "nginx && mkdir -p /uploads/sns-studio && chown 10002:10002 /uploads/sns-studio && pnpm dlx prisma@6.5.0 db push --schema ./libraries/nestjs-libraries/src/database/prisma/schema.prisma && pnpm --filter ./apps/backend run pm2 && pnpm --filter ./apps/frontend run pm2 && pnpm --filter ./apps/orchestrator run pm2 && pm2 logs"]
+
+  sns-instagram-worker:
+    build:
+      context: ./services/instagram-worker
+    container_name: sns-instagram-worker
+    restart: unless-stopped
+    environment:
+      IG_DATA_DIR: /data
+      IG_MEDIA_ROOT: /uploads
+      IG_CREDENTIALS_KEY: '${IG_CREDENTIALS_KEY:-}'
+      SNS_STUDIO_SERVICE_TOKEN: '${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}'
+      SNS_STUDIO_INSTAGRAM_MOCK: '${SNS_STUDIO_INSTAGRAM_MOCK:-false}'
+    volumes:
+      - sns-instagram-data:/data
+      - postiz-uploads:/uploads:ro
+    networks:
+      - postiz-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  sns-media-worker:
+    build:
+      context: ./services/media-worker
+    container_name: sns-media-worker
+    restart: unless-stopped
+    environment:
+      MEDIA_ROOT: /uploads
+      VOICEVOX_URL: http://voicevox:50021
+      SNS_STUDIO_SERVICE_TOKEN: '${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}'
+    volumes:
+      - postiz-uploads:/uploads
+    networks:
+      - postiz-network
+    depends_on:
+      - voicevox
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-latest
+    container_name: sns-studio-voicevox
+    restart: unless-stopped
+    networks:
+      - postiz-network
 
   postiz-postgres:
     image: postgres:17-alpine
@@ -269,6 +340,12 @@ volumes:
     external: false
 
   postiz-uploads:
+    external: false
+
+  sns-studio-data:
+    external: false
+
+  sns-instagram-data:
     external: false
 
 networks:
