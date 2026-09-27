@@ -56,6 +56,8 @@ try {
         throw "Docker Desktopが見つかりません: $dockerDesktop"
     }
 
+    $dockerEngineWasReady = $engineReady
+
     if (-not $engineReady) {
         Write-Host 'Docker Engineの起動を待っています...'
         $deadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
@@ -70,9 +72,31 @@ try {
         }
     }
 
-    Write-Host 'SNS Studioのcomposeサービスを起動しています...'
+    Write-Host 'SNS Studioの起動状態を確認しています...'
     Push-Location $repoRoot
     try {
+        $runningServices = @()
+        if ($dockerEngineWasReady) {
+            $runningServices = @(& docker compose --project-directory $repoRoot -f $composeFile ps --services --filter status=running)
+            if ($LASTEXITCODE -ne 0) {
+                throw 'SNS Studioの起動状態を確認できませんでした。'
+            }
+            $runningServices = @($runningServices | Where-Object { $_ -and $_.Trim() })
+        }
+
+        if ($runningServices.Count -gt 0) {
+            Write-Host 'SNS Studioは起動中です。関連サービスを停止しています...'
+            & docker compose --project-directory $repoRoot -f $composeFile stop
+            if ($LASTEXITCODE -ne 0) {
+                throw 'SNS Studioのcomposeサービスを停止できませんでした。'
+            }
+
+            Write-Host 'SNS Studioを停止しました。保存データはそのままです。' -ForegroundColor Green
+            Read-Host 'Enterキーを押すと閉じます'
+            exit 0
+        }
+
+        Write-Host 'SNS Studioのcomposeサービスを起動しています...'
         & docker compose --project-directory $repoRoot -f $composeFile up -d
         if ($LASTEXITCODE -ne 0) {
             throw 'docker compose up -d が失敗しました。'
@@ -107,7 +131,7 @@ try {
     Start-Process $studioUrl
 }
 catch {
-    Write-Host "起動できませんでした: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "SNS Studioを操作できませんでした: $($_.Exception.Message)" -ForegroundColor Red
     Read-Host 'Enterキーを押すと閉じます'
     exit 1
 }
