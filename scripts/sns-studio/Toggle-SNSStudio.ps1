@@ -18,7 +18,11 @@ function Get-SnsStudioUrl {
         $frontendUrl = [string]$config.services.postiz.environment.MAIN_URL
     }
     if ($frontendUrl) {
-        return $frontendUrl.TrimEnd('/')
+        $frontendUrl = $frontendUrl.TrimEnd('/')
+        if ($frontendUrl.EndsWith('/sns-studio', [StringComparison]::OrdinalIgnoreCase)) {
+            return $frontendUrl
+        }
+        return "$frontendUrl/sns-studio"
     }
 
     $ports = @($config.services.postiz.ports)
@@ -38,7 +42,7 @@ function Get-SnsStudioUrl {
         throw 'compose設定からPostiz Web UIの公開ポートを特定できませんでした。'
     }
 
-    return "http://${webHost}:$webPort"
+    return "http://${webHost}:$webPort/sns-studio"
 }
 
 function Open-SnsStudioBrowser {
