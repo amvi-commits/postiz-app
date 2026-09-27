@@ -33,6 +33,38 @@ function Get-SnsStudioUrl {
     return "http://${webHost}:$webPort"
 }
 
+function Open-SnsStudioBrowser {
+    $fallbackToDefault = $true
+    try {
+        $choice = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice' -ErrorAction Stop
+        $commandKey = 'Registry::HKEY_CLASSES_ROOT\' + $choice.ProgId + '\shell\open\command'
+        $openCommand = (Get-Item -LiteralPath $commandKey -ErrorAction Stop).GetValue('')
+        $match = [regex]::Match($openCommand, '^\s*"(?<exe>[^"]+\.exe)"|^\s*(?<exe>\S+\.exe)')
+        if ($match.Success) {
+            $browserPath = $match.Groups['exe'].Value
+            $browserName = [IO.Path]::GetFileName($browserPath)
+            $browserArguments = switch -Regex ($browserName) {
+                '^chrome\.exe$'  { "--new-window `"$studioUrl`""; break }
+                '^msedge\.exe$'  { "--new-window `"$studioUrl`""; break }
+                '^firefox\.exe$' { "-new-window `"$studioUrl`""; break }
+                default { $null }
+            }
+
+            if ($browserArguments) {
+                Start-Process -FilePath $browserPath -ArgumentList $browserArguments
+                $fallbackToDefault = $false
+            }
+        }
+    }
+    catch {
+        $fallbackToDefault = $true
+    }
+
+    if ($fallbackToDefault) {
+        Start-Process -FilePath $studioUrl
+    }
+}
+
 try {
     if (-not (Test-Path -LiteralPath $composeFile)) {
         throw "composeファイルが見つかりません: $composeFile"
@@ -96,7 +128,7 @@ try {
 
             if ($existingUiReady) {
                 Write-Host "SNS Studioは起動済みです。管理画面を開きます: $studioUrl"
-                Start-Process -FilePath $studioUrl
+                Open-SnsStudioBrowser
                 $stopChoice = Read-Host '停止する場合は S を入力して Enter。管理画面を開いたまま閉じる場合は Enter'
                 if ($stopChoice -match '^(s|stop)$') {
                     Write-Host 'SNS Studioのcomposeサービスを停止しています...'
@@ -143,7 +175,7 @@ try {
     }
 
     Write-Host "SNS Studioを開きます: $studioUrl"
-    Start-Process $studioUrl
+    Open-SnsStudioBrowser
 }
 catch {
     Write-Host "SNS Studioを操作できませんでした: $($_.Exception.Message)" -ForegroundColor Red
