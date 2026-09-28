@@ -753,6 +753,7 @@ export const SnsStudioCommonPublisher = ({
                       content: '',
                       hashtags: '',
                       scheduledAt: '',
+                      variantAssetId: '',
                     };
                     return (
                       <div
@@ -773,6 +774,32 @@ export const SnsStudioCommonPublisher = ({
                         </label>
                         {value.selected && (
                           <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            {mediaOptions.length > 1 && (
+                              <label className="grid gap-1 text-xs md:col-span-2">
+                                <span>加工バリエーション</span>
+                                <select
+                                  className={field}
+                                  value={value.variantAssetId}
+                                  onChange={(event) =>
+                                    updateDelivery(integration.id, {
+                                      variantAssetId: event.target.value,
+                                    })
+                                  }
+                                >
+                                  <option value="">
+                                    既定: {defaultMediaOption?.name || 'Default'}
+                                  </option>
+                                  {mediaOptions.map((option) => (
+                                    <option
+                                      key={option.sourceAssetId}
+                                      value={option.sourceAssetId}
+                                    >
+                                      {option.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            )}
                             <label className="grid gap-1 text-xs md:col-span-2">
                               <span>アカウント別投稿文</span>
                               <textarea
