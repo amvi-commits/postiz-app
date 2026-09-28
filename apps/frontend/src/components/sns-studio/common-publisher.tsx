@@ -67,6 +67,7 @@ type DeliveryState = OverrideState & {
 export type CommonPublishPrefill = {
   content?: string;
   sourceAssetId?: string;
+  defaultVariantAssetId?: string;
   media: {
     id: string;
     path: string;
@@ -136,7 +137,7 @@ export const SnsStudioCommonPublisher = ({
     if (activePrefill?.sourceAssetId) {
       options.push({
         sourceAssetId: activePrefill.sourceAssetId,
-        name: 'Default',
+        name: 'Original',
         media: activePrefill.media,
       });
     }
@@ -152,6 +153,12 @@ export const SnsStudioCommonPublisher = ({
     }
     return options;
   }, [activePrefill]);
+
+  const defaultMediaOption =
+    mediaOptions.find(
+      (option) =>
+        option.sourceAssetId === activePrefill?.defaultVariantAssetId
+    ) || mediaOptions[0];
 
   const groupedDestinations = useMemo(() => {
     const grouped = new Map<string, typeof destinations>();
@@ -173,10 +180,13 @@ export const SnsStudioCommonPublisher = ({
       commonHashtags: parseHashtags(commonHashtags),
       commonScheduledAt: commonScheduledAt ? dayjs(commonScheduledAt).toISOString() : null,
       originalAssetId: activePrefill?.sourceAssetId || null,
-      variants: mediaOptions.map((variant, index) => ({
+      variants: mediaOptions.map((variant) => ({
         mediaAssetId: variant.sourceAssetId,
         name: variant.name,
-        isDefault: index === 0,
+        isDefault:
+          variant.sourceAssetId ===
+          (activePrefill?.defaultVariantAssetId ||
+            activePrefill?.sourceAssetId),
       })),
       platformOverrides: Object.entries(platformOverrides)
         .filter(
@@ -222,6 +232,7 @@ export const SnsStudioCommonPublisher = ({
       commonHashtags,
       commonScheduledAt,
       activePrefill?.sourceAssetId,
+      activePrefill?.defaultVariantAssetId,
       mediaOptions,
       platformOverrides,
       deliveries,
@@ -243,6 +254,7 @@ export const SnsStudioCommonPublisher = ({
       content: '',
       hashtags: '',
       scheduledAt: '',
+      variantAssetId: '',
     };
     const content = account.content || platform.content || commonContent;
     const hashtags = account.hashtags
@@ -252,7 +264,12 @@ export const SnsStudioCommonPublisher = ({
         : parseHashtags(commonHashtags);
     const scheduledAt =
       account.scheduledAt || platform.scheduledAt || commonScheduledAt;
-    return { content, hashtags, scheduledAt };
+    return {
+      content,
+      hashtags,
+      scheduledAt,
+      variantAssetId: account.variantAssetId,
+    };
   };
 
   const updatePlatform = (
