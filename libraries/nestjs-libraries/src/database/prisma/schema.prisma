@@ -2007,6 +2007,7 @@ model SnsContentVariant {
   mediaAsset   SnsMediaAsset @relation("SnsContentVariantAsset", fields: [mediaAssetId], references: [id], onDelete: Restrict)
   deliveries   SnsDelivery[]
 
+  @@unique([contentId, mediaAssetId])
   @@index([contentId, isDefault])
   @@index([mediaAssetId])
 }
