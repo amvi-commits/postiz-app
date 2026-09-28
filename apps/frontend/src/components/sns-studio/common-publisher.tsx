@@ -545,7 +545,13 @@ export const SnsStudioCommonPublisher = ({
 
   const onPosted = async (result: {
     type: 'draft' | 'now' | 'schedule' | 'update';
-    items: Array<{ postId: string; integration: string; date: string }>;
+    items: Array<{
+      postId: string;
+      integration: string;
+      date: string;
+      content?: string;
+      settings?: Record<string, any>;
+    }>;
   }) => {
     if (!planId) return;
     const response = await fetch(
