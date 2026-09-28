@@ -5,7 +5,8 @@ import { useCalendar } from '@gitroom/frontend/components/launches/calendar.cont
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { SetSelectionModal } from '@gitroom/frontend/components/launches/calendar';
-import { AddEditModal, AddEditModalProps } from '@gitroom/frontend/components/new-launch/add.edit.modal';
+import { AddEditModal } from '@gitroom/frontend/components/new-launch/add.edit.modal';
+import type { AddEditModalProps } from '@gitroom/frontend/components/new-launch/add.edit.modal';
 import { ModalWrapperComponent } from '@gitroom/frontend/components/new-launch/modal.wrapper.component';
 
 export const NewPost = (props: {
