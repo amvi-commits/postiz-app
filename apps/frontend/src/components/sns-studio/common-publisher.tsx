@@ -140,7 +140,7 @@ export const SnsStudioCommonPublisher = ({
           <div>・投稿前のSNS別サーバー検証</div>
         </div>
         <p className="mt-3 text-xs text-textItemBlur">
-          SNS Studioの加工済み素材をこの投稿画面へ直接引き継ぐ処理、SNS単位・アカウント単位の投稿時刻上書き、承認ポリシーは次の共通基盤フェーズで接続します。
+          SNS Studio素材の直接引き継ぎまで接続済みです。SNS単位・アカウント単位の投稿時刻上書き、承認ポリシー、投稿上限・再投稿禁止期間は次の共通基盤フェーズで接続します。
         </p>
       </div>
     </section>
