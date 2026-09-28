@@ -1422,12 +1422,23 @@ export class SnsStudioController {
       if (makeDefault) {
         await tx.snsContentVariant.updateMany({ where: { contentId: id }, data: { isDefault: false } });
       }
-      return tx.snsContentVariant.create({
-        data: {
+      return tx.snsContentVariant.upsert({
+        where: {
+          contentId_mediaAssetId: {
+            contentId: id,
+            mediaAssetId,
+          },
+        },
+        create: {
           contentId: id,
           mediaAssetId,
           name: typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : 'Variant',
           isDefault: makeDefault,
+          metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
+        },
+        update: {
+          name: typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : undefined,
+          ...(makeDefault ? { isDefault: true } : {}),
           metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
         },
         include: {
