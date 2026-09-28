@@ -467,6 +467,8 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             postId: string;
             integration: string;
             date: string;
+            content?: string;
+            settings?: Record<string, any>;
           }> = [];
 
           for (const payload of payloads) {
@@ -477,11 +479,19 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             const created = await response.json().catch(() => []);
             if (Array.isArray(created)) {
               postedItems.push(
-                ...created.map((item: any) => ({
-                  postId: item.postId,
-                  integration: item.integration,
-                  date: payload.date,
-                }))
+                ...created.map((item: any) => {
+                  const source = payload.posts.find(
+                    (post: any) =>
+                      post.integration.id === item.integration
+                  );
+                  return {
+                    postId: item.postId,
+                    integration: item.integration,
+                    date: payload.date,
+                    content: source?.value?.[0]?.content,
+                    settings: source?.settings,
+                  };
+                })
               );
             }
           }
