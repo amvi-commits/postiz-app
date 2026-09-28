@@ -88,14 +88,19 @@ export const AddEditModal: FC<AddEditModalProps> = (props) => {
 
 export const AddEditModalInner: FC<AddEditModalProps> = (props) => {
   const existingData = useExistingData();
-  const { addOrRemoveSelectedIntegration, selectedIntegrations, integrations } =
-    useLaunchStore(
-      useShallow((state) => ({
-        integrations: state.integrations,
-        selectedIntegrations: state.selectedIntegrations,
-        addOrRemoveSelectedIntegration: state.addOrRemoveSelectedIntegration,
-      }))
-    );
+  const {
+    addOrRemoveSelectedIntegration,
+    addInternalValue,
+    selectedIntegrations,
+    integrations,
+  } = useLaunchStore(
+    useShallow((state) => ({
+      integrations: state.integrations,
+      selectedIntegrations: state.selectedIntegrations,
+      addOrRemoveSelectedIntegration: state.addOrRemoveSelectedIntegration,
+      addInternalValue: state.addInternalValue,
+    }))
+  );
 
   useEffect(() => {
     if (props?.set?.posts?.length) {
@@ -120,7 +125,29 @@ export const AddEditModalInner: FC<AddEditModalProps> = (props) => {
       for (const channel of props.selectedChannels) {
         const integration = integrations.find((i) => i.id === channel);
         if (integration) {
-          addOrRemoveSelectedIntegration(integration, props.selectedChannelSettings?.[channel] || {});
+          addOrRemoveSelectedIntegration(
+            integration,
+            props.selectedChannelSettings?.[channel] || {}
+          );
+          const values = props.onlyValuesByIntegration?.[channel];
+          if (values?.length) {
+            addInternalValue(
+              0,
+              channel,
+              values.map((p) => ({
+                content:
+                  p.content.indexOf('<p>') > -1
+                    ? p.content
+                    : p.content
+                        .split('\n')
+                        .map((line: string) => `<p>${line}</p>`)
+                        .join(''),
+                id: makeId(10),
+                media: p.image || [],
+                delay: 0,
+              }))
+            );
+          }
         }
       }
     }
@@ -233,28 +260,6 @@ export const AddEditModalInnerInner: FC<AddEditModalProps> = (props) => {
           ]
     );
 
-
-    for (const [integrationId, values] of Object.entries(
-      props.onlyValuesByIntegration || {}
-    )) {
-      if (!values?.length) continue;
-      addInternalValue(
-        0,
-        integrationId,
-        values.map((p) => ({
-          content:
-            p.content.indexOf('<p>') > -1
-              ? p.content
-              : p.content
-                  .split('\n')
-                  .map((line: string) => `<p>${line}</p>`)
-                  .join(''),
-          id: makeId(10),
-          media: p.image || [],
-          delay: 0,
-        }))
-      );
-    }
 
     return () => {
       reset();
