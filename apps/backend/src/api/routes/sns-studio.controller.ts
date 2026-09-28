@@ -309,12 +309,22 @@ export class SnsStudioController {
     const originalAssetId = typeof body.originalAssetId === 'string' && body.originalAssetId ? body.originalAssetId : null;
     const platformOverrides = Array.isArray(body.platformOverrides) ? body.platformOverrides : [];
     const deliveryInput = Array.isArray(body.deliveries) ? body.deliveries : [];
+    const variantInput = Array.isArray(body.variants) ? body.variants : [];
 
-    if (originalAssetId) {
-      const asset = await this.prisma.snsMediaAsset.findFirst({
-        where: { id: originalAssetId, organizationId },
+    const assetIds = Array.from(
+      new Set([
+        ...(originalAssetId ? [originalAssetId] : []),
+        ...variantInput
+          .map((variant: any) => String(variant?.mediaAssetId || ''))
+          .filter(Boolean),
+      ])
+    );
+    if (assetIds.length) {
+      const assets = await this.prisma.snsMediaAsset.findMany({
+        where: { id: { in: assetIds }, organizationId },
+        select: { id: true },
       });
-      if (!asset) {
+      if (assets.length !== assetIds.length) {
         throw new HttpException({ code: 'CONTENT_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
       }
     }
@@ -374,17 +384,84 @@ export class SnsStudioController {
             },
           });
 
-      let variants = existing?.variants || [];
-      if (!variants.length && originalAssetId) {
+      let variants = [...(existing?.variants || [])];
+      for (let index = 0; index < variantInput.length; index += 1) {
+        const item = variantInput[index];
+        const mediaAssetId =
+          typeof item?.mediaAssetId === 'string' ? item.mediaAssetId : '';
+        if (!mediaAssetId) continue;
+        const makeDefault =
+          item.isDefault === true || (!variants.length && index === 0);
+        if (makeDefault) {
+          await tx.snsContentVariant.updateMany({
+            where: { contentId: content.id },
+            data: { isDefault: false },
+          });
+          variants = variants.map((variant: any) => ({
+            ...variant,
+            isDefault: false,
+          }));
+        }
+        const variant = await tx.snsContentVariant.upsert({
+          where: {
+            contentId_mediaAssetId: {
+              contentId: content.id,
+              mediaAssetId,
+            },
+          },
+          create: {
+            contentId: content.id,
+            mediaAssetId,
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim().slice(0, 100)
+                : `Variant ${index + 1}`,
+            isDefault: makeDefault,
+            metadata:
+              item.metadata &&
+              typeof item.metadata === 'object' &&
+              !Array.isArray(item.metadata)
+                ? item.metadata as any
+                : undefined,
+          },
+          update: {
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim().slice(0, 100)
+                : undefined,
+            ...(makeDefault ? { isDefault: true } : {}),
+            metadata:
+              item.metadata &&
+              typeof item.metadata === 'object' &&
+              !Array.isArray(item.metadata)
+                ? item.metadata as any
+                : undefined,
+          },
+        });
+        variants = [
+          ...variants.filter(
+            (candidate: any) => candidate.mediaAssetId !== mediaAssetId
+          ),
+          variant as any,
+        ];
+      }
+
+      if (
+        originalAssetId &&
+        !variants.some(
+          (variant: any) => variant.mediaAssetId === originalAssetId
+        )
+      ) {
+        const makeDefault = !variants.some((variant: any) => variant.isDefault);
         const variant = await tx.snsContentVariant.create({
           data: {
             contentId: content.id,
             mediaAssetId: originalAssetId,
             name: 'Default',
-            isDefault: true,
+            isDefault: makeDefault,
           },
         });
-        variants = [variant as any];
+        variants = [...variants, variant as any];
       }
 
       await tx.snsContentPlatformOverride.deleteMany({ where: { contentId: content.id } });
@@ -435,9 +512,20 @@ export class SnsStudioController {
           item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride)
             ? item.settingsOverride
             : {};
-        const requestedVariantId = typeof item.variantId === 'string' ? item.variantId : null;
+        const requestedVariantId =
+          typeof item.variantId === 'string' ? item.variantId : null;
+        const requestedVariantAssetId =
+          typeof item.variantAssetId === 'string' ? item.variantAssetId : null;
         const variant =
-          (requestedVariantId && variants.find((candidate: any) => candidate.id === requestedVariantId)) ||
+          (requestedVariantAssetId &&
+            variants.find(
+              (candidate: any) =>
+                candidate.mediaAssetId === requestedVariantAssetId
+            )) ||
+          (requestedVariantId &&
+            variants.find(
+              (candidate: any) => candidate.id === requestedVariantId
+            )) ||
           defaultVariant ||
           null;
 
