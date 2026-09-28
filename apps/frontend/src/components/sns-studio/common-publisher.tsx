@@ -278,9 +278,10 @@ export const SnsStudioCommonPublisher = ({
   };
 
   const resetPlan = () => {
+    setActivePrefill(prefill || null);
     setPlanId(null);
     setTitle('');
-    setCommonContent(activePrefill?.content || '');
+    setCommonContent(prefill?.content || '');
     setCommonHashtags('');
     setCommonScheduledAt('');
     setPlatformOverrides({});
@@ -426,10 +427,26 @@ export const SnsStudioCommonPublisher = ({
     items: Array<{ postId: string; integration: string; date: string }>;
   }) => {
     if (!planId) return;
-    await fetch(`/sns-studio/content-plans/${planId}/post-links`, {
-      method: 'POST',
-      body: JSON.stringify(result),
-    });
+    const response = await fetch(
+      `/sns-studio/content-plans/${planId}/post-links`,
+      {
+        method: 'POST',
+        body: JSON.stringify(result),
+      }
+    );
+    if (!response.ok) {
+      throw new Error('SNS Studioの配信履歴更新に失敗しました。');
+    }
+    await refreshPlans();
+    setPlanId(null);
+    setSavedSignature('');
+    setMessage(
+      result.type === 'draft'
+        ? 'Postizへ下書きを作成しました。'
+        : result.type === 'now'
+          ? 'Postizへ即時投稿を登録しました。'
+          : 'Postizへ予約投稿を登録しました。'
+    );
   };
 
   if (isLoading) {
