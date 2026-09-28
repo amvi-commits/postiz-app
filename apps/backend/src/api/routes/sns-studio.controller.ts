@@ -516,7 +516,7 @@ export class SnsStudioController {
           typeof item.variantId === 'string' ? item.variantId : null;
         const requestedVariantAssetId =
           typeof item.variantAssetId === 'string' ? item.variantAssetId : null;
-        const variant =
+        const requestedVariant =
           (requestedVariantAssetId &&
             variants.find(
               (candidate: any) =>
@@ -526,8 +526,17 @@ export class SnsStudioController {
             variants.find(
               (candidate: any) => candidate.id === requestedVariantId
             )) ||
-          defaultVariant ||
           null;
+        if (
+          (requestedVariantAssetId || requestedVariantId) &&
+          !requestedVariant
+        ) {
+          throw new HttpException(
+            { code: 'CONTENT_VARIANT_INVALID' },
+            HttpStatus.BAD_REQUEST
+          );
+        }
+        const variant = requestedVariant || defaultVariant || null;
 
         await tx.snsDelivery.create({
           data: {
