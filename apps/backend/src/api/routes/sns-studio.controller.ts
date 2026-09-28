@@ -286,8 +286,11 @@ export class SnsStudioController {
     return this.prisma.snsContent.findFirst({
       where: { id, organizationId },
       include: {
-        originalAsset: true,
-        variants: { include: { mediaAsset: true }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] },
+        originalAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } },
+        variants: {
+          include: { mediaAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } } },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        },
         platformOverrides: { orderBy: { platform: 'asc' } },
         deliveries: { orderBy: { createdAt: 'asc' } },
       },
@@ -1281,8 +1284,11 @@ export class SnsStudioController {
       orderBy: { updatedAt: 'desc' },
       take: 100,
       include: {
-        originalAsset: true,
-        variants: { include: { mediaAsset: true }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] },
+        originalAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } },
+        variants: {
+          include: { mediaAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } } },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        },
         platformOverrides: true,
         deliveries: { orderBy: { createdAt: 'asc' } },
       },
@@ -1336,7 +1342,19 @@ export class SnsStudioController {
           isDefault: makeDefault,
           metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
         },
-        include: { mediaAsset: true },
+        include: {
+          mediaAsset: {
+            select: {
+              id: true,
+              storageKey: true,
+              fileName: true,
+              mimeType: true,
+              width: true,
+              height: true,
+              duration: true,
+            },
+          },
+        },
       });
     });
     return variant;
@@ -1359,7 +1377,10 @@ export class SnsStudioController {
         data: {
           postId: item.postId,
           status,
-          resolvedScheduledAt: item.date ? this.snsOptionalDate(item.date, 'DELIVERY_SCHEDULE_INVALID') : undefined,
+          resolvedScheduledAt:
+            type === 'schedule' && item.date
+              ? this.snsOptionalDate(item.date, 'DELIVERY_SCHEDULE_INVALID')
+              : undefined,
           lastError: null,
         },
       });
