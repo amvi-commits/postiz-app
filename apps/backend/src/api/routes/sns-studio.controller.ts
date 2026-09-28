@@ -731,7 +731,7 @@ export class SnsStudioController {
       throw new HttpException({ code: 'MEDIA_ASSET_FILE_NOT_FOUND' }, HttpStatus.NOT_FOUND);
     }
 
-    let media: Awaited<ReturnType<MediaService['saveFile']>>;
+    let media: any;
     if ((process.env.STORAGE_PROVIDER || 'local') === 'local') {
       const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
       if (!frontendUrl) {
@@ -745,7 +745,7 @@ export class SnsStudioController {
       );
     } else {
       const size = statSync(filePath).size;
-      const webStream = Readable.toWeb(createReadStream(filePath)) as unknown as ReadableStream;
+      const webStream = Readable.toWeb(createReadStream(filePath)) as any;
       const uploaded = await uploadStreamToStorage(
         this.postizStorage,
         webStream,
