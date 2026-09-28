@@ -110,7 +110,7 @@ export const SnsStudio = () => {
 
   const defaultAccount = useMemo(() => accounts[0]?.id || '', [accounts]);
 
-  const openMediaAssetInCommonPublisher = useCallback(async (mediaAssetId: string) => {
+  const bridgeMediaAsset = useCallback(async (mediaAssetId: string) => {
     if (!mediaAssetId) {
       throw new Error('共通投稿へ渡せるSNS Studio素材がありません。');
     }
@@ -121,15 +121,46 @@ export const SnsStudio = () => {
     if (!result?.media?.id || !result?.media?.path) {
       throw new Error('共通投稿用Mediaの作成に失敗しました。');
     }
-    setCommonPostPrefill({
-      sourceAssetId: result.sourceAssetId,
+    return {
+      sourceAssetId: result.sourceAssetId as string,
       media: {
-        id: result.media.id,
-        path: result.media.path,
+        id: result.media.id as string,
+        path: result.media.path as string,
       },
+    };
+  }, [request]);
+
+  const openMediaAssetInCommonPublisher = useCallback(async (mediaAssetId: string) => {
+    const bridged = await bridgeMediaAsset(mediaAssetId);
+    setCommonPostPrefill({
+      ...bridged,
+      defaultVariantAssetId: bridged.sourceAssetId,
     });
     setActiveTab('Publish');
-  }, [request]);
+  }, [bridgeMediaAsset]);
+
+  const openVariantSetInCommonPublisher = useCallback(async (variants: any[]) => {
+    const bridged = await Promise.all(
+      variants.map(async (variant, index) => ({
+        ...(await bridgeMediaAsset(variant.mediaAssetId)),
+        name: `Variant ${index + 1}`,
+      }))
+    );
+    if (!bridged.length) {
+      throw new Error('共通投稿へ渡せるVariantがありません。');
+    }
+    setCommonPostPrefill({
+      sourceAssetId: bridged[0].sourceAssetId,
+      defaultVariantAssetId: bridged[0].sourceAssetId,
+      media: bridged[0].media,
+      variants: bridged.map((variant) => ({
+        sourceAssetId: variant.sourceAssetId,
+        name: variant.name,
+        media: variant.media,
+      })),
+    });
+    setActiveTab('Publish');
+  }, [bridgeMediaAsset]);
 
   const openCommonPublisher = useCallback(
     (item: any) => openMediaAssetInCommonPublisher(item?.mediaAsset?.id || ''),
