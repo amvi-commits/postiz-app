@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
-import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
+import { SnsStudioCommonPublisher, CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
@@ -41,6 +41,7 @@ export const SnsStudio = () => {
   const [renderForm, setRenderForm] = useState({ sourcePath: '', trimStartSeconds: 0, trimEndSeconds: 0, playbackSpeed: 1, cropPercent: 100, bgmPath: '', bgmVolume: 0.15, sourceAudioVolume: 1, subtitlesPath: '', textOverlay: '', textX: 0.5, textY: 0.8, textFontSize: 64 });
   const [variantForm, setVariantForm] = useState({ sourcePath: '', count: 3, settings: '{\n  "playbackSpeed": {"enabled": true, "min": 0.96, "max": 1.04},\n  "trimStartSeconds": {"enabled": false, "min": 0, "max": 1.5},\n  "trimEndSeconds": {"enabled": false, "min": 0, "max": 1},\n  "cropPercent": {"enabled": false, "min": 95, "max": 100}\n}' });
   const [variantResults, setVariantResults] = useState<any[]>([]);
+  const [commonPostPrefill, setCommonPostPrefill] = useState<CommonPublishPrefill | null>(null);
   const [comicPages, setComicPages] = useState('[\n  {\n    "imagePath": "/uploads/page-01.png",\n    "dialogues": [\n      {"speakerSlot": "FEMALE_1", "text": "最初のセリフ"},\n      {"speakerSlot": "MALE_1", "text": "次のセリフ"}\n    ]\n  }\n]');
   const [comicEditingPresetId, setComicEditingPresetId] = useState('');
   const [concatPaths, setConcatPaths] = useState('[\n  "/uploads/clip-01.mp4",\n  "/uploads/clip-02.mp4"\n]');
@@ -107,6 +108,26 @@ export const SnsStudio = () => {
   };
 
   const defaultAccount = useMemo(() => accounts[0]?.id || '', [accounts]);
+
+  const openCommonPublisher = useCallback(async (item: any) => {
+    if (!item?.mediaAsset?.id) {
+      throw new Error('共通投稿へ渡せるSNS Studio素材がありません。');
+    }
+    const result = await request(
+      `/sns-studio/media-assets/${item.mediaAsset.id}/post-media`,
+      { method: 'POST' }
+    );
+    if (!result?.media?.id || !result?.media?.path) {
+      throw new Error('共通投稿用Mediaの作成に失敗しました。');
+    }
+    setCommonPostPrefill({
+      media: {
+        id: result.media.id,
+        path: result.media.path,
+      },
+    });
+    setActiveTab('Publish');
+  }, [request]);
 
   useEffect(() => {
     const account = accounts.find((candidate) => candidate.id === (storyForm.accountId || defaultAccount));
@@ -286,10 +307,10 @@ export const SnsStudio = () => {
 
       {activeTab === 'Content Inbox' && <section className={card}>
         <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-bold">Content Inbox</h2><p className="mt-1 text-sm text-textItemBlur">Google Drive接続後、指定フォルダの素材をここで確認します。</p></div><button className={secondaryButton} onClick={() => void refreshInbox()}>同期状態を更新</button></div>
-        <div className="mt-4 grid gap-3">{inbox.length ? inbox.map((item: any) => <div key={item.id} className="flex flex-wrap items-center gap-4 rounded-lg border border-blockSeparator p-4"><div className="min-w-[200px] flex-1 font-semibold">{item.fileName}</div><span className="text-sm text-textItemBlur">{item.mediaType}</span><span className="text-sm text-textItemBlur">{item.status}</span><span className="text-sm text-textItemBlur">{item.sizeBytes ? `${(Number(item.sizeBytes) / 1024 / 1024).toFixed(1)} MB` : '—'}</span>{item.previewUrl && <a href={item.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-[#9e9aff] underline">Preview / Drive</a>}{item.mediaAsset?.storageKey && <div className="flex flex-wrap items-center gap-2"><select aria-label={`${item.fileName} に使用するRecipe`} className={`${field} max-w-56`} value={inboxRecipeSelection[item.id] || ''} onChange={(e) => setInboxRecipeSelection((current) => ({ ...current, [item.id]: e.target.value }))}><option value="">Recipeを選択</option>{recipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select><button className={secondaryButton} disabled={busy || !inboxRecipeSelection[item.id]} onClick={() => { const recipe = recipes.find((entry) => entry.id === inboxRecipeSelection[item.id]); if (recipe) void run(() => startRecipe(recipe, { path: item.mediaAsset.storageKey, inboxItemId: item.id, mediaType: item.mediaType }), '素材を制作Queueへ登録しました。'); }}>Recipeを実行</button></div>}{item.mediaAsset?.storageKey && item.mediaType === 'video' && <button className={secondaryButton} onClick={() => { setReelForm((current) => ({ ...current, videoPath: item.mediaAsset.storageKey, pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Reel</button>}{item.mediaAsset?.storageKey && item.mediaType === 'image' && <button className={secondaryButton} onClick={() => { setStoryForm((current) => ({ ...current, mediaPath: item.mediaAsset.storageKey, mediaType: 'image', pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Story</button>}</div>) : <Empty>Inboxは空です。SettingsからGoogle Driveを接続して同期してください。</Empty>}</div>
+        <div className="mt-4 grid gap-3">{inbox.length ? inbox.map((item: any) => <div key={item.id} className="flex flex-wrap items-center gap-4 rounded-lg border border-blockSeparator p-4"><div className="min-w-[200px] flex-1 font-semibold">{item.fileName}</div><span className="text-sm text-textItemBlur">{item.mediaType}</span><span className="text-sm text-textItemBlur">{item.status}</span><span className="text-sm text-textItemBlur">{item.sizeBytes ? `${(Number(item.sizeBytes) / 1024 / 1024).toFixed(1)} MB` : '—'}</span>{item.previewUrl && <a href={item.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-[#9e9aff] underline">Preview / Drive</a>}{item.mediaAsset?.storageKey && <div className="flex flex-wrap items-center gap-2"><select aria-label={`${item.fileName} に使用するRecipe`} className={`${field} max-w-56`} value={inboxRecipeSelection[item.id] || ''} onChange={(e) => setInboxRecipeSelection((current) => ({ ...current, [item.id]: e.target.value }))}><option value="">Recipeを選択</option>{recipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select><button className={secondaryButton} disabled={busy || !inboxRecipeSelection[item.id]} onClick={() => { const recipe = recipes.find((entry) => entry.id === inboxRecipeSelection[item.id]); if (recipe) void run(() => startRecipe(recipe, { path: item.mediaAsset.storageKey, inboxItemId: item.id, mediaType: item.mediaType }), '素材を制作Queueへ登録しました。'); }}>Recipeを実行</button></div>}{item.mediaAsset?.id && <button className={primaryButton} disabled={busy} onClick={() => void run(() => openCommonPublisher(item), '共通投稿へ素材を引き継ぎました。')}>共通投稿で使用</button>}{item.mediaAsset?.storageKey && item.mediaType === 'video' && <button className={secondaryButton} onClick={() => { setReelForm((current) => ({ ...current, videoPath: item.mediaAsset.storageKey, pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Reel</button>}{item.mediaAsset?.storageKey && item.mediaType === 'image' && <button className={secondaryButton} onClick={() => { setStoryForm((current) => ({ ...current, mediaPath: item.mediaAsset.storageKey, mediaType: 'image', pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Story</button>}</div>) : <Empty>Inboxは空です。SettingsからGoogle Driveを接続して同期してください。</Empty>}</div>
       </section>}
 
-      {activeTab === 'Publish' && <SnsStudioCommonPublisher />}
+      {activeTab === 'Publish' && <SnsStudioCommonPublisher prefill={commonPostPrefill} />}
 
       {activeTab === 'Create' && <section className="grid gap-5 xl:grid-cols-2">
         <form className={card} onSubmit={submit(publishReel, 'Reel投稿が完了しました。')}>
