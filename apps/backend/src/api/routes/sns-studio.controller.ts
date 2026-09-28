@@ -1500,7 +1500,7 @@ export class SnsStudioController {
           ...(item.settings &&
           typeof item.settings === 'object' &&
           !Array.isArray(item.settings)
-            ? { settingsOverride: item.settings as any }
+            ? { providerSettingsSnapshot: item.settings as any }
             : {}),
           resolvedScheduledAt:
             type === 'schedule' && item.date
