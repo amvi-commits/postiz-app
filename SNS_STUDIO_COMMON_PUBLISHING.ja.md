@@ -196,7 +196,11 @@ SnsContent
 - 配信アカウントごとに使用Variantを選択可能
 - 保存済み配信計画をPublish画面から再読込可能
 - Postizへ作成済みの計画は重複投稿防止のため再編集を禁止
-- Postiz投稿作成後にpostIdと最終本文・provider settingsをSnsDeliveryへ記録
+- Postiz投稿作成後にpostIdと最終本文をSnsDeliveryへ記録
+- ユーザー指定のSNS／アカウント上書きは `settingsOverride` に保持し、投稿後も変更しない
+- 投稿時に確定したprovider設定は `providerSettingsSnapshot` に別保存
+- Phase 3 migration は4つの共通計画テーブルと参照・indexを追加するだけのPostgreSQL SQL。Postiz `Post`、Instagram系テーブル、`SnsPublishRecord` は変更しない
+- Migration SQLは初回作成と、開発DBで既に `db push` 済みの場合の再適用を考慮し、CREATE／index／FK作成を存在確認付きにする
 
 Postiz `Post` は投稿実行の正本、SNS Studio `SnsContent / SnsDelivery` はコンテンツと配信計画・紐付けの正本とする。
 
