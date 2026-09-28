@@ -359,23 +359,64 @@ export const SnsStudioCommonPublisher = ({
       return;
     }
 
-    let nextPrefill: CommonPublishPrefill | null = null;
-    if (plan.originalAsset?.id) {
+    const bridgeAsset = async (mediaAssetId: string) => {
       const response = await fetch(
-        `/sns-studio/media-assets/${plan.originalAsset.id}/post-media`,
+        `/sns-studio/media-assets/${mediaAssetId}/post-media`,
         { method: 'POST' }
       );
       const bridged = await response.json().catch(() => ({}));
-      if (response.ok && bridged?.media?.id && bridged?.media?.path) {
-        nextPrefill = {
-          sourceAssetId: bridged.sourceAssetId,
-          media: {
-            id: bridged.media.id,
-            path: bridged.media.path,
-          },
-        };
-      }
-    }
+      return response.ok && bridged?.media?.id && bridged?.media?.path
+        ? {
+            sourceAssetId: bridged.sourceAssetId as string,
+            media: {
+              id: bridged.media.id as string,
+              path: bridged.media.path as string,
+            },
+          }
+        : null;
+    };
+
+    const bridgedVariants = (
+      await Promise.all(
+        (plan.variants || []).map(async (variant: any) => {
+          const bridged = await bridgeAsset(variant.mediaAssetId);
+          return bridged
+            ? {
+                ...bridged,
+                name: variant.name || 'Variant',
+                isDefault: !!variant.isDefault,
+              }
+            : null;
+        })
+      )
+    ).filter(Boolean) as Array<{
+      sourceAssetId: string;
+      name: string;
+      isDefault: boolean;
+      media: { id: string; path: string };
+    }>;
+
+    const originalBridged = plan.originalAsset?.id
+      ? await bridgeAsset(plan.originalAsset.id)
+      : null;
+    const defaultVariant =
+      bridgedVariants.find((variant) => variant.isDefault) ||
+      bridgedVariants[0] ||
+      null;
+    const base = originalBridged || defaultVariant;
+    const nextPrefill: CommonPublishPrefill | null = base
+      ? {
+          sourceAssetId: base.sourceAssetId,
+          defaultVariantAssetId:
+            defaultVariant?.sourceAssetId || base.sourceAssetId,
+          media: base.media,
+          variants: bridgedVariants.map((variant) => ({
+            sourceAssetId: variant.sourceAssetId,
+            name: variant.name,
+            media: variant.media,
+          })),
+        }
+      : null;
 
     const nextPlatforms = Object.fromEntries(
       (plan.platformOverrides || []).map((item: any) => [
@@ -386,6 +427,10 @@ export const SnsStudioCommonPublisher = ({
             ? item.hashtagsOverride.join(' ')
             : '',
           scheduledAt: localDate(item.scheduledAtOverride),
+          variantAssetId:
+            (plan.variants || []).find(
+              (variant: any) => variant.id === item.variantId
+            )?.mediaAssetId || '',
         },
       ])
     );
@@ -425,6 +470,11 @@ export const SnsStudioCommonPublisher = ({
         ? dayjs(nextCommonScheduledAt).toISOString()
         : null,
       originalAssetId: plan.originalAsset?.id || null,
+      variants: (plan.variants || []).map((variant: any) => ({
+        mediaAssetId: variant.mediaAssetId,
+        name: variant.name,
+        isDefault: !!variant.isDefault,
+      })),
       platformOverrides: Object.entries(nextPlatforms)
         .filter(([, value]: any) =>
           value.content || value.hashtags || value.scheduledAt
@@ -450,6 +500,9 @@ export const SnsStudioCommonPublisher = ({
           ...(value.scheduledAt
             ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
             : {}),
+          ...(value.variantAssetId
+            ? { variantAssetId: value.variantAssetId }
+            : {}),
         };
       }),
     };
@@ -464,12 +517,17 @@ export const SnsStudioCommonPublisher = ({
   const onlyValuesByIntegration = Object.fromEntries(
     selectedDestinations.map((integration) => {
       const effective = effectiveFor(integration);
+      const media =
+        mediaOptions.find(
+          (option) =>
+            option.sourceAssetId === effective.variantAssetId
+        ) || defaultMediaOption;
       return [
         integration.id,
         [
           {
             content: appendHashtags(effective.content, effective.hashtags),
-            image: activePrefill ? [activePrefill.media] : [],
+            image: media ? [media.media] : [],
           },
         ],
       ];
@@ -787,7 +845,7 @@ export const SnsStudioCommonPublisher = ({
                         commonContent,
                         parseHashtags(commonHashtags)
                       ),
-                      image: activePrefill ? [activePrefill.media] : [],
+                      image: defaultMediaOption ? [defaultMediaOption.media] : [],
                     },
                   ]}
                   onlyValuesByIntegration={onlyValuesByIntegration}
