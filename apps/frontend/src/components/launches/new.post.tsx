@@ -21,7 +21,7 @@ export const NewPost = (props: {
   const createAPost = useCallback(async () => {
     const date = (await (await fetch('/posts/find-slot')).json()).date;
 
-    const set: any = !sets.length
+    const set: any = props.onlyValues?.length || !sets.length
       ? undefined
       : await new Promise((resolve) => {
           modal.openModal({
