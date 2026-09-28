@@ -1463,7 +1463,16 @@ export class SnsStudioController {
   async linkContentPlanPosts(
     @GetOrgFromRequest() org: Organization,
     @Param('id') id: string,
-    @Body() body: { type?: string; items?: Array<{ integration?: string; postId?: string; date?: string }> }
+    @Body() body: {
+      type?: string;
+      items?: Array<{
+        integration?: string;
+        postId?: string;
+        date?: string;
+        content?: string;
+        settings?: Record<string, any>;
+      }>;
+    }
   ) {
     const plan = await this.contentPlan(org.id, id);
     if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
@@ -1476,6 +1485,14 @@ export class SnsStudioController {
         data: {
           postId: item.postId,
           status,
+          ...(typeof item.content === 'string'
+            ? { resolvedContent: item.content }
+            : {}),
+          ...(item.settings &&
+          typeof item.settings === 'object' &&
+          !Array.isArray(item.settings)
+            ? { settingsOverride: item.settings as any }
+            : {}),
           resolvedScheduledAt:
             type === 'schedule' && item.date
               ? this.snsOptionalDate(item.date, 'DELIVERY_SCHEDULE_INVALID')
