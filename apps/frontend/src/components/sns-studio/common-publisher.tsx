@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import dayjs from 'dayjs';
 import { CalendarWeekProvider } from '@gitroom/frontend/components/launches/calendar.context';
 import { useIntegrationList } from '@gitroom/frontend/components/launches/helpers/use.integration.list';
+import type { Integrations } from '@gitroom/frontend/components/launches/calendar.context';
 import { NewPost } from '@gitroom/frontend/components/launches/new.post';
 import { LoadingComponent } from '@gitroom/frontend/components/layout/loading';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
@@ -102,7 +103,8 @@ export const SnsStudioCommonPublisher = ({
   prefill?: CommonPublishPrefill | null;
 }) => {
   const fetch = useFetch();
-  const { data: integrations = [], isLoading, error } = useIntegrationList();
+  const { data: integrationData = [], isLoading, error } = useIntegrationList();
+  const integrations: Integrations[] = integrationData;
   const [activePrefill, setActivePrefill] = useState<CommonPublishPrefill | null>(
     prefill || null
   );
