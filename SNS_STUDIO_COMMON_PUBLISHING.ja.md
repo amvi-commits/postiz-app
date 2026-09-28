@@ -166,26 +166,43 @@ Instagram direct worker経路は、Postiz provider経路で必要機能をすべ
 
 ### Phase 3 — 共通コンテンツ / 配信バリエーション
 
-推奨構造:
+実装済み。
+
+データ構造:
 
 ```text
 SnsContent
   ├─ originalAsset
+  ├─ commonContent / commonHashtags / commonScheduledAt
   ├─ SnsContentVariant[]
   │    └─ mediaAsset
+  ├─ SnsContentPlatformOverride[]
+  │    └─ Instagram / TikTok / YouTube / Threads / X
   └─ SnsDelivery[]
        ├─ integrationId
        ├─ providerIdentifier
-       ├─ postGroup
-       ├─ copyOverride
-       ├─ hashtagsOverride
-       ├─ settingsOverride
-       └─ scheduledAtOverride
+       ├─ variantId
+       ├─ account override
+       ├─ resolvedContent / resolvedHashtags / resolvedScheduledAt
+       ├─ provider settings snapshot
+       └─ Postiz postId / status
 ```
 
-Postiz `Post` を投稿実行の正本、SNS Studio側はコンテンツと配信計画の正本にする。
+実装内容:
+
+- 共通コンテンツをSNS Studio側の正本として保存
+- 元素材と加工Variantを別レコードで参照し、SNSごとのファイル複製をしない
+- Variant Generatorの複数結果を1つの共通コンテンツとしてPublishへ渡せる
+- 配信アカウントごとに使用Variantを選択可能
+- 保存済み配信計画をPublish画面から再読込可能
+- Postizへ作成済みの計画は重複投稿防止のため再編集を禁止
+- Postiz投稿作成後にpostIdと最終本文・provider settingsをSnsDeliveryへ記録
+
+Postiz `Post` は投稿実行の正本、SNS Studio `SnsContent / SnsDelivery` はコンテンツと配信計画・紐付けの正本とする。
 
 ### Phase 4 — 階層上書き
+
+本文・ハッシュタグ・投稿日時について実装済み。
 
 優先順位:
 
@@ -195,18 +212,25 @@ account override
     > common default
 ```
 
-対象:
+実装済み対象:
 
 - caption / body
 - hashtags
 - scheduledAt
+- media variant（アカウント単位）
+- SNS固有設定は既存Postiz provider UIで最終設定し、実際に送ったsettingsをSnsDeliveryへ保存
+
+投稿時刻はPostizの既存投稿サービスを変更せず、実効日時の異なる配信先だけ既存 `/posts` scheduleリクエストへ日時単位で分割するadapterを投稿UI側へ追加した。
+
+共通日時が未指定でアカウント/SNSだけ日時指定される場合も、未指定先はPostizの既存free slotを利用し、指定先だけ個別日時で作成する。
+
+未実装でPhase 5へ送るもの:
+
 - autoPost
 - approval policy
-- platform settings
-
-現在のPostizは本文・メディアについてglobal → integration overrideを既に持つため、その仕組みを拡張する。
-
-投稿時刻は現状body単位で1つのため、異なる実効時刻になった配信先を同一画面から複数の既存 `/posts` scheduleリクエストへ分割するadapterを追加する。Postizの投稿サービス自体は変更しない。
+- アカウント別投稿上限
+- 同一コンテンツ再投稿禁止期間
+- SNS固有settingsの「SNS共通プリセット → アカウント上書き」UI（provider個別設定自体は既存UIで利用可能）
 
 ### Phase 5 — 配信ポリシー
 
@@ -247,4 +271,4 @@ TikTok初期値:
 - 接続済み Instagram / TikTok / TikTok Business / YouTube / Threads / X の抽出
 - 既存Postiz共通投稿モーダルの再利用
 
-Phase 2の「SNS Studio加工済み素材 → 共通投稿」ブリッジまで実装済み。次の実装対象はPhase 3/4の共通コンテンツ・配信バリエーションと階層上書き。
+Phase 1〜4まで実装済み。次の実装対象はPhase 5の共通配信ポリシー（autoPost / approval / 投稿上限 / 再投稿禁止期間）。
