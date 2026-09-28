@@ -61,6 +61,7 @@ type OverrideState = {
 
 type DeliveryState = OverrideState & {
   selected: boolean;
+  variantAssetId: string;
 };
 
 export type CommonPublishPrefill = {
@@ -70,6 +71,14 @@ export type CommonPublishPrefill = {
     id: string;
     path: string;
   };
+  variants?: Array<{
+    sourceAssetId: string;
+    name: string;
+    media: {
+      id: string;
+      path: string;
+    };
+  }>;
 };
 
 export const SnsStudioCommonPublisher = ({
@@ -118,6 +127,32 @@ export const SnsStudioCommonPublisher = ({
       !integration.inBetweenSteps
   );
 
+  const mediaOptions = useMemo(() => {
+    const options: Array<{
+      sourceAssetId: string;
+      name: string;
+      media: { id: string; path: string };
+    }> = [];
+    if (activePrefill?.sourceAssetId) {
+      options.push({
+        sourceAssetId: activePrefill.sourceAssetId,
+        name: 'Default',
+        media: activePrefill.media,
+      });
+    }
+    for (const variant of activePrefill?.variants || []) {
+      if (
+        variant.sourceAssetId &&
+        !options.some(
+          (candidate) => candidate.sourceAssetId === variant.sourceAssetId
+        )
+      ) {
+        options.push(variant);
+      }
+    }
+    return options;
+  }, [activePrefill]);
+
   const groupedDestinations = useMemo(() => {
     const grouped = new Map<string, typeof destinations>();
     for (const integration of destinations) {
@@ -138,6 +173,11 @@ export const SnsStudioCommonPublisher = ({
       commonHashtags: parseHashtags(commonHashtags),
       commonScheduledAt: commonScheduledAt ? dayjs(commonScheduledAt).toISOString() : null,
       originalAssetId: activePrefill?.sourceAssetId || null,
+      variants: mediaOptions.map((variant, index) => ({
+        mediaAssetId: variant.sourceAssetId,
+        name: variant.name,
+        isDefault: index === 0,
+      })),
       platformOverrides: Object.entries(platformOverrides)
         .filter(
           ([, value]) =>
@@ -159,6 +199,7 @@ export const SnsStudioCommonPublisher = ({
           content: '',
           hashtags: '',
           scheduledAt: '',
+          variantAssetId: '',
         };
         return {
           integrationId: integration.id,
@@ -169,6 +210,9 @@ export const SnsStudioCommonPublisher = ({
           ...(value.scheduledAt
             ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
             : {}),
+          ...(value.variantAssetId
+            ? { variantAssetId: value.variantAssetId }
+            : {}),
         };
       }),
     }),
@@ -178,6 +222,7 @@ export const SnsStudioCommonPublisher = ({
       commonHashtags,
       commonScheduledAt,
       activePrefill?.sourceAssetId,
+      mediaOptions,
       platformOverrides,
       deliveries,
       selectedDestinations,
@@ -237,6 +282,7 @@ export const SnsStudioCommonPublisher = ({
         content: '',
         hashtags: '',
         scheduledAt: '',
+        variantAssetId: '',
         ...(current[integrationId] || {}),
         ...patch,
       },
