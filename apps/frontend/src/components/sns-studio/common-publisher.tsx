@@ -1,12 +1,21 @@
 'use client';
 
+import { useMemo, useState } from 'react';
+import dayjs from 'dayjs';
 import { CalendarWeekProvider } from '@gitroom/frontend/components/launches/calendar.context';
 import { useIntegrationList } from '@gitroom/frontend/components/launches/helpers/use.integration.list';
 import { NewPost } from '@gitroom/frontend/components/launches/new.post';
 import { LoadingComponent } from '@gitroom/frontend/components/layout/loading';
+import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 
 const card =
   'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
+const field =
+  'w-full rounded-lg border border-blockSeparator bg-newBgColorInner px-3 py-2 text-newTextColor outline-none focus:border-[#7774ff]';
+const primaryButton =
+  'rounded-lg bg-[#5145ff] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
+const secondaryButton =
+  'rounded-lg border border-blockSeparator px-4 py-2 font-semibold text-newTextColor hover:bg-boxFocused disabled:opacity-50';
 
 const supportedIdentifiers = new Set([
   'instagram',
@@ -27,8 +36,35 @@ const platformName = (identifier: string) => {
   return identifier;
 };
 
+const platformKey = (identifier: string) => {
+  if (identifier.startsWith('instagram')) return 'instagram';
+  if (identifier.startsWith('tiktok')) return 'tiktok';
+  return identifier;
+};
+
+const parseHashtags = (value: string) =>
+  value
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => (item.startsWith('#') ? item : `#${item}`));
+
+const appendHashtags = (content: string, hashtags: string[]) =>
+  [content.trim(), hashtags.join(' ')].filter(Boolean).join('\n\n');
+
+type OverrideState = {
+  content: string;
+  hashtags: string;
+  scheduledAt: string;
+};
+
+type DeliveryState = OverrideState & {
+  selected: boolean;
+};
+
 export type CommonPublishPrefill = {
   content?: string;
+  sourceAssetId?: string;
   media: {
     id: string;
     path: string;
@@ -40,7 +76,226 @@ export const SnsStudioCommonPublisher = ({
 }: {
   prefill?: CommonPublishPrefill | null;
 }) => {
+  const fetch = useFetch();
   const { data: integrations = [], isLoading, error } = useIntegrationList();
+  const [planId, setPlanId] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [commonContent, setCommonContent] = useState(prefill?.content || '');
+  const [commonHashtags, setCommonHashtags] = useState('');
+  const [commonScheduledAt, setCommonScheduledAt] = useState('');
+  const [platformOverrides, setPlatformOverrides] = useState<
+    Record<string, OverrideState>
+  >({});
+  const [deliveries, setDeliveries] = useState<Record<string, DeliveryState>>(
+    {}
+  );
+  const [savedSignature, setSavedSignature] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const destinations = integrations.filter(
+    (integration) =>
+      supportedIdentifiers.has(integration.identifier) &&
+      !integration.disabled &&
+      !integration.inBetweenSteps
+  );
+
+  const groupedDestinations = useMemo(() => {
+    const grouped = new Map<string, typeof destinations>();
+    for (const integration of destinations) {
+      const key = platformKey(integration.identifier);
+      grouped.set(key, [...(grouped.get(key) || []), integration]);
+    }
+    return Array.from(grouped.entries());
+  }, [destinations]);
+
+  const selectedDestinations = destinations.filter(
+    (integration) => deliveries[integration.id]?.selected
+  );
+
+  const planPayload = useMemo(
+    () => ({
+      title,
+      commonContent,
+      commonHashtags: parseHashtags(commonHashtags),
+      commonScheduledAt: commonScheduledAt || null,
+      originalAssetId: prefill?.sourceAssetId || null,
+      platformOverrides: Object.entries(platformOverrides)
+        .filter(
+          ([, value]) =>
+            value.content || value.hashtags || value.scheduledAt
+        )
+        .map(([platform, value]) => ({
+          platform,
+          ...(value.content ? { contentOverride: value.content } : {}),
+          ...(value.hashtags
+            ? { hashtagsOverride: parseHashtags(value.hashtags) }
+            : {}),
+          ...(value.scheduledAt
+            ? { scheduledAtOverride: value.scheduledAt }
+            : {}),
+        })),
+      deliveries: selectedDestinations.map((integration) => {
+        const value = deliveries[integration.id] || {
+          selected: true,
+          content: '',
+          hashtags: '',
+          scheduledAt: '',
+        };
+        return {
+          integrationId: integration.id,
+          ...(value.content ? { contentOverride: value.content } : {}),
+          ...(value.hashtags
+            ? { hashtagsOverride: parseHashtags(value.hashtags) }
+            : {}),
+          ...(value.scheduledAt
+            ? { scheduledAtOverride: value.scheduledAt }
+            : {}),
+        };
+      }),
+    }),
+    [
+      title,
+      commonContent,
+      commonHashtags,
+      commonScheduledAt,
+      prefill?.sourceAssetId,
+      platformOverrides,
+      deliveries,
+      selectedDestinations,
+    ]
+  );
+
+  const signature = JSON.stringify(planPayload);
+  const dirty = planId ? signature !== savedSignature : true;
+
+  const effectiveFor = (integration: (typeof destinations)[number]) => {
+    const platform = platformOverrides[platformKey(integration.identifier)] || {
+      content: '',
+      hashtags: '',
+      scheduledAt: '',
+    };
+    const account = deliveries[integration.id] || {
+      selected: false,
+      content: '',
+      hashtags: '',
+      scheduledAt: '',
+    };
+    const content = account.content || platform.content || commonContent;
+    const hashtags = account.hashtags
+      ? parseHashtags(account.hashtags)
+      : platform.hashtags
+        ? parseHashtags(platform.hashtags)
+        : parseHashtags(commonHashtags);
+    const scheduledAt =
+      account.scheduledAt || platform.scheduledAt || commonScheduledAt;
+    return { content, hashtags, scheduledAt };
+  };
+
+  const updatePlatform = (
+    platform: string,
+    patch: Partial<OverrideState>
+  ) => {
+    setPlatformOverrides((current) => ({
+      ...current,
+      [platform]: {
+        content: '',
+        hashtags: '',
+        scheduledAt: '',
+        ...(current[platform] || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const updateDelivery = (
+    integrationId: string,
+    patch: Partial<DeliveryState>
+  ) => {
+    setDeliveries((current) => ({
+      ...current,
+      [integrationId]: {
+        selected: false,
+        content: '',
+        hashtags: '',
+        scheduledAt: '',
+        ...(current[integrationId] || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const savePlan = async () => {
+    if (!selectedDestinations.length) {
+      setMessage('投稿先アカウントを1つ以上選択してください。');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    try {
+      const response = await fetch(
+        planId ? `/sns-studio/content-plans/${planId}` : '/sns-studio/content-plans',
+        {
+          method: planId ? 'PUT' : 'POST',
+          body: JSON.stringify(planPayload),
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.code || result?.message || '配信計画の保存に失敗しました。');
+      }
+      setPlanId(result.id);
+      setSavedSignature(signature);
+      setMessage('配信計画を保存しました。');
+    } catch (saveError) {
+      setMessage(
+        saveError instanceof Error
+          ? saveError.message
+          : '配信計画の保存に失敗しました。'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedChannels = selectedDestinations.map(
+    (integration) => integration.id
+  );
+
+  const onlyValuesByIntegration = Object.fromEntries(
+    selectedDestinations.map((integration) => {
+      const effective = effectiveFor(integration);
+      return [
+        integration.id,
+        [
+          {
+            content: appendHashtags(effective.content, effective.hashtags),
+            image: prefill ? [prefill.media] : [],
+          },
+        ],
+      ];
+    })
+  );
+
+  const scheduledAtByIntegration = Object.fromEntries(
+    selectedDestinations
+      .map((integration) => [
+        integration.id,
+        effectiveFor(integration).scheduledAt,
+      ])
+      .filter(([, value]) => !!value)
+  ) as Record<string, string>;
+
+  const onPosted = async (result: {
+    type: 'draft' | 'now' | 'schedule' | 'update';
+    items: Array<{ postId: string; integration: string; date: string }>;
+  }) => {
+    if (!planId) return;
+    await fetch(`/sns-studio/content-plans/${planId}/post-links`, {
+      method: 'POST',
+      body: JSON.stringify(result),
+    });
+  };
 
   if (isLoading) {
     return (
@@ -50,97 +305,257 @@ export const SnsStudioCommonPublisher = ({
     );
   }
 
-  const destinations = integrations.filter(
-    (integration) =>
-      supportedIdentifiers.has(integration.identifier) &&
-      !integration.disabled &&
-      !integration.inBetweenSteps
-  );
-
-  const platforms = Array.from(
-    new Set(destinations.map((integration) => platformName(integration.identifier)))
-  );
-
   return (
     <section className="grid gap-5">
       <div className={card}>
         <div className="flex flex-col gap-2">
           <h2 className="text-xl font-bold">共通投稿・配信</h2>
           <p className="text-sm text-textItemBlur">
-            1つの投稿作成フローから複数SNS・複数アカウントを選択し、本文・メディア・SNS固有設定・下書き・即時投稿・予約投稿を設定します。
+            共通値を設定し、必要なSNS・アカウントだけ個別上書きします。実際の投稿処理とSNS固有設定は既存Postiz providerを再利用します。
           </p>
-          <p className="text-sm text-textItemBlur">
-            配信処理は既存のSNS連携と投稿ワークフローを再利用します。SNS Studio側に各SNSの投稿処理を重複実装しません。
-          </p>
+          {prefill && (
+            <div className="mt-2 rounded-lg border border-blockSeparator p-3 text-xs text-textItemBlur">
+              SNS Studio素材: {prefill.media.path}
+            </div>
+          )}
+          {message && <div className="text-sm">{message}</div>}
         </div>
       </div>
 
       <div className={card}>
-        <div className="mb-4 flex flex-col gap-1">
-          <h3 className="font-semibold">配信先</h3>
-          {error ? (
-            <p className="text-sm text-red-500">
-              接続済みアカウントを取得できませんでした。
-            </p>
-          ) : destinations.length ? (
-            <>
-              <p className="text-sm text-textItemBlur">
-                {destinations.length}アカウント接続済み
-                {platforms.length ? `（${platforms.join(' / ')}）` : ''}
-              </p>
-              <p className="text-xs text-textItemBlur">
-                投稿画面内で複数アカウントを同時選択できます。共通本文を基本値として、選択したアカウントごとに本文・メディア・SNS固有設定を上書きできます。
-              </p>
-            </>
-          ) : (
-            <p className="text-sm text-textItemBlur">
-              対応SNSの接続済みアカウントがありません。先にSNSアカウントを接続してください。
-            </p>
+        <h3 className="mb-4 font-semibold">1. 共通設定</h3>
+        <div className="grid gap-4">
+          <label className="grid gap-1 text-sm">
+            <span>管理名</span>
+            <input
+              className={field}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="例: 新商品紹介 10/1"
+            />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span>共通投稿文</span>
+            <textarea
+              className={`${field} min-h-28`}
+              value={commonContent}
+              onChange={(event) => setCommonContent(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span>共通ハッシュタグ</span>
+            <input
+              className={field}
+              value={commonHashtags}
+              onChange={(event) => setCommonHashtags(event.target.value)}
+              placeholder="#商品 #おすすめ"
+            />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span>共通投稿日時</span>
+            <input
+              type="datetime-local"
+              className={field}
+              value={commonScheduledAt}
+              onChange={(event) => setCommonScheduledAt(event.target.value)}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className={card}>
+        <h3 className="mb-1 font-semibold">2. SNS → アカウント上書き</h3>
+        <p className="mb-4 text-xs text-textItemBlur">
+          空欄は上位設定を継承します。優先順位は「アカウント ＞ SNS ＞ 共通」です。
+        </p>
+        {error && (
+          <p className="text-sm text-red-500">
+            接続済みアカウントを取得できませんでした。
+          </p>
+        )}
+        {!destinations.length && !error && (
+          <p className="text-sm text-textItemBlur">
+            対応SNSの接続済みアカウントがありません。
+          </p>
+        )}
+
+        <div className="grid gap-5">
+          {groupedDestinations.map(([platform, platformAccounts]) => {
+            const platformValue = platformOverrides[platform] || {
+              content: '',
+              hashtags: '',
+              scheduledAt: '',
+            };
+            return (
+              <div
+                key={platform}
+                className="rounded-xl border border-blockSeparator p-4"
+              >
+                <div className="mb-3 font-semibold">
+                  {platformName(platformAccounts[0].identifier)}
+                </div>
+                <div className="mb-4 grid gap-3 md:grid-cols-2">
+                  <label className="grid gap-1 text-xs md:col-span-2">
+                    <span>SNS別投稿文（空欄=共通）</span>
+                    <textarea
+                      className={`${field} min-h-20`}
+                      value={platformValue.content}
+                      onChange={(event) =>
+                        updatePlatform(platform, {
+                          content: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    <span>SNS別ハッシュタグ</span>
+                    <input
+                      className={field}
+                      value={platformValue.hashtags}
+                      onChange={(event) =>
+                        updatePlatform(platform, {
+                          hashtags: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    <span>SNS別投稿日時</span>
+                    <input
+                      type="datetime-local"
+                      className={field}
+                      value={platformValue.scheduledAt}
+                      onChange={(event) =>
+                        updatePlatform(platform, {
+                          scheduledAt: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-3">
+                  {platformAccounts.map((integration) => {
+                    const value = deliveries[integration.id] || {
+                      selected: false,
+                      content: '',
+                      hashtags: '',
+                      scheduledAt: '',
+                    };
+                    return (
+                      <div
+                        key={integration.id}
+                        className="rounded-lg border border-blockSeparator p-3"
+                      >
+                        <label className="flex items-center gap-2 text-sm font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={value.selected}
+                            onChange={(event) =>
+                              updateDelivery(integration.id, {
+                                selected: event.target.checked,
+                              })
+                            }
+                          />
+                          <span>{integration.name}</span>
+                        </label>
+                        {value.selected && (
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <label className="grid gap-1 text-xs md:col-span-2">
+                              <span>アカウント別投稿文</span>
+                              <textarea
+                                className={`${field} min-h-16`}
+                                value={value.content}
+                                onChange={(event) =>
+                                  updateDelivery(integration.id, {
+                                    content: event.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="grid gap-1 text-xs">
+                              <span>アカウント別ハッシュタグ</span>
+                              <input
+                                className={field}
+                                value={value.hashtags}
+                                onChange={(event) =>
+                                  updateDelivery(integration.id, {
+                                    hashtags: event.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="grid gap-1 text-xs">
+                              <span>アカウント別投稿日時</span>
+                              <input
+                                type="datetime-local"
+                                className={field}
+                                value={value.scheduledAt}
+                                onChange={(event) =>
+                                  updateDelivery(integration.id, {
+                                    scheduledAt: event.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className={card}>
+        <h3 className="mb-3 font-semibold">3. 保存 → 投稿作成</h3>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className={secondaryButton}
+            disabled={saving || !selectedDestinations.length}
+            onClick={() => void savePlan()}
+          >
+            {saving ? '保存中...' : planId ? '配信計画を更新' : '配信計画を保存'}
+          </button>
+
+          {planId && !dirty && selectedDestinations.length > 0 && (
+            <CalendarWeekProvider integrations={destinations}>
+              <div className="min-w-[260px]">
+                <NewPost
+                  label="この配信計画で投稿を作成"
+                  selectedChannels={selectedChannels}
+                  onlyValues={[
+                    {
+                      content: appendHashtags(
+                        commonContent,
+                        parseHashtags(commonHashtags)
+                      ),
+                      image: prefill ? [prefill.media] : [],
+                    },
+                  ]}
+                  onlyValuesByIntegration={onlyValuesByIntegration}
+                  scheduledAtByIntegration={scheduledAtByIntegration}
+                  date={
+                    commonScheduledAt
+                      ? dayjs(commonScheduledAt)
+                      : undefined
+                  }
+                  onPosted={onPosted}
+                />
+              </div>
+            </CalendarWeekProvider>
           )}
         </div>
-
-        {prefill && (
-          <div className="mb-4 rounded-lg border border-blockSeparator p-3 text-sm">
-            <div className="font-semibold">SNS Studio素材を引き継ぎます</div>
-            <div className="mt-1 break-all text-xs text-textItemBlur">
-              {prefill.media.path}
-            </div>
-          </div>
+        {planId && dirty && (
+          <p className="mt-3 text-xs text-amber-300">
+            設定が変更されています。投稿作成前に配信計画を保存してください。
+          </p>
         )}
-
-        {destinations.length > 0 && (
-          <CalendarWeekProvider integrations={destinations}>
-            <div className="max-w-[320px]">
-              <NewPost
-                label={prefill ? 'この素材で共通投稿を作成' : undefined}
-                onlyValues={
-                  prefill
-                    ? [
-                        {
-                          content: prefill.content || '',
-                          image: [prefill.media],
-                        },
-                      ]
-                    : undefined
-                }
-              />
-            </div>
-          </CalendarWeekProvider>
-        )}
-      </div>
-
-      <div className={card}>
-        <h3 className="mb-2 font-semibold">現在この共通画面で再利用している機能</h3>
-        <div className="grid gap-2 text-sm text-textItemBlur md:grid-cols-2">
-          <div>・複数SNS / 複数アカウント選択</div>
-          <div>・共通本文 / アカウント別上書き</div>
-          <div>・共通メディア選択 / アカウント別上書き</div>
-          <div>・SNS固有設定とプレビュー</div>
-          <div>・下書き保存 / 即時投稿 / 予約投稿</div>
-          <div>・投稿前のSNS別サーバー検証</div>
-        </div>
         <p className="mt-3 text-xs text-textItemBlur">
-          SNS Studio素材の直接引き継ぎまで接続済みです。SNS単位・アカウント単位の投稿時刻上書き、承認ポリシー、投稿上限・再投稿禁止期間は次の共通基盤フェーズで接続します。
+          投稿画面内ではTikTok・Instagram・YouTube等の既存SNS固有設定をそのまま利用できます。異なる実効投稿日時は保存時に日時単位へ分割して既存 /posts へ送信します。
         </p>
       </div>
     </section>
