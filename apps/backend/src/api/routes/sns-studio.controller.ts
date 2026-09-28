@@ -19,6 +19,7 @@ import { Organization } from '@prisma/client';
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { createReadStream, existsSync, readFileSync, statSync, unlinkSync } from 'fs';
+import { Readable } from 'stream';
 import { randomUUID } from 'crypto';
 import { extname, resolve, sep } from 'path';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
@@ -30,6 +31,9 @@ import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-stu
 import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import type { CaptionProvider } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import { normalizeInstagramMetrics } from '@gitroom/backend/services/sns-studio/instagram-metrics';
+import { MediaService } from '@gitroom/nestjs-libraries/database/prisma/media/media.service';
+import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
+import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.upload.validation';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -165,10 +169,12 @@ class CaptionGenerateDto {
 export class SnsStudioController {
   private readonly cleanupAt = new Map<string, number>();
   private readonly activePipelines = new Set<string>();
+  private readonly postizStorage = UploadFactory.createStorage();
   constructor(
     private readonly prisma: PrismaService,
     private readonly googleDrive: GoogleDriveStorageProvider,
     private readonly generationProvider: GoogleDriveGenerationProvider,
+    private readonly mediaService: MediaService,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
   ) {}
 
@@ -677,6 +683,97 @@ export class SnsStudioController {
     });
   }
 
+  @Post('/media-assets/:id/post-media')
+  async createPostMedia(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { id, organizationId: org.id },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    const metadata =
+      asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+        ? (asset.metadata as Record<string, unknown>)
+        : {};
+
+    const cachedMediaId =
+      typeof metadata.postizMediaId === 'string' ? metadata.postizMediaId : undefined;
+    if (cachedMediaId) {
+      const cached = await this.mediaService
+        .getMediaStatus(org.id, cachedMediaId)
+        .catch(() => null);
+      if (cached) {
+        return { media: cached, sourceAssetId: asset.id, reused: true };
+      }
+    }
+
+    if (!asset.storageKey.startsWith('/uploads/')) {
+      throw new HttpException(
+        { code: 'MEDIA_ASSET_STORAGE_UNSUPPORTED' },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    const uploadRoot = resolve(process.env.UPLOAD_DIRECTORY || './uploads');
+    const filePath = resolve(
+      uploadRoot,
+      asset.storageKey.slice('/uploads/'.length)
+    );
+    if (
+      !filePath.startsWith(`${uploadRoot}${sep}`) ||
+      !existsSync(filePath) ||
+      !statSync(filePath).isFile()
+    ) {
+      throw new HttpException({ code: 'MEDIA_ASSET_FILE_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    let media: Awaited<ReturnType<MediaService['saveFile']>>;
+    if ((process.env.STORAGE_PROVIDER || 'local') === 'local') {
+      const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+      if (!frontendUrl) {
+        throw new ServiceUnavailableException({ code: 'FRONTEND_URL_NOT_CONFIGURED' });
+      }
+      media = await this.mediaService.saveFile(
+        org.id,
+        asset.fileName,
+        `${frontendUrl}${asset.storageKey}`,
+        asset.fileName
+      );
+    } else {
+      const size = statSync(filePath).size;
+      const webStream = Readable.toWeb(createReadStream(filePath)) as unknown as ReadableStream;
+      const uploaded = await uploadStreamToStorage(
+        this.postizStorage,
+        webStream,
+        size
+      );
+      media = await this.mediaService.saveFile(
+        org.id,
+        uploaded.filename,
+        uploaded.path,
+        asset.fileName
+      );
+    }
+
+    await this.prisma.snsMediaAsset.update({
+      where: { id: asset.id },
+      data: {
+        metadata: {
+          ...metadata,
+          postizMediaId: media.id,
+          postizMediaPath: media.path,
+          postizMediaBridgedAt: new Date().toISOString(),
+        } as any,
+      },
+    });
+
+    return { media, sourceAssetId: asset.id, reused: false };
+  }
+
   @Get('/media/health')
   mediaHealth() {
     return this.mediaWorker('/health');
@@ -968,7 +1065,7 @@ export class SnsStudioController {
 
   @Get('/content-inbox')
   listInbox(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
+    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
   }
 
   @Get('/recipes')
