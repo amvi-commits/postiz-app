@@ -5,10 +5,14 @@ import { useCalendar } from '@gitroom/frontend/components/launches/calendar.cont
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { SetSelectionModal } from '@gitroom/frontend/components/launches/calendar';
-import { AddEditModal } from '@gitroom/frontend/components/new-launch/add.edit.modal';
+import { AddEditModal, AddEditModalProps } from '@gitroom/frontend/components/new-launch/add.edit.modal';
 import { ModalWrapperComponent } from '@gitroom/frontend/components/new-launch/modal.wrapper.component';
 
-export const NewPost = () => {
+export const NewPost = (props: {
+  onlyValues?: AddEditModalProps['onlyValues'];
+  selectedChannels?: string[];
+  label?: string;
+} = {}) => {
   const fetch = useFetch();
   const modal = useModals();
   const { integrations, reloadCalendarView, sets } = useCalendar();
@@ -64,6 +68,8 @@ export const NewPost = () => {
             ...p,
           }))}
           {...(set?.content ? { set: JSON.parse(set.content) } : {})}
+          {...(props.onlyValues ? { onlyValues: props.onlyValues } : {})}
+          {...(props.selectedChannels ? { selectedChannels: props.selectedChannels } : {})}
           reopenModal={createAPost}
           mutate={reloadCalendarView}
           integrations={integrations}
@@ -73,7 +79,7 @@ export const NewPost = () => {
       size: '80%',
       title: ``,
     });
-  }, [integrations, sets]);
+  }, [integrations, sets, props.onlyValues, props.selectedChannels]);
   return (
     <button
       onClick={createAPost}
@@ -96,7 +102,7 @@ export const NewPost = () => {
         />
       </svg>
       <div className="flex-1 text-start text-[14px] group-[.sidebar]:hidden">
-        {t('create_new_post', 'Create Post')}
+        {props.label || t('create_new_post', 'Create Post')}
       </div>
     </button>
   );
