@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import useSWR from 'swr';
 import dayjs from 'dayjs';
 import { CalendarWeekProvider } from '@gitroom/frontend/components/launches/calendar.context';
 import { useIntegrationList } from '@gitroom/frontend/components/launches/helpers/use.integration.list';
@@ -78,6 +79,9 @@ export const SnsStudioCommonPublisher = ({
 }) => {
   const fetch = useFetch();
   const { data: integrations = [], isLoading, error } = useIntegrationList();
+  const [activePrefill, setActivePrefill] = useState<CommonPublishPrefill | null>(
+    prefill || null
+  );
   const [planId, setPlanId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [commonContent, setCommonContent] = useState(prefill?.content || '');
@@ -92,6 +96,20 @@ export const SnsStudioCommonPublisher = ({
   const [savedSignature, setSavedSignature] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+
+  const loadPlans = async (path: string) => {
+    const response = await fetch(path);
+    if (!response.ok) return [];
+    return response.json();
+  };
+  const { data: plans = [], mutate: refreshPlans } = useSWR<any[]>(
+    '/sns-studio/content-plans',
+    loadPlans,
+    { revalidateOnFocus: false }
+  );
+
+  const localDate = (value?: string | null) =>
+    value ? dayjs(value).format('YYYY-MM-DDTHH:mm') : '';
 
   const destinations = integrations.filter(
     (integration) =>
@@ -119,7 +137,7 @@ export const SnsStudioCommonPublisher = ({
       commonContent,
       commonHashtags: parseHashtags(commonHashtags),
       commonScheduledAt: commonScheduledAt ? dayjs(commonScheduledAt).toISOString() : null,
-      originalAssetId: prefill?.sourceAssetId || null,
+      originalAssetId: activePrefill?.sourceAssetId || null,
       platformOverrides: Object.entries(platformOverrides)
         .filter(
           ([, value]) =>
@@ -159,7 +177,7 @@ export const SnsStudioCommonPublisher = ({
       commonContent,
       commonHashtags,
       commonScheduledAt,
-      prefill?.sourceAssetId,
+      activePrefill?.sourceAssetId,
       platformOverrides,
       deliveries,
       selectedDestinations,
@@ -247,6 +265,7 @@ export const SnsStudioCommonPublisher = ({
       setPlanId(result.id);
       setSavedSignature(signature);
       setMessage('配信計画を保存しました。');
+      await refreshPlans();
     } catch (saveError) {
       setMessage(
         saveError instanceof Error
@@ -256,6 +275,122 @@ export const SnsStudioCommonPublisher = ({
     } finally {
       setSaving(false);
     }
+  };
+
+  const resetPlan = () => {
+    setPlanId(null);
+    setTitle('');
+    setCommonContent(activePrefill?.content || '');
+    setCommonHashtags('');
+    setCommonScheduledAt('');
+    setPlatformOverrides({});
+    setDeliveries({});
+    setSavedSignature('');
+    setMessage('');
+  };
+
+  const loadPlan = async (plan: any) => {
+    if (!['DRAFT', 'READY'].includes(plan.status)) {
+      setMessage('Postiz作成済みの配信計画は重複投稿防止のため再編集できません。');
+      return;
+    }
+
+    let nextPrefill: CommonPublishPrefill | null = null;
+    if (plan.originalAsset?.id) {
+      const response = await fetch(
+        `/sns-studio/media-assets/${plan.originalAsset.id}/post-media`,
+        { method: 'POST' }
+      );
+      const bridged = await response.json().catch(() => ({}));
+      if (response.ok && bridged?.media?.id && bridged?.media?.path) {
+        nextPrefill = {
+          sourceAssetId: bridged.sourceAssetId,
+          media: {
+            id: bridged.media.id,
+            path: bridged.media.path,
+          },
+        };
+      }
+    }
+
+    const nextPlatforms = Object.fromEntries(
+      (plan.platformOverrides || []).map((item: any) => [
+        item.platform,
+        {
+          content: item.contentOverride || '',
+          hashtags: Array.isArray(item.hashtagsOverride)
+            ? item.hashtagsOverride.join(' ')
+            : '',
+          scheduledAt: localDate(item.scheduledAtOverride),
+        },
+      ])
+    );
+    const nextDeliveries = Object.fromEntries(
+      (plan.deliveries || []).map((item: any) => [
+        item.integrationId,
+        {
+          selected: true,
+          content: item.contentOverride || '',
+          hashtags: Array.isArray(item.hashtagsOverride)
+            ? item.hashtagsOverride.join(' ')
+            : '',
+          scheduledAt: localDate(item.scheduledAtOverride),
+        },
+      ])
+    );
+    const nextCommonScheduledAt = localDate(plan.commonScheduledAt);
+
+    setActivePrefill(nextPrefill);
+    setPlanId(plan.id);
+    setTitle(plan.title || '');
+    setCommonContent(plan.commonContent || '');
+    setCommonHashtags(
+      Array.isArray(plan.commonHashtags) ? plan.commonHashtags.join(' ') : ''
+    );
+    setCommonScheduledAt(nextCommonScheduledAt);
+    setPlatformOverrides(nextPlatforms);
+    setDeliveries(nextDeliveries);
+
+    const nextPayload = {
+      title: plan.title || '',
+      commonContent: plan.commonContent || '',
+      commonHashtags: Array.isArray(plan.commonHashtags)
+        ? plan.commonHashtags
+        : [],
+      commonScheduledAt: nextCommonScheduledAt
+        ? dayjs(nextCommonScheduledAt).toISOString()
+        : null,
+      originalAssetId: plan.originalAsset?.id || null,
+      platformOverrides: Object.entries(nextPlatforms)
+        .filter(([, value]: any) =>
+          value.content || value.hashtags || value.scheduledAt
+        )
+        .map(([platform, value]: any) => ({
+          platform,
+          ...(value.content ? { contentOverride: value.content } : {}),
+          ...(value.hashtags
+            ? { hashtagsOverride: parseHashtags(value.hashtags) }
+            : {}),
+          ...(value.scheduledAt
+            ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
+            : {}),
+        })),
+      deliveries: (plan.deliveries || []).map((item: any) => {
+        const value: any = nextDeliveries[item.integrationId];
+        return {
+          integrationId: item.integrationId,
+          ...(value.content ? { contentOverride: value.content } : {}),
+          ...(value.hashtags
+            ? { hashtagsOverride: parseHashtags(value.hashtags) }
+            : {}),
+          ...(value.scheduledAt
+            ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
+            : {}),
+        };
+      }),
+    };
+    setSavedSignature(JSON.stringify(nextPayload));
+    setMessage('保存済み配信計画を読み込みました。');
   };
 
   const selectedChannels = selectedDestinations.map(
@@ -270,7 +405,7 @@ export const SnsStudioCommonPublisher = ({
         [
           {
             content: appendHashtags(effective.content, effective.hashtags),
-            image: prefill ? [prefill.media] : [],
+            image: activePrefill ? [activePrefill.media] : [],
           },
         ],
       ];
@@ -313,12 +448,51 @@ export const SnsStudioCommonPublisher = ({
           <p className="text-sm text-textItemBlur">
             共通値を設定し、必要なSNS・アカウントだけ個別上書きします。実際の投稿処理とSNS固有設定は既存Postiz providerを再利用します。
           </p>
-          {prefill && (
+          {activePrefill && (
             <div className="mt-2 rounded-lg border border-blockSeparator p-3 text-xs text-textItemBlur">
-              SNS Studio素材: {prefill.media.path}
+              SNS Studio素材: {activePrefill.media.path}
             </div>
           )}
           {message && <div className="text-sm">{message}</div>}
+        </div>
+      </div>
+
+      <div className={card}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">保存済み配信計画</h3>
+            <p className="text-xs text-textItemBlur">
+              DRAFT / READYのみ再編集できます。Postiz作成済みは履歴として保持します。
+            </p>
+          </div>
+          <button className={secondaryButton} onClick={resetPlan}>
+            新しい配信計画
+          </button>
+        </div>
+        <div className="grid gap-2">
+          {plans.length === 0 && (
+            <div className="text-sm text-textItemBlur">保存済み計画はありません。</div>
+          )}
+          {plans.slice(0, 12).map((plan: any) => (
+            <div
+              key={plan.id}
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-3 text-sm"
+            >
+              <div className="min-w-[180px] flex-1">
+                <div className="font-semibold">{plan.title || '名称未設定'}</div>
+                <div className="text-xs text-textItemBlur">
+                  {plan.status} · {plan.deliveries?.length || 0}配信先
+                </div>
+              </div>
+              <button
+                className={secondaryButton}
+                disabled={!['DRAFT', 'READY'].includes(plan.status)}
+                onClick={() => void loadPlan(plan)}
+              >
+                読み込む
+              </button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -533,7 +707,7 @@ export const SnsStudioCommonPublisher = ({
                         commonContent,
                         parseHashtags(commonHashtags)
                       ),
-                      image: prefill ? [prefill.media] : [],
+                      image: activePrefill ? [activePrefill.media] : [],
                     },
                   ]}
                   onlyValuesByIntegration={onlyValuesByIntegration}
