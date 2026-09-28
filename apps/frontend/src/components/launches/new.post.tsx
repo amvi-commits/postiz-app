@@ -11,7 +11,12 @@ import { ModalWrapperComponent } from '@gitroom/frontend/components/new-launch/m
 
 export const NewPost = (props: {
   onlyValues?: AddEditModalProps['onlyValues'];
+  onlyValuesByIntegration?: AddEditModalProps['onlyValuesByIntegration'];
   selectedChannels?: string[];
+  selectedChannelSettings?: AddEditModalProps['selectedChannelSettings'];
+  scheduledAtByIntegration?: AddEditModalProps['scheduledAtByIntegration'];
+  onPosted?: AddEditModalProps['onPosted'];
+  date?: dayjs.Dayjs;
   label?: string;
 } = {}) => {
   const fetch = useFetch();
@@ -20,7 +25,9 @@ export const NewPost = (props: {
   const t = useT();
 
   const createAPost = useCallback(async () => {
-    const date = (await (await fetch('/posts/find-slot')).json()).date;
+    const date =
+      props.date ||
+      dayjs.utc((await (await fetch('/posts/find-slot')).json()).date).local();
 
     const set: any = props.onlyValues?.length || !sets.length
       ? undefined
@@ -70,17 +77,31 @@ export const NewPost = (props: {
           }))}
           {...(set?.content ? { set: JSON.parse(set.content) } : {})}
           {...(props.onlyValues ? { onlyValues: props.onlyValues } : {})}
+          {...(props.onlyValuesByIntegration ? { onlyValuesByIntegration: props.onlyValuesByIntegration } : {})}
           {...(props.selectedChannels ? { selectedChannels: props.selectedChannels } : {})}
+          {...(props.selectedChannelSettings ? { selectedChannelSettings: props.selectedChannelSettings } : {})}
+          {...(props.scheduledAtByIntegration ? { scheduledAtByIntegration: props.scheduledAtByIntegration } : {})}
+          {...(props.onPosted ? { onPosted: props.onPosted } : {})}
           reopenModal={createAPost}
           mutate={reloadCalendarView}
           integrations={integrations}
-          date={dayjs.utc(date).local()}
+          date={date}
         />
       ),
       size: '80%',
       title: ``,
     });
-  }, [integrations, sets, props.onlyValues, props.selectedChannels]);
+  }, [
+    integrations,
+    sets,
+    props.onlyValues,
+    props.onlyValuesByIntegration,
+    props.selectedChannels,
+    props.selectedChannelSettings,
+    props.scheduledAtByIntegration,
+    props.onPosted,
+    props.date,
+  ]);
   return (
     <button
       onClick={createAPost}
