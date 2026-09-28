@@ -122,6 +122,7 @@ export const SnsStudio = () => {
       throw new Error('共通投稿用Mediaの作成に失敗しました。');
     }
     setCommonPostPrefill({
+      sourceAssetId: result.sourceAssetId,
       media: {
         id: result.media.id,
         path: result.media.path,
