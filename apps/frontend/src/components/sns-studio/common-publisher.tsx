@@ -27,7 +27,19 @@ const platformName = (identifier: string) => {
   return identifier;
 };
 
-export const SnsStudioCommonPublisher = () => {
+export type CommonPublishPrefill = {
+  content?: string;
+  media: {
+    id: string;
+    path: string;
+  };
+};
+
+export const SnsStudioCommonPublisher = ({
+  prefill,
+}: {
+  prefill?: CommonPublishPrefill | null;
+}) => {
   const { data: integrations = [], isLoading, error } = useIntegrationList();
 
   if (isLoading) {
@@ -87,10 +99,31 @@ export const SnsStudioCommonPublisher = () => {
           )}
         </div>
 
+        {prefill && (
+          <div className="mb-4 rounded-lg border border-blockSeparator p-3 text-sm">
+            <div className="font-semibold">SNS Studio素材を引き継ぎます</div>
+            <div className="mt-1 break-all text-xs text-textItemBlur">
+              {prefill.media.path}
+            </div>
+          </div>
+        )}
+
         {destinations.length > 0 && (
           <CalendarWeekProvider integrations={destinations}>
-            <div className="max-w-[260px]">
-              <NewPost />
+            <div className="max-w-[320px]">
+              <NewPost
+                label={prefill ? 'この素材で共通投稿を作成' : undefined}
+                onlyValues={
+                  prefill
+                    ? [
+                        {
+                          content: prefill.content || '',
+                          image: [prefill.media],
+                        },
+                      ]
+                    : undefined
+                }
+              />
             </div>
           </CalendarWeekProvider>
         )}
