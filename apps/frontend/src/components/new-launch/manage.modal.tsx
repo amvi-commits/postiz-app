@@ -478,12 +478,25 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             });
             const created = await response.json().catch(() => []);
             if (!response.ok) {
+              if (postedItems.length && props.onPosted) {
+                try {
+                  await props.onPosted({ type, items: postedItems });
+                } catch {
+                  toaster.show(
+                    t(
+                      'sns_studio_tracking_update_failed',
+                      'Earlier destinations were created, but SNS Studio tracking could not be updated. Review the calendar before retrying.'
+                    ),
+                    'warning'
+                  );
+                }
+              }
               toaster.show(
                 (created as any)?.message ||
                   (created as any)?.error ||
                   t(
                     'sns_studio_partial_schedule_failed',
-                    'A scheduled post could not be created. Review the calendar before retrying because earlier destinations may already have been saved.'
+                    'A scheduled post could not be created. Earlier successful destinations were recorded; review the calendar before creating the remaining destinations.'
                   ),
                 'warning'
               );
