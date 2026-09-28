@@ -43,7 +43,13 @@ export interface AddEditModalProps {
   scheduledAtByIntegration?: Record<string, string>;
   onPosted?: (result: {
     type: 'draft' | 'now' | 'schedule' | 'update';
-    items: Array<{ postId: string; integration: string; date: string }>;
+    items: Array<{
+      postId: string;
+      integration: string;
+      date: string;
+      content?: string;
+      settings?: Record<string, any>;
+    }>;
   }) => void | Promise<void>;
 }
 
