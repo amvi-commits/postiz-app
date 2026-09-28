@@ -31,6 +31,20 @@ export interface AddEditModalProps {
       path: string;
     }>;
   }>;
+  onlyValuesByIntegration?: Record<string, Array<{
+    content: string;
+    id?: string;
+    image?: Array<{
+      id: string;
+      path: string;
+    }>;
+  }>>;
+  selectedChannelSettings?: Record<string, any>;
+  scheduledAtByIntegration?: Record<string, string>;
+  onPosted?: (result: {
+    type: 'draft' | 'now' | 'schedule' | 'update';
+    items: Array<{ postId: string; integration: string; date: string }>;
+  }) => void | Promise<void>;
 }
 
 export const AddEditModal: FC<AddEditModalProps> = (props) => {
@@ -100,7 +114,7 @@ export const AddEditModalInner: FC<AddEditModalProps> = (props) => {
       for (const channel of props.selectedChannels) {
         const integration = integrations.find((i) => i.id === channel);
         if (integration) {
-          addOrRemoveSelectedIntegration(integration, {});
+          addOrRemoveSelectedIntegration(integration, props.selectedChannelSettings?.[channel] || {});
         }
       }
     }
@@ -212,6 +226,29 @@ export const AddEditModalInnerInner: FC<AddEditModalProps> = (props) => {
             },
           ]
     );
+
+
+    for (const [integrationId, values] of Object.entries(
+      props.onlyValuesByIntegration || {}
+    )) {
+      if (!values?.length) continue;
+      addInternalValue(
+        0,
+        integrationId,
+        values.map((p) => ({
+          content:
+            p.content.indexOf('<p>') > -1
+              ? p.content
+              : p.content
+                  .split('\n')
+                  .map((line: string) => `<p>${line}</p>`)
+                  .join(''),
+          id: makeId(10),
+          media: p.image || [],
+          delay: 0,
+        }))
+      );
+    }
 
     return () => {
       reset();
