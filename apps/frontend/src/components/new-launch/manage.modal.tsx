@@ -487,7 +487,17 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }
 
           if (props.onPosted) {
-            await props.onPosted({ type, items: postedItems });
+            try {
+              await props.onPosted({ type, items: postedItems });
+            } catch {
+              toaster.show(
+                t(
+                  'sns_studio_tracking_update_failed',
+                  'The posts were created, but SNS Studio tracking could not be updated.'
+                ),
+                'warning'
+              );
+            }
           }
 
           mutate();
