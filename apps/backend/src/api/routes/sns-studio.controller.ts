@@ -251,6 +251,217 @@ export class SnsStudioController {
     return account;
   }
 
+  private snsPlatform(providerIdentifier: string) {
+    if (providerIdentifier.startsWith('instagram')) return 'instagram';
+    if (providerIdentifier.startsWith('tiktok')) return 'tiktok';
+    if (providerIdentifier === 'youtube') return 'youtube';
+    if (providerIdentifier === 'threads') return 'threads';
+    if (providerIdentifier === 'x') return 'x';
+    return providerIdentifier;
+  }
+
+  private snsHashtags(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => (item.startsWith('#') ? item : `#${item}`));
+  }
+
+  private snsOptionalDate(value: unknown, code: string): Date | null {
+    if (value === undefined || value === null || value === '') return null;
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) {
+      throw new HttpException({ code }, HttpStatus.BAD_REQUEST);
+    }
+    return date;
+  }
+
+  private async contentPlan(organizationId: string, id: string) {
+    return this.prisma.snsContent.findFirst({
+      where: { id, organizationId },
+      include: {
+        originalAsset: true,
+        variants: { include: { mediaAsset: true }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] },
+        platformOverrides: { orderBy: { platform: 'asc' } },
+        deliveries: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  private async saveContentPlan(
+    organizationId: string,
+    body: Record<string, any>,
+    contentId?: string
+  ) {
+    const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+    const commonContent = typeof body.commonContent === 'string' ? body.commonContent : '';
+    const commonHashtags = this.snsHashtags(body.commonHashtags);
+    const commonScheduledAt = this.snsOptionalDate(body.commonScheduledAt, 'COMMON_SCHEDULE_INVALID');
+    const originalAssetId = typeof body.originalAssetId === 'string' && body.originalAssetId ? body.originalAssetId : null;
+    const platformOverrides = Array.isArray(body.platformOverrides) ? body.platformOverrides : [];
+    const deliveryInput = Array.isArray(body.deliveries) ? body.deliveries : [];
+
+    if (originalAssetId) {
+      const asset = await this.prisma.snsMediaAsset.findFirst({
+        where: { id: originalAssetId, organizationId },
+      });
+      if (!asset) {
+        throw new HttpException({ code: 'CONTENT_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+      }
+    }
+
+    const integrationIds = Array.from(
+      new Set(
+        deliveryInput
+          .map((delivery: any) => String(delivery?.integrationId || ''))
+          .filter(Boolean)
+      )
+    );
+    const integrations = integrationIds.length
+      ? await this.prisma.integration.findMany({
+          where: {
+            id: { in: integrationIds },
+            organizationId,
+            deletedAt: null,
+            disabled: false,
+          },
+        })
+      : [];
+    if (integrations.length !== integrationIds.length) {
+      throw new HttpException({ code: 'CONTENT_DELIVERY_ACCOUNT_INVALID' }, HttpStatus.BAD_REQUEST);
+    }
+    const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
+
+    const existing = contentId ? await this.contentPlan(organizationId, contentId) : null;
+    if (contentId && !existing) {
+      throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    if (existing?.deliveries.some((delivery) => delivery.status !== 'PLANNED')) {
+      throw new HttpException({ code: 'CONTENT_PLAN_LOCKED_AFTER_POSTIZ_CREATE' }, HttpStatus.CONFLICT);
+    }
+
+    const savedId = await this.prisma.$transaction(async (tx) => {
+      const content = existing
+        ? await tx.snsContent.update({
+            where: { id: existing.id },
+            data: {
+              title: title || null,
+              commonContent,
+              commonHashtags: commonHashtags as any,
+              commonScheduledAt,
+              originalAssetId,
+              status: deliveryInput.length ? 'READY' : 'DRAFT',
+            },
+          })
+        : await tx.snsContent.create({
+            data: {
+              organizationId,
+              title: title || null,
+              commonContent,
+              commonHashtags: commonHashtags as any,
+              commonScheduledAt,
+              originalAssetId,
+              status: deliveryInput.length ? 'READY' : 'DRAFT',
+            },
+          });
+
+      let variants = existing?.variants || [];
+      if (!variants.length && originalAssetId) {
+        const variant = await tx.snsContentVariant.create({
+          data: {
+            contentId: content.id,
+            mediaAssetId: originalAssetId,
+            name: 'Default',
+            isDefault: true,
+          },
+        });
+        variants = [variant as any];
+      }
+
+      await tx.snsContentPlatformOverride.deleteMany({ where: { contentId: content.id } });
+      for (const item of platformOverrides) {
+        const platform = typeof item?.platform === 'string' ? item.platform.trim().toLowerCase() : '';
+        if (!platform) continue;
+        await tx.snsContentPlatformOverride.create({
+          data: {
+            contentId: content.id,
+            platform,
+            contentOverride: typeof item.contentOverride === 'string' && item.contentOverride !== '' ? item.contentOverride : null,
+            hashtagsOverride: Array.isArray(item.hashtagsOverride) ? this.snsHashtags(item.hashtagsOverride) as any : undefined,
+            scheduledAtOverride: this.snsOptionalDate(item.scheduledAtOverride, 'PLATFORM_SCHEDULE_INVALID'),
+            settingsOverride: item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride) ? item.settingsOverride as any : undefined,
+          },
+        });
+      }
+
+      await tx.snsDelivery.deleteMany({ where: { contentId: content.id, status: 'PLANNED' } });
+      const defaultVariant = variants.find((variant: any) => variant.isDefault) || variants[0];
+      const platformMap = new Map(
+        platformOverrides
+          .filter((item: any) => typeof item?.platform === 'string')
+          .map((item: any) => [String(item.platform).trim().toLowerCase(), item])
+      );
+
+      for (const item of deliveryInput) {
+        const integration = integrationById.get(String(item.integrationId || ''));
+        if (!integration) continue;
+        const platform = this.snsPlatform(integration.providerIdentifier);
+        const platformOverride: any = platformMap.get(platform) || {};
+        const resolvedContent =
+          typeof item.contentOverride === 'string' && item.contentOverride !== ''
+            ? item.contentOverride
+            : typeof platformOverride.contentOverride === 'string' && platformOverride.contentOverride !== ''
+              ? platformOverride.contentOverride
+              : commonContent;
+        const resolvedHashtags = Array.isArray(item.hashtagsOverride)
+          ? this.snsHashtags(item.hashtagsOverride)
+          : Array.isArray(platformOverride.hashtagsOverride)
+            ? this.snsHashtags(platformOverride.hashtagsOverride)
+            : commonHashtags;
+        const resolvedScheduledAt =
+          this.snsOptionalDate(item.scheduledAtOverride, 'ACCOUNT_SCHEDULE_INVALID') ||
+          this.snsOptionalDate(platformOverride.scheduledAtOverride, 'PLATFORM_SCHEDULE_INVALID') ||
+          commonScheduledAt;
+        const platformSettings =
+          platformOverride.settingsOverride && typeof platformOverride.settingsOverride === 'object' && !Array.isArray(platformOverride.settingsOverride)
+            ? platformOverride.settingsOverride
+            : {};
+        const accountSettings =
+          item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride)
+            ? item.settingsOverride
+            : {};
+        const requestedVariantId = typeof item.variantId === 'string' ? item.variantId : null;
+        const variant =
+          (requestedVariantId && variants.find((candidate: any) => candidate.id === requestedVariantId)) ||
+          defaultVariant ||
+          null;
+
+        await tx.snsDelivery.create({
+          data: {
+            contentId: content.id,
+            variantId: variant?.id || null,
+            integrationId: integration.id,
+            providerIdentifier: integration.providerIdentifier,
+            accountName: integration.name,
+            contentOverride: typeof item.contentOverride === 'string' && item.contentOverride !== '' ? item.contentOverride : null,
+            hashtagsOverride: Array.isArray(item.hashtagsOverride) ? this.snsHashtags(item.hashtagsOverride) as any : undefined,
+            scheduledAtOverride: this.snsOptionalDate(item.scheduledAtOverride, 'ACCOUNT_SCHEDULE_INVALID'),
+            settingsOverride: Object.keys(accountSettings).length ? accountSettings as any : undefined,
+            resolvedContent,
+            resolvedHashtags: resolvedHashtags as any,
+            resolvedScheduledAt,
+          },
+        });
+      }
+
+      return content.id;
+    });
+
+    return this.contentPlan(organizationId, savedId);
+  }
+
   private async retentionDays(organizationId: string) {
     const setting = await this.prisma.snsAppSetting.findUnique({ where: { organizationId_key: { organizationId, key: 'sns:retention-days' } } });
     return typeof setting?.value === 'number' ? setting.value : 7;
@@ -1061,6 +1272,103 @@ export class SnsStudioController {
     const pool = await this.prisma.snsStoryPool.findFirst({ where: { id: poolId, organizationId: org.id } });
     if (!pool) throw new HttpException('Story Pool not found', HttpStatus.NOT_FOUND);
     return this.prisma.snsInstagramAccount.update({ where: { id: accountId }, data: { defaultStoryPoolId: poolId } });
+  }
+
+  @Get('/content-plans')
+  listContentPlans(@GetOrgFromRequest() org: Organization) {
+    return this.prisma.snsContent.findMany({
+      where: { organizationId: org.id },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+      include: {
+        originalAsset: true,
+        variants: { include: { mediaAsset: true }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] },
+        platformOverrides: true,
+        deliveries: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  @Get('/content-plans/:id')
+  async getContentPlan(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    return plan;
+  }
+
+  @Post('/content-plans')
+  createContentPlan(@GetOrgFromRequest() org: Organization, @Body() body: Record<string, any>) {
+    return this.saveContentPlan(org.id, body);
+  }
+
+  @Put('/content-plans/:id')
+  updateContentPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: Record<string, any>
+  ) {
+    return this.saveContentPlan(org.id, body, id);
+  }
+
+  @Post('/content-plans/:id/variants')
+  async addContentVariant(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: Record<string, any>
+  ) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const mediaAssetId = typeof body.mediaAssetId === 'string' ? body.mediaAssetId : '';
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { id: mediaAssetId, organizationId: org.id },
+    });
+    if (!asset) throw new HttpException({ code: 'CONTENT_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const makeDefault = body.isDefault === true || plan.variants.length === 0;
+    const variant = await this.prisma.$transaction(async (tx) => {
+      if (makeDefault) {
+        await tx.snsContentVariant.updateMany({ where: { contentId: id }, data: { isDefault: false } });
+      }
+      return tx.snsContentVariant.create({
+        data: {
+          contentId: id,
+          mediaAssetId,
+          name: typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : 'Variant',
+          isDefault: makeDefault,
+          metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
+        },
+        include: { mediaAsset: true },
+      });
+    });
+    return variant;
+  }
+
+  @Post('/content-plans/:id/post-links')
+  async linkContentPlanPosts(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: { type?: string; items?: Array<{ integration?: string; postId?: string; date?: string }> }
+  ) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const type = body.type || 'schedule';
+    const status = type === 'draft' ? 'POSTIZ_DRAFT' : type === 'now' ? 'QUEUED' : 'SCHEDULED';
+    for (const item of body.items || []) {
+      if (!item?.integration || !item?.postId) continue;
+      await this.prisma.snsDelivery.updateMany({
+        where: { contentId: id, integrationId: item.integration },
+        data: {
+          postId: item.postId,
+          status,
+          resolvedScheduledAt: item.date ? this.snsOptionalDate(item.date, 'DELIVERY_SCHEDULE_INVALID') : undefined,
+          lastError: null,
+        },
+      });
+    }
+    await this.prisma.snsContent.update({
+      where: { id },
+      data: { status: type === 'draft' ? 'POSTIZ_DRAFT' : type === 'now' ? 'QUEUED' : 'SCHEDULED' },
+    });
+    return this.contentPlan(org.id, id);
   }
 
   @Get('/content-inbox')
