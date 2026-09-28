@@ -427,10 +427,6 @@ export const SnsStudioCommonPublisher = ({
             ? item.hashtagsOverride.join(' ')
             : '',
           scheduledAt: localDate(item.scheduledAtOverride),
-          variantAssetId:
-            (plan.variants || []).find(
-              (variant: any) => variant.id === item.variantId
-            )?.mediaAssetId || '',
         },
       ])
     );
@@ -444,6 +440,10 @@ export const SnsStudioCommonPublisher = ({
             ? item.hashtagsOverride.join(' ')
             : '',
           scheduledAt: localDate(item.scheduledAtOverride),
+          variantAssetId:
+            (plan.variants || []).find(
+              (variant: any) => variant.id === item.variantId
+            )?.mediaAssetId || '',
         },
       ])
     );
