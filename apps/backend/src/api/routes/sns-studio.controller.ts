@@ -271,7 +271,11 @@ export class SnsStudioController {
 
   private snsOptionalDate(value: unknown, code: string): Date | null {
     if (value === undefined || value === null || value === '') return null;
-    const date = new Date(String(value));
+    const text = String(value);
+    const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
+      ? `${text}Z`
+      : text;
+    const date = new Date(normalized);
     if (Number.isNaN(date.getTime())) {
       throw new HttpException({ code }, HttpStatus.BAD_REQUEST);
     }
@@ -424,10 +428,6 @@ export class SnsStudioController {
           this.snsOptionalDate(item.scheduledAtOverride, 'ACCOUNT_SCHEDULE_INVALID') ||
           this.snsOptionalDate(platformOverride.scheduledAtOverride, 'PLATFORM_SCHEDULE_INVALID') ||
           commonScheduledAt;
-        const platformSettings =
-          platformOverride.settingsOverride && typeof platformOverride.settingsOverride === 'object' && !Array.isArray(platformOverride.settingsOverride)
-            ? platformOverride.settingsOverride
-            : {};
         const accountSettings =
           item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride)
             ? item.settingsOverride
