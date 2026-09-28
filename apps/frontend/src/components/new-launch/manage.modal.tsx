@@ -437,14 +437,59 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
       }
 
       if (!dummy) {
-        addEditSets
-          ? addEditSets(data)
-          : await fetch('/posts', {
-              method: 'POST',
-              body: JSON.stringify(data),
-            });
+        if (addEditSets) {
+          addEditSets(data);
+        } else {
+          const payloads =
+            type === 'schedule' && props.scheduledAtByIntegration
+              ? Array.from(
+                  posts.reduce((grouped: Map<string, any[]>, post: any) => {
+                    const requestedDate =
+                      props.scheduledAtByIntegration?.[post.integration.id];
+                    const effectiveDate = requestedDate
+                      ? dayjs(requestedDate)
+                          .utc()
+                          .format('YYYY-MM-DDTHH:mm:ss')
+                      : data.date;
+                    const list = grouped.get(effectiveDate) || [];
+                    list.push(post);
+                    grouped.set(effectiveDate, list);
+                    return grouped;
+                  }, new Map<string, any[]>())
+                ).map(([effectiveDate, groupedPosts]) => ({
+                  ...data,
+                  date: effectiveDate,
+                  posts: groupedPosts,
+                }))
+              : [data];
 
-        if (!addEditSets) {
+          const postedItems: Array<{
+            postId: string;
+            integration: string;
+            date: string;
+          }> = [];
+
+          for (const payload of payloads) {
+            const response = await fetch('/posts', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            });
+            const created = await response.json().catch(() => []);
+            if (Array.isArray(created)) {
+              postedItems.push(
+                ...created.map((item: any) => ({
+                  postId: item.postId,
+                  integration: item.integration,
+                  date: payload.date,
+                }))
+              );
+            }
+          }
+
+          if (props.onPosted) {
+            await props.onPosted({ type, items: postedItems });
+          }
+
           mutate();
           toaster.show(
             !existingData.integration
