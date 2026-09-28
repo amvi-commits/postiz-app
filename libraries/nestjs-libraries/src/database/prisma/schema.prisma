@@ -2037,9 +2037,10 @@ model SnsDelivery {
   accountName         String?
   contentOverride     String?
   hashtagsOverride    Json?
-  scheduledAtOverride DateTime?
-  settingsOverride    Json?
-  resolvedContent     String?
+  scheduledAtOverride      DateTime?
+  settingsOverride         Json?
+  providerSettingsSnapshot Json?
+  resolvedContent          String?
   resolvedHashtags    Json?
   resolvedScheduledAt DateTime?
   postId              String?
