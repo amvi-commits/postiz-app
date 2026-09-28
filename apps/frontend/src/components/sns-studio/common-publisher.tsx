@@ -53,6 +53,20 @@ const parseHashtags = (value: string) =>
 const appendHashtags = (content: string, hashtags: string[]) =>
   [content.trim(), hashtags.join(' ')].filter(Boolean).join('\n\n');
 
+const contentPlanSignature = (payload: any) =>
+  JSON.stringify({
+    ...payload,
+    variants: [...(payload.variants || [])].sort((a: any, b: any) =>
+      String(a.mediaAssetId).localeCompare(String(b.mediaAssetId))
+    ),
+    platformOverrides: [...(payload.platformOverrides || [])].sort(
+      (a: any, b: any) => String(a.platform).localeCompare(String(b.platform))
+    ),
+    deliveries: [...(payload.deliveries || [])].sort((a: any, b: any) =>
+      String(a.integrationId).localeCompare(String(b.integrationId))
+    ),
+  });
+
 type OverrideState = {
   content: string;
   hashtags: string;
@@ -240,7 +254,7 @@ export const SnsStudioCommonPublisher = ({
     ]
   );
 
-  const signature = JSON.stringify(planPayload);
+  const signature = contentPlanSignature(planPayload);
   const dirty = planId ? signature !== savedSignature : true;
 
   const effectiveFor = (integration: (typeof destinations)[number]) => {
@@ -506,7 +520,7 @@ export const SnsStudioCommonPublisher = ({
         };
       }),
     };
-    setSavedSignature(JSON.stringify(nextPayload));
+    setSavedSignature(contentPlanSignature(nextPayload));
     setMessage('保存済み配信計画を読み込みました。');
   };
 
