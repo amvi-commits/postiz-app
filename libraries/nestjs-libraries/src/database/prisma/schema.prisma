@@ -59,6 +59,7 @@ model Organization {
   snsAppSettings      SnsAppSetting[]
   snsVoicePresets     SnsVoicePreset[]
   snsGenerationJobs   SnsGenerationJob[]
+  snsContents         SnsContent[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1966,8 +1967,93 @@ model SnsMediaAsset {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   storyItems     SnsStoryPoolItem[]
   inboxItems     SnsContentInboxItem[]
+  originalContents SnsContent[]        @relation("SnsContentOriginalAsset")
+  contentVariants  SnsContentVariant[] @relation("SnsContentVariantAsset")
 
   @@index([organizationId, isFinal, createdAt])
+}
+
+model SnsContent {
+  id                String       @id @default(cuid())
+  organizationId    String
+  title             String?
+  commonContent     String       @default("")
+  commonHashtags    Json?
+  commonScheduledAt DateTime?
+  status            String       @default("DRAFT")
+  originalAssetId   String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  originalAsset     SnsMediaAsset? @relation("SnsContentOriginalAsset", fields: [originalAssetId], references: [id], onDelete: SetNull)
+  variants          SnsContentVariant[]
+  platformOverrides SnsContentPlatformOverride[]
+  deliveries        SnsDelivery[]
+
+  @@index([organizationId, status, updatedAt])
+  @@index([originalAssetId])
+}
+
+model SnsContentVariant {
+  id           String       @id @default(cuid())
+  contentId    String
+  mediaAssetId String
+  name         String
+  isDefault    Boolean      @default(false)
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  content      SnsContent   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  mediaAsset   SnsMediaAsset @relation("SnsContentVariantAsset", fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  deliveries   SnsDelivery[]
+
+  @@index([contentId, isDefault])
+  @@index([mediaAssetId])
+}
+
+model SnsContentPlatformOverride {
+  id                  String     @id @default(cuid())
+  contentId           String
+  platform            String
+  contentOverride     String?
+  hashtagsOverride    Json?
+  scheduledAtOverride DateTime?
+  settingsOverride    Json?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  content             SnsContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, platform])
+  @@index([contentId])
+}
+
+model SnsDelivery {
+  id                  String      @id @default(cuid())
+  contentId           String
+  variantId           String?
+  integrationId       String
+  providerIdentifier  String
+  accountName         String?
+  contentOverride     String?
+  hashtagsOverride    Json?
+  scheduledAtOverride DateTime?
+  settingsOverride    Json?
+  resolvedContent     String?
+  resolvedHashtags    Json?
+  resolvedScheduledAt DateTime?
+  postId              String?
+  status              String      @default("PLANNED")
+  lastError           String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  content             SnsContent  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  variant             SnsContentVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([contentId, integrationId])
+  @@index([contentId, status])
+  @@index([integrationId])
+  @@index([providerIdentifier])
+  @@index([postId])
 }
 
 model SnsEditingPreset {
