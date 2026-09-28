@@ -118,7 +118,7 @@ export const SnsStudioCommonPublisher = ({
       title,
       commonContent,
       commonHashtags: parseHashtags(commonHashtags),
-      commonScheduledAt: commonScheduledAt || null,
+      commonScheduledAt: commonScheduledAt ? dayjs(commonScheduledAt).toISOString() : null,
       originalAssetId: prefill?.sourceAssetId || null,
       platformOverrides: Object.entries(platformOverrides)
         .filter(
@@ -132,7 +132,7 @@ export const SnsStudioCommonPublisher = ({
             ? { hashtagsOverride: parseHashtags(value.hashtags) }
             : {}),
           ...(value.scheduledAt
-            ? { scheduledAtOverride: value.scheduledAt }
+            ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
             : {}),
         })),
       deliveries: selectedDestinations.map((integration) => {
@@ -149,7 +149,7 @@ export const SnsStudioCommonPublisher = ({
             ? { hashtagsOverride: parseHashtags(value.hashtags) }
             : {}),
           ...(value.scheduledAt
-            ? { scheduledAtOverride: value.scheduledAt }
+            ? { scheduledAtOverride: dayjs(value.scheduledAt).toISOString() }
             : {}),
         };
       }),
