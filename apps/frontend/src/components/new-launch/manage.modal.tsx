@@ -477,6 +477,19 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
               body: JSON.stringify(payload),
             });
             const created = await response.json().catch(() => []);
+            if (!response.ok) {
+              toaster.show(
+                (created as any)?.message ||
+                  (created as any)?.error ||
+                  t(
+                    'sns_studio_partial_schedule_failed',
+                    'A scheduled post could not be created. Review the calendar before retrying because earlier destinations may already have been saved.'
+                  ),
+                'warning'
+              );
+              setLoading(false);
+              return;
+            }
             if (Array.isArray(created)) {
               postedItems.push(
                 ...created.map((item: any) => {
