@@ -15,7 +15,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
-import { Organization } from '@prisma/client';
+import { Organization, Prisma } from '@prisma/client';
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { createReadStream, existsSync, readFileSync, statSync, unlinkSync } from 'fs';
@@ -652,7 +652,8 @@ export class SnsStudioController {
           const media = await tx.snsMediaAsset.create({
             data: { organizationId: org.id, source: 'GOOGLE_DRIVE', storageKey: mediaPath, fileName: cleanName, mimeType: file.mimeType, sizeBytes: size, isOriginal: true },
           });
-          const data = {
+          const data: Prisma.SnsContentInboxItemUncheckedCreateInput = {
+            organizationId: org.id,
             fileName: cleanName,
             mediaType,
             sizeBytes: size,
