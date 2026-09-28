@@ -153,10 +153,16 @@ Instagram direct worker経路は、Postiz provider経路で必要機能をすべ
 
 ### Phase 2 — 素材ブリッジ
 
+実装済み。
+
 - `SnsMediaAsset` からPostiz投稿用Mediaへ変換 / 登録する共通adapterを追加
-- 加工結果から「共通投稿で使用」を1クリックで起動
-- 元素材は複製せず参照関係を保持
-- Postiz providerが外部取得可能なURLを必ず利用
+- Content Inboxから「共通投稿で使用」を1クリックで起動
+- `SnsMediaAsset.metadata.postizMediaId` で同じbridgeを再利用
+- local storageでは元ファイルを複製せず公開URLをMediaへ登録
+- cloud storageではPostiz Storageへ1回だけstream転送
+- 共通投稿モーダルをprefill可能にし、Mediaを直接引き継ぐ
+
+注意: Instagram / Threadsなど外部側がURLを取得するproviderでは、local storageの`FRONTEND_URL`がインターネットから到達できる必要がある。公開URLが必要な本番運用ではCloudflare等の外部Storageを推奨する。
 
 ### Phase 3 — 共通コンテンツ / 配信バリエーション
 
@@ -241,4 +247,4 @@ TikTok初期値:
 - 接続済み Instagram / TikTok / TikTok Business / YouTube / Threads / X の抽出
 - 既存Postiz共通投稿モーダルの再利用
 
-次の実装対象はPhase 2の「SNS Studio加工済み素材 → 共通投稿」ブリッジ。
+Phase 2の「SNS Studio加工済み素材 → 共通投稿」ブリッジまで実装済み。次の実装対象はPhase 3/4の共通コンテンツ・配信バリエーションと階層上書き。
