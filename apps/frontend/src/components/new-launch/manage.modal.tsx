@@ -440,7 +440,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         if (addEditSets) {
           addEditSets(data);
         } else {
-          const payloads =
+          const payloads: any[] =
             type === 'schedule' && props.scheduledAtByIntegration
               ? Array.from(
                   posts.reduce((grouped: Map<string, any[]>, post: any) => {
@@ -456,11 +456,14 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                     grouped.set(effectiveDate, list);
                     return grouped;
                   }, new Map<string, any[]>())
-                ).map(([effectiveDate, groupedPosts]) => ({
-                  ...data,
-                  date: effectiveDate,
-                  posts: groupedPosts,
-                }))
+                ).map((entry) => {
+                  const [effectiveDate, groupedPosts] = entry as [string, any[]];
+                  return {
+                    ...data,
+                    date: effectiveDate,
+                    posts: groupedPosts,
+                  };
+                })
               : [data];
 
           const postedItems: Array<{
