@@ -7,6 +7,8 @@ import { Controller, Get, MiddlewareConsumer, Module, NestModule, Req } from '@n
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { sign as signJwt } from 'jsonwebtoken';
+jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
+
 import { AuthMiddleware } from '../auth/auth.middleware';
 import { AccountProtectionController } from '../../api/routes/account-protection.controller';
 import { AccountProtectionService } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection.service';
