@@ -85,6 +85,8 @@ jobs:
             try {
               const counts = {
                 Organization: await prisma.organization.count(),
+                User: await prisma.user.count(),
+                UserOrganization: await prisma.userOrganization.count(),
                 Integration: await prisma.integration.count(),
                 Post: await prisma.post.count(),
                 SnsPublishRecord: await prisma.snsPublishRecord.count(),
@@ -158,6 +160,8 @@ jobs:
             try {
               const counts = {
                 Organization: await prisma.organization.count(),
+                User: await prisma.user.count(),
+                UserOrganization: await prisma.userOrganization.count(),
                 Integration: await prisma.integration.count(),
                 Post: await prisma.post.count(),
                 SnsPublishRecord: await prisma.snsPublishRecord.count(),
