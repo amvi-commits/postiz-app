@@ -1,5 +1,365 @@
 {
   "version": 1,
-  "findings": []
+  "findings": [
+    {
+      "path": ".env.example",
+      "rule": "cloudflare-api-key",
+      "startLine": 17,
+      "endLine": 17,
+      "classification": "TRUE_SECRET",
+      "reason": "Historical environment example line contains a non-placeholder Cloudflare secret-key candidate; value withheld. Current source is sanitized, but history remains potentially exposed."
+    },
+    {
+      "path": ".env.example",
+      "rule": "cloudflare-api-key",
+      "startLine": 26,
+      "endLine": 26,
+      "classification": "TRUE_SECRET",
+      "reason": "Historical environment example line contains a non-placeholder Cloudflare secret-key candidate; value withheld. Current source is sanitized, but history remains potentially exposed."
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 24,
+      "endLine": 24,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 27,
+      "endLine": 27,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 30,
+      "endLine": 30,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 33,
+      "endLine": 33,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 25,
+      "endLine": 25,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 26,
+      "endLine": 26,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 56,
+      "endLine": 56,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 57,
+      "endLine": 57,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+    },
+    {
+      "path": "apps/docs/installation/development.mdx",
+      "rule": "cloudflare-api-key",
+      "startLine": 99,
+      "endLine": 99,
+      "classification": "TRUE_SECRET",
+      "reason": "Historical setup documentation line contains the same non-placeholder Cloudflare secret-key candidate as the environment example; value withheld. History remains potentially exposed."
+    },
+    {
+      "path": "apps/frontend/src/components/agents/agent.tsx",
+      "rule": "generic-api-key",
+      "startLine": 236,
+      "endLine": 236,
+      "classification": "TRUE_SECRET",
+      "reason": "Historical publicApiKey source-comment line contains a non-empty high-entropy value; value withheld and public-key status is unverified. Treat it as potentially exposed."
+    },
+    {
+      "path": "apps/frontend/src/components/launches/polonto.tsx",
+      "rule": "generic-api-key",
+      "startLine": 14,
+      "endLine": 14,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact value is the UI state-store namespace passed as createStore({ key }); it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "discord-client-secret",
+      "startLine": 141,
+      "endLine": 141,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "discord-client-secret",
+      "startLine": 149,
+      "endLine": 149,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 42,
+      "endLine": 42,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 48,
+      "endLine": 48,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 226,
+      "endLine": 226,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 242,
+      "endLine": 242,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 276,
+      "endLine": 276,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 277,
+      "endLine": 277,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 278,
+      "endLine": 278,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 280,
+      "endLine": 280,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 281,
+      "endLine": 281,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 292,
+      "endLine": 292,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 293,
+      "endLine": 293,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 294,
+      "endLine": 294,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 296,
+      "endLine": 296,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 297,
+      "endLine": 297,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 349,
+      "endLine": 349,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 363,
+      "endLine": 363,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 365,
+      "endLine": 365,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 379,
+      "endLine": 379,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 381,
+      "endLine": 381,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 410,
+      "endLine": 410,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 426,
+      "endLine": 426,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 580,
+      "endLine": 580,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 616,
+      "endLine": 616,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 710,
+      "endLine": 710,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 712,
+      "endLine": 712,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 714,
+      "endLine": 714,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 716,
+      "endLine": 716,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 717,
+      "endLine": 717,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 721,
+      "endLine": 721,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+    },
+    {
+      "path": "sonar-project.properties",
+      "rule": "sonar-api-token",
+      "startLine": 12,
+      "endLine": 12,
+      "classification": "TRUE_SECRET",
+      "reason": "Historical sonar.token property contains a non-empty SonarQube token-form value; value withheld. Treat it as potentially exposed."
+    }
+  ]
 }
-
