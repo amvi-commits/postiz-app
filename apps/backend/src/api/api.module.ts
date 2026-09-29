@@ -61,6 +61,7 @@ import { GoogleDriveStorageProvider } from '@gitroom/backend/services/sns-studio
 import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-studio/google-drive.generation-provider';
 import { OpenAICaptionProvider } from '@gitroom/backend/services/sns-studio/openai-caption.provider';
 import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
+import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 
 const authenticatedController = [
   UsersController,
@@ -135,6 +136,7 @@ const authenticatedController = [
     GoogleDriveGenerationProvider,
     OpenAICaptionProvider,
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
+    TikTokPublishAdapter,
   ],
   get exports() {
     return [...this.imports, ...this.providers];
