@@ -38,6 +38,135 @@ const subTabs: Array<{ id: SubTab; label: string; icon: string }> = [
   { id: 'Settings', label: 'アカウント・自動化', icon: '⚙️' },
 ];
 
+export interface ThreadsCalendarPost {
+  id: string;
+  state?: string;
+  publishDate?: string | Date;
+  content?: string;
+  text?: string;
+  group?: string;
+  releaseURL?: string | null;
+  permalink?: string | null;
+  isGhostPost?: boolean;
+  ghostStatus?: 'ACTIVE' | 'ARCHIVED' | null;
+  remainingMinutes?: number | null;
+  ghostExpiresAt?: string | Date | null;
+  topicTag?: string | null;
+  hasPoll?: boolean;
+  hasSpoiler?: boolean;
+  likes?: number;
+  replies?: number;
+  reposts?: number;
+  metadata?: {
+    isGhostPost?: boolean;
+    isExpired?: boolean;
+    isArchived?: boolean;
+    remainingHours?: number;
+    topicTag?: string;
+  };
+  integration?: {
+    id: string;
+    name: string;
+    profile?: string | null;
+    picture?: string | null;
+  };
+}
+
+export interface NormalizedThreadsCalendarPost extends ThreadsCalendarPost {
+  isGhost: boolean;
+  isArchived: boolean;
+  hoursLeft: number;
+  topicTag: string;
+}
+
+export interface ThreadsInboxItem {
+  id: string;
+  organizationId?: string;
+  integrationId?: string;
+  threadsMediaId?: string;
+  threadsReplyId?: string;
+  senderId?: string;
+  senderUsername?: string;
+  authorUsername?: string;
+  senderProfilePic?: string | null;
+  text?: string;
+  content?: string;
+  postSnippet?: string | null;
+  parentPostContent?: string | null;
+  itemType?: string;
+  status?: string;
+  approvalStatus?: string | null;
+  isPendingApproval?: boolean;
+  isHidden?: boolean;
+  hidden?: boolean;
+  isAutoReplied?: boolean;
+  parentReplyId?: string | null;
+  repliedAt?: string | Date;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  handledAt?: string | Date | null;
+  ourReplyId?: string | null;
+  ourReplyText?: string | null;
+  aiDraftText?: string | null;
+  metadata?: any;
+}
+
+export interface NormalizedThreadsInboxItem extends ThreadsInboxItem {
+  displayUsername: string;
+  displayText: string;
+  parentSnippet: string;
+  status: string;
+  hidden: boolean;
+  isPendingApproval: boolean;
+}
+
+export function normalizeCalendarPost(
+  item: ThreadsCalendarPost
+): NormalizedThreadsCalendarPost {
+  const isGhost = Boolean(item.isGhostPost ?? item.metadata?.isGhostPost);
+  const isArchived = Boolean(
+    item.ghostStatus === 'ARCHIVED' ||
+      item.metadata?.isExpired ||
+      item.metadata?.isArchived
+  );
+  const remainingMinutes =
+    item.remainingMinutes != null
+      ? item.remainingMinutes
+      : item.metadata?.remainingHours != null
+      ? item.metadata.remainingHours * 60
+      : null;
+  const hoursLeft =
+    remainingMinutes != null
+      ? Math.ceil(remainingMinutes / 60)
+      : item.metadata?.remainingHours ?? 0;
+  const topicTag = item.topicTag ?? item.metadata?.topicTag ?? '';
+
+  return {
+    ...item,
+    isGhost,
+    isArchived,
+    hoursLeft,
+    topicTag,
+  };
+}
+
+export function normalizeThreadsInboxItem(
+  item: ThreadsInboxItem
+): NormalizedThreadsInboxItem {
+  return {
+    ...item,
+    displayUsername:
+      item.senderUsername || item.authorUsername || 'Unknown',
+    displayText: item.text || item.content || '',
+    parentSnippet: item.postSnippet || item.parentPostContent || '',
+    status: item.status || 'UNHANDLED',
+    hidden: Boolean(item.isHidden ?? item.hidden),
+    isPendingApproval: Boolean(
+      item.isPendingApproval || item.status === 'PENDING_APPROVAL'
+    ),
+  };
+}
+
 export const ThreadsWorkspace: FC<{
   onOpenPublish?: (prefill: CommonPublishPrefill) => void;
 }> = ({ onOpenPublish }) => {
@@ -90,10 +219,15 @@ export const ThreadsWorkspace: FC<{
     load
   );
 
+  const calendarKey = useMemo(() => {
+    if (activeSubTab !== 'Calendar') return null;
+    const from = dayjs().subtract(14, 'days').startOf('day').toISOString();
+    const to = dayjs().add(14, 'days').endOf('day').toISOString();
+    return `/threads-studio/calendar?from=${from}&to=${to}`;
+  }, [activeSubTab]);
+
   const { data: calendarData, mutate: refreshCalendar } = useSWR(
-    activeSubTab === 'Calendar'
-      ? `/threads-studio/calendar?from=${dayjs().subtract(14, 'days').toISOString()}&to=${dayjs().add(14, 'days').toISOString()}`
-      : null,
+    calendarKey,
     load
   );
 
@@ -105,6 +239,22 @@ export const ThreadsWorkspace: FC<{
     load,
     { refreshInterval: 10000 }
   );
+
+  const calendarPosts: NormalizedThreadsCalendarPost[] = useMemo(() => {
+    const raw: ThreadsCalendarPost[] = Array.isArray(calendarData)
+      ? calendarData
+      : calendarData?.posts ?? [];
+    return raw.map(normalizeCalendarPost);
+  }, [calendarData]);
+
+  const inboxItems: NormalizedThreadsInboxItem[] = useMemo(() => {
+    const raw: ThreadsInboxItem[] = Array.isArray(inboxData)
+      ? inboxData
+      : Array.isArray(inboxData?.items)
+      ? inboxData.items
+      : [];
+    return raw.map(normalizeThreadsInboxItem);
+  }, [inboxData]);
 
   const { data: referencePosts = [], mutate: refreshReferencePosts } = useSWR(
     activeSubTab === 'ReferencePosts' || activeSubTab === 'Publish'
@@ -172,22 +322,23 @@ export const ThreadsWorkspace: FC<{
   };
 
   // 2. Inbox & AI Reply State
-  const [activeInboxItem, setActiveInboxItem] = useState<any>(null);
+  const [activeInboxItem, setActiveInboxItem] =
+    useState<NormalizedThreadsInboxItem | null>(null);
   const [replyInputText, setReplyInputText] = useState('');
   const [aiReplyTone, setAiReplyTone] = useState<'casual' | 'polite' | 'concise'>(
     'casual'
   );
   const [aiReplyPrompt, setAiReplyPrompt] = useState('');
 
-  const generateAiReply = async (item: any) => {
+  const generateAiReply = async (item: NormalizedThreadsInboxItem) => {
     setActiveInboxItem(item);
     const result = await request('/threads-studio/inbox/ai-reply-draft', {
       method: 'POST',
       body: JSON.stringify({
         itemId: item.id,
-        replyText: item.content,
-        postSnippet: item.parentPostContent,
-        replierUsername: item.authorUsername,
+        replyText: item.displayText,
+        postSnippet: item.parentSnippet,
+        replierUsername: item.displayUsername,
         tone: aiReplyTone,
         customPrompt: aiReplyPrompt || undefined,
       }),
@@ -196,7 +347,7 @@ export const ThreadsWorkspace: FC<{
     return result;
   };
 
-  const sendReply = async (item: any) => {
+  const sendReply = async (item: NormalizedThreadsInboxItem) => {
     if (!replyInputText.trim()) throw new Error('返信内容を入力してください。');
     await request(`/threads-studio/inbox/${item.id}/reply`, {
       method: 'POST',
@@ -207,7 +358,7 @@ export const ThreadsWorkspace: FC<{
     await refreshInbox();
   };
 
-  const toggleHide = async (item: any) => {
+  const toggleHide = async (item: NormalizedThreadsInboxItem) => {
     const nextHide = !item.hidden;
     await request(`/threads-studio/inbox/${item.id}/hide`, {
       method: 'POST',
@@ -216,7 +367,10 @@ export const ThreadsWorkspace: FC<{
     await refreshInbox();
   };
 
-  const moderatePendingReply = async (item: any, approve: boolean) => {
+  const moderatePendingReply = async (
+    item: NormalizedThreadsInboxItem,
+    approve: boolean
+  ) => {
     await request(`/threads-studio/inbox/${item.id}/approval`, {
       method: 'POST',
       body: JSON.stringify({ approve }),
@@ -614,11 +768,9 @@ export const ThreadsWorkspace: FC<{
           </div>
 
           <div className="grid gap-3">
-            {calendarData?.posts?.length ? (
-              calendarData.posts.map((item: any) => {
-                const isGhost = item.metadata?.isGhostPost;
-                const isArchived = item.metadata?.isExpired;
-                const hoursLeft = item.metadata?.remainingHours;
+            {calendarPosts.length ? (
+              calendarPosts.map((item) => {
+                const permalink = item.releaseURL || item.permalink;
                 return (
                   <div
                     key={item.id}
@@ -626,11 +778,11 @@ export const ThreadsWorkspace: FC<{
                   >
                     <div className="flex flex-col gap-1 min-w-[240px] flex-1">
                       <div className="flex items-center gap-2">
-                        {isGhost ? (
+                        {item.isGhost ? (
                           <span
                             className={clsx(
                               'rounded px-2 py-0.5 text-[10px] font-bold flex items-center gap-1',
-                              isArchived
+                              item.isArchived
                                 ? 'bg-zinc-800 text-zinc-400'
                                 : 'bg-purple-500/20 text-purple-300'
                             )}
@@ -645,26 +797,26 @@ export const ThreadsWorkspace: FC<{
                         <span className="text-textItemBlur">
                           {dayjs(item.publishDate).format('YYYY/MM/DD HH:mm')}
                         </span>
-                        {item.metadata?.topicTag && (
-                          <span className="text-[#9e9aff]">#{item.metadata.topicTag}</span>
+                        {item.topicTag && (
+                          <span className="text-[#9e9aff]">#{item.topicTag}</span>
                         )}
                       </div>
                       <div className="text-textColor font-medium mt-0.5 line-clamp-2">
-                        {item.content}
+                        {item.content || item.text}
                       </div>
                     </div>
 
                     {/* Status & Ephemeral Countdown */}
                     <div className="flex items-center gap-3">
-                      {isGhost && (
+                      {item.isGhost && (
                         <div className="text-right">
-                          {isArchived ? (
+                          {item.isArchived ? (
                             <span className="rounded bg-red-500/20 px-2 py-1 text-[11px] font-bold text-red-300">
                               ARCHIVED (Meta非公開済)
                             </span>
                           ) : (
                             <span className="rounded bg-amber-500/20 px-2 py-1 text-[11px] font-bold text-amber-300 animate-pulse">
-                              ⏳ 残り約 {hoursLeft} 時間で消滅
+                              ⏳ 残り約 {item.hoursLeft} 時間で消滅
                             </span>
                           )}
                         </div>
@@ -676,9 +828,9 @@ export const ThreadsWorkspace: FC<{
                         <span>🔁 {item.reposts || 0}</span>
                       </div>
 
-                      {item.permalink && (
+                      {permalink && (
                         <a
-                          href={item.permalink}
+                          href={permalink}
                           target="_blank"
                           rel="noreferrer"
                           className="text-[#9e9aff] hover:underline"
@@ -749,13 +901,13 @@ export const ThreadsWorkspace: FC<{
 
             {/* Inbox Item Cards */}
             <div className="grid gap-3">
-              {inboxData?.items?.length ? (
-                inboxData.items.map((item: any) => (
+              {inboxItems.length ? (
+                inboxItems.map((item) => (
                   <div
                     key={item.id}
                     className={clsx(
                       'rounded-lg border p-3.5 transition-colors',
-                      item.status === 'PENDING_APPROVAL'
+                      item.isPendingApproval
                         ? 'border-amber-500/50 bg-amber-500/5'
                         : item.hidden
                         ? 'border-zinc-800 opacity-60'
@@ -765,14 +917,14 @@ export const ThreadsWorkspace: FC<{
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <strong className="text-xs text-textColor">
-                          @{item.authorUsername}
+                          @{item.displayUsername}
                         </strong>
                         <span className="text-[10px] text-textItemBlur">
                           {dayjs(item.repliedAt || item.createdAt).format(
                             'YYYY/MM/DD HH:mm'
                           )}
                         </span>
-                        {item.status === 'PENDING_APPROVAL' && (
+                        {item.isPendingApproval && (
                           <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
                             🛡️ 承認待ち
                           </span>
@@ -811,19 +963,19 @@ export const ThreadsWorkspace: FC<{
                     </div>
 
                     {/* Original post context */}
-                    {item.parentPostContent && (
+                    {item.parentSnippet && (
                       <div className="mt-1.5 rounded bg-newBgColorInner/50 p-1.5 text-[11px] text-textItemBlur line-clamp-1 border-l-2 border-[#7774ff]">
-                        親投稿: {item.parentPostContent}
+                        親投稿: {item.parentSnippet}
                       </div>
                     )}
 
                     {/* Reply content */}
                     <div className="mt-2 text-xs text-textColor whitespace-pre-wrap">
-                      {item.content}
+                      {item.displayText}
                     </div>
 
                     {/* Moderation Controls for Pending Approvals */}
-                    {item.status === 'PENDING_APPROVAL' && (
+                    {item.isPendingApproval && (
                       <div className="mt-3 flex items-center gap-2 border-t border-amber-500/30 pt-2 text-xs">
                         <span className="text-amber-300 text-[11px]">
                           Reply Approvalsにより保留中:
@@ -867,9 +1019,9 @@ export const ThreadsWorkspace: FC<{
               <div className="mt-4 flex flex-col gap-3">
                 <div className="rounded-lg border border-blockSeparator p-2.5 text-xs">
                   <div className="font-semibold text-textItemBlur">
-                    返信先: @{activeInboxItem.authorUsername}
+                    返信先: @{activeInboxItem.displayUsername}
                   </div>
-                  <div className="mt-1 text-textColor">{activeInboxItem.content}</div>
+                  <div className="mt-1 text-textColor">{activeInboxItem.displayText}</div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-1.5">
