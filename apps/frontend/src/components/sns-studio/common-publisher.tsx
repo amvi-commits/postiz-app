@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import dayjs from 'dayjs';
 import { CalendarWeekProvider } from '@gitroom/frontend/components/launches/calendar.context';
@@ -83,7 +83,9 @@ export type CommonPublishPrefill = {
   content?: string;
   sourceAssetId?: string;
   defaultVariantAssetId?: string;
-  media: {
+  preferredPlatform?: string;
+  initialDestinationId?: string;
+  media?: {
     id: string;
     path: string;
   };
@@ -143,6 +145,31 @@ export const SnsStudioCommonPublisher = ({
       !integration.disabled &&
       !integration.inBetweenSteps
   );
+
+  useEffect(() => {
+    if (!prefill) return;
+    if (prefill.preferredPlatform || prefill.initialDestinationId) {
+      setDeliveries((prev) => {
+        const next = { ...prev };
+        destinations.forEach((dest) => {
+          if (
+            (prefill.initialDestinationId && dest.id === prefill.initialDestinationId) ||
+            (prefill.preferredPlatform && platformKey(dest.identifier) === prefill.preferredPlatform)
+          ) {
+            next[dest.id] = {
+              selected: true,
+              content: '',
+              hashtags: '',
+              scheduledAt: '',
+              variantAssetId: '',
+              ...(next[dest.id] || {}),
+            };
+          }
+        });
+        return next;
+      });
+    }
+  }, [prefill, destinations]);
 
   const mediaOptions = useMemo(() => {
     const options: Array<{
@@ -608,7 +635,7 @@ export const SnsStudioCommonPublisher = ({
           <p className="text-sm text-textItemBlur">
             共通値を設定し、必要なSNS・アカウントだけ個別上書きします。実際の投稿処理とSNS固有設定は既存Postiz providerを再利用します。
           </p>
-          {activePrefill && (
+          {activePrefill?.media?.path && (
             <div className="mt-2 rounded-lg border border-blockSeparator p-3 text-xs text-textItemBlur">
               SNS Studio素材: {activePrefill.media.path}
             </div>
