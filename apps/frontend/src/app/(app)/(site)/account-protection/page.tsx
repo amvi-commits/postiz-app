@@ -32,6 +32,7 @@ export default function AccountProtectionPage() {
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <p>保護状態: {p?.securityState || 'HEALTHY'}</p><p>セッション: {p?.session || 'UNKNOWN'}</p>
+            <p>ブラウザ: {p?.browser?.status || '未作成'}</p>
             <p>クールダウン: {p?.cooldownUntil ? new Date(p.cooldownUntil).toLocaleString() : 'なし'}</p>
             <p>実行回路: {p?.circuits?.map((c: any) => `${c.actionType}: ${c.state}`).join(', ') || 'CLOSED'}</p>
           </div>
