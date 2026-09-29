@@ -235,7 +235,7 @@ describeDb('Account Protection database and browser E2E', () => {
 
     const rateInput = { organizationId, accountId: 'rate-' + randomUUID(), accountType: 'POSTIZ_INTEGRATION', provider: 'threads', action: 'PUBLISH' as const };
     const rateProfile = await protection.ensureProfile(organizationId, rateInput.accountId, rateInput.accountType, rateInput.provider);
-    const throttled = Object.assign(new Error('rate limit'), { status: 429, retryAfter: '45' });
+    const throttled = Object.assign(new Error('private-provider-response-should-not-be-persisted'), { status: 429, retryAfter: '45' });
     await expect(protection.run(rateInput, async () => { throw throttled; })).rejects.toBe(throttled);
     const cooldown = await prisma.accountSecurityProfile.findUniqueOrThrow({ where: { id: rateProfile.id } });
     expect(cooldown.securityState).toBe('COOLDOWN');
@@ -271,7 +271,7 @@ describeDb('Account Protection database and browser E2E', () => {
 
     const audit = await prisma.accountSecurityAuditLog.findMany({ where: { organizationId } });
     expect(JSON.stringify(audit)).not.toContain('temporary provider failure');
-    expect(JSON.stringify(audit)).not.toContain('rate limit');
+    expect(JSON.stringify(audit)).not.toContain('private-provider-response-should-not-be-persisted');
   }, 120000);
 
   it('isolates real Chromium persistent profiles, cookies, localStorage, IndexedDB, and rejects mismatched bindings before launch', async () => {
@@ -304,7 +304,7 @@ describeDb('Account Protection database and browser E2E', () => {
     const writeMarker = async (context: import('playwright').BrowserContext, marker: string) => {
       const page = context.pages()[0] || await context.newPage();
       await page.goto(origin);
-      await page.context().addCookies([{ name: 'account-marker', value: marker, url: origin }]);
+      await page.context().addCookies([{ name: 'account-marker', value: marker, url: origin, expires: Math.floor(Date.now() / 1000) + 3600 }]);
       await page.evaluate((value) => localStorage.setItem('account-marker', value), marker);
       await page.evaluate(async (value) => {
         const db = await new Promise<IDBDatabase>((resolveDb, rejectDb) => {
