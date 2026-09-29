@@ -391,7 +391,7 @@ describeDb('Account Protection database and browser E2E', () => {
       await page.goto(frontendUrl + '/account-protection', { waitUntil: 'domcontentloaded', timeout: 30000 });
       const accountResponse = await accountResponsePromise;
       expect(accountResponse.status()).toBe(200);
-      await page.getByRole('heading', { name: 'Account Protection' }).waitFor({ state: 'visible', timeout: 120000 });
+      await page.getByRole('main').getByRole('heading', { name: 'Account Protection' }).waitFor({ state: 'visible', timeout: 30000 });
 
       const accountSection = page.locator('section').filter({ hasText: 'Fixture A' });
       await accountSection.getByRole('button', { name: '一時停止' }).waitFor({ state: 'visible', timeout: 30000 });
