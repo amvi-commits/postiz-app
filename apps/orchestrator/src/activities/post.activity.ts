@@ -66,4 +66,549 @@ function slimPost(post: any) {
 // sweep period plus retry margin is a stale anchor, not a missed publish.
 const REANCHOR_GRACE_MS = 2 * 60 * 60 * 1000;
 
-// A repeat post keeps its original anchor publishDate forever (updatePost onlynwÓ{h‘éì¶»§q«^v§6öãğ¢76WG2§6öãğ¢ÖWFFF§6öãğ¢G&VR§6öãğ¢6†ævVDf–VÆG2§6öãğ¢6†ævTÖW76vR7G&–æsğ¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢f–ÆW2§6öãğ ¢Væ—VR…·6¶–ÆÄ–BÂfW'6–öäçVÖ&W%ÒÂÖ¢&–G…÷6¶–ÆÅ÷fW'6–öç5÷6¶–ÆÅ÷fW'6–öâ"§Ğ ¦ÖöFVÂÖ7G&÷6¶–ÆÇ2°¢–B7G&–ær–@¢7FGW27G&–æp¢7F—fUfW'6–öä–B7G&–æsğ¢WF†÷$–B7G&–æsğ¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢WFFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢WFFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢f—6–&–Æ—G’7G&–æsğ¢ff÷&—FT6÷VçB–çCğ§Ğ ¦ÖöFVÂÖ7G&÷F‡&VE÷7FFR°¢F‡&VD–B7G&–æp¢G—R7G&–æp¢fÇVR§6öà¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢WFFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢WFFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb ¢–B…·F‡&VD–BÂG—UÒ§Ğ ¦ÖöFVÂÖ7G&÷FööÅ÷&÷f–FW%ö6öææV7F–öç2°¢WF†÷$–B7G&–æp¢&÷f–FW$–B7G&–æp¢6öææV7F–öä–B7G&–æp¢FööÆ¶—B7G&–æp¢Æ&VÂ7G&–æsğ¢66÷R7G&–æp¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢WFFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢WFFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb ¢–B…¶WF†÷$–BÂ&÷f–FW$–BÂ6öææV7F–öä–EÒ¢–æFW‚…¶WF†÷$–BÂ&÷f–FW$–BÂFööÆ¶—EÒÂÖ¢&–G…÷FööÅ÷&÷f–FW%ö6öææV7F–öç5öWF†÷""§Ğ ¦ÖöFVÂÖ7G&÷v÷&¶fÆ÷uöFVf–æ—F–öç2°¢–B7G&–ær–@¢FW67&—F–öâ7G&–æsğ¢ÖWFFF§6öãğ¢–çWE66†VÖ§6öà¢÷WGWE66†VÖ§6öà¢7FFU66†VÖ§6öãğ¢&WVW7D6öçFW‡E66†VÖ§6öãğ¢w&‚§6öà¢66†VGVÆR§6öãğ¢7FGW27G&–æp¢6÷W&6R7G&–æp¢WF†÷$–B7G&–æsğ¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢WFFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢WFFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb ¢–æFW‚…·7FGW5ÒÂÖ¢&–G…÷v÷&¶fÆ÷uöFVf–æ—F–öç5÷7FGW2"§Ğ ¦ÖöFVÂÖ7G&÷v÷&·76U÷fW'6–öç2°¢–B7G&–ær–@¢v÷&·76T–B7G&–æp¢fW'6–öäçVÖ&W"–ç@¢æÖR7G&–æp¢FW67&—F–öâ7G&–æsğ¢f–ÆW7—7FVÒ§6öãğ¢6æF&÷‚§6öãğ¢Ö÷VçG2§6öãğ¢6V&6‚§6öãğ¢6¶–ÆÇ2§6öãğ¢FööÇ2§6öãğ¢WFõ7–æ2&ööÆVãğ¢÷W&F–öåF–ÖV÷WB–çCğ¢6†ævVDf–VÆG2§6öãğ¢6†ævTÖW76vR7G&–æsğ¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb ¢Væ—VR…·v÷&·76T–BÂfW'6–öäçVÖ&W%ÒÂÖ¢&–G…÷v÷&·76U÷fW'6–öç5÷v÷&·76U÷fW'6–öâ"§Ğ ¦ÖöFVÂÖ7G&÷v÷&·76W2°¢–B7G&–ær–@¢7FGW27G&–æp¢7F—fUfW'6–öä–B7G&–æsğ¢WF†÷$–B7G&–æsğ¢ÖWFFF§6öãğ¢7&VFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢WFFVDBFFUF–ÖRF"åF–ÖW7F×ƒb¢7&VFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb¢WFFVDE¢FFUF–ÖSòFVfVÇB†æ÷r‚’’F"åF–ÖW7F×G¢ƒb§Ğ ¦ÖöFVÂôWF„°¢–B7G&–ær–BFVfVÇB‡WV–B‚’¢÷&væ—¦F–öä–B7G&–æsğ¢æÖR7G&–æp¢FW67&—F–öâ7G&–æsğ¢–7GW&T–B7G&–æsğ¢&VF—&V7EW&Â7G&–æp¢&VF—&V7EW&—27G&–æsğ¢6Æ–VçD–B7G&–ærVæ—VP¢6Æ–VçE6V7&WB7G&–æsğ¢G–æÖ–2&ööÆVâFVfVÇB†fÇ6R¢Fö¶VäVæGö–çDWF„ÖWF†öB7G&–æsğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢FVÆWFVDBFFUF–ÖSğ¢÷&væ—¦F–öâ÷&væ—¦F–öãò&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒ¢–7GW&RÖVF–ò&VÆF–öâ†f–VÆG3¢·–7GW&T–EÒÂ&VfW&Væ6W3¢¶–EÒ¢WF†÷&—¦F–öç2ôWF„WF†÷&—¦F–öåµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂFVÆWFVDEÒ¢–æFW‚…¶6Æ–VçD–EÒ¢–æFW‚…¶÷&væ—¦F–öä–EÒ¢–æFW‚…¶FVÆWFVDEÒ¢–æFW‚…¶G–æÖ–5Ò§Ğ ¦ÖöFVÂôWF„WF†÷&—¦F–öâ°¢–B7G&–ær–BFVfVÇB‡WV–B‚’¢öWF„–B7G&–æp¢W6W$–B7G&–æp¢÷&væ—¦F–öä–B7G&–æp¢66W75Fö¶Vâ7G&–æsğ¢WF†÷&—¦F–öä6öFR7G&–æsğ¢6öFTW‡—&W4BFFUF–ÖSğ¢6öFT6†ÆÆVævR7G&–æsğ¢6öFT6†ÆÆVævTÖWF†öB7G&–æsğ¢&VF—&V7EW&’7G&–æsğ¢&Wfö¶VDBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢öWF„ôWF„&VÆF–öâ†f–VÆG3¢¶öWF„–EÒÂ&VfW&Væ6W3¢¶–EÒ¢W6W"W6W"&VÆF–öâ†f–VÆG3¢·W6W$–EÒÂ&VfW&Væ6W3¢¶–EÒ¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒ ¢Væ—VR…¶öWF„–BÂW6W$–BÂ÷&væ—¦F–öä–EÒ¢–æFW‚…¶66W75Fö¶VåÒ¢–æFW‚…¶WF†÷&—¦F–öä6öFUÒ¢–æFW‚…¶öWF„–EÒ¢–æFW‚…·W6W$–EÒ¢–æFW‚…¶÷&væ—¦F–öä–EÒ¢–æFW‚…·&Wfö¶VDEÒ§Ğ ¦VçVÒ÷&FW%7FGW2°¢TäD”äp¢44UDT@¢4ä4TÄT@¢4ôÕÄUDT@§Ğ ¦VçVÒg&öÒ°¢%U”U ¢4TÄÄU §Ğ ¦VçVÒ7FFR°¢TUTP¢T$Ä•4„T@¢U%$õ ¢E$e@§Ğ ¦VçVÒ7V'67&—F–öåF–W"°¢5DäD$@¢$ğ¢DTĞ¢TÅD”ÔDP§Ğ ¦VçVÒW&–öB°¢ÔôåD„Å¢”T$Å§Ğ ¦VçVÒ&÷f–FW"°¢Äô4À¢t•D…T ¢tôôtÄP¢ÄP¢d$45DU ¢tÄÄU@¢tTäU$”0§Ğ ¦VçVÒ&öÆR°¢5UU$DÔ”à¢DÔ”à¢U4U §Ğ ¦VçVÒ$õdTEõ5T$Ô•Eôdõ%ôõ$DU"°¢äğ¢t•D”äuô4ôäd•$ÔD”ôà¢”U0§Ğ ¦VçVÒ7&VF–öäÖWF†öB°¢Tä´äõtà¢tT ¢Ô5 ¢¢UDõõ5@¢4Ä§Ğ ¦VçVÒ6†÷'DÆ–æµ&VfW&Væ6R°¢4°¢”U0¢äğ§Ğ ¦VçVÒææ÷Væ6VÖVçD6öÆ÷"°¢”ädğ¢t$ä”äp¢U%$õ §Ğ ¦ÖöFVÂææ÷Væ6VÖVçB°¢–B7G&–ær–BFVfVÇB‡WV–B‚’¢F—FÆR7G&–æp¢FW67&—F–öâ7G&–æp¢6öÆ÷"ææ÷Væ6VÖVçD6öÆ÷"FVfVÇB„”ädò¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’§Ğ ¢òò4å27GVF–òw2&öGV7F–öâ—VÆ–æR—26W&FRg&öÒ÷7F—¢66†VGVÆVB÷7G2à¢òò7&VFVçF–Ç2æB–ç7Fw&’6W76–öç2&R†VÆBöæÇ’–â–ç7Fw&Ò×v÷&¶W"w2Væ7'—FVB7F÷&Rà¦ÖöFVÂ6ç4–ç7Fw&Ô66÷VçB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢W6W&æÖR7G&–æp¢7FGW27G&–ærFVfVÇB‚$äTTE5õU4U%ô5D”ôâ"¢Æ7EfÆ–FFVDBFFUF–ÖSğ¢Æ7EV&Æ—6†VDBFFUF–ÖSğ¢6F–öä”Væ&ÆVB&ööÆVâFVfVÇB†fÇ6R¢6F–öå&öf–ÆR§6öãğ¢FVfVÇE7F–6¶W%‚fÆöBFVfVÇBƒãR¢FVfVÇE7F–6¶W%’fÆöBFVfVÇBƒãR¢FVfVÇE7F–6¶W%v–GF‚fÆöBFVfVÇBƒãS¢FVfVÇE7F–6¶W$†V–v‡BfÆöBFVfVÇBƒã#b¢FVfVÇE7F–6¶W%&÷FF–öâfÆöBFVfVÇBƒ¢FVfVÇE7F÷'•ööÄ–B7G&–æsğ¢&6†—fVDBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢FVfVÇE7F÷'•ööÂ6ç57F÷'•ööÃò&VÆF–öâ‚%6ç4FVfVÇE7F÷'•ööÂ"Âf–VÆG3¢¶FVfVÇE7F÷'•ööÄ–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢7F÷'•W6vR6ç57F÷'•ööÅW6vUµĞ¢V&Æ—6…&V6÷&G26ç5V&Æ—6…&V6÷&EµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂW6W&æÖUÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7FGW5Ò§Ğ ¦ÖöFVÂ6ç57F÷'•ööÂ°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢FW67&—F–öâ7G&–æsğ¢7F—fR&ööÆVâFVfVÇB‡G'VR¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢—FV×26ç57F÷'•ööÄ—FVÕµĞ¢66÷VçG26ç4–ç7Fw&Ô66÷VçEµÒ&VÆF–öâ‚%6ç4FVfVÇE7F÷'•ööÂ"¢W6vR6ç57F÷'•ööÅW6vUµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7F—fUÒ§Ğ ¦ÖöFVÂ6ç57F÷'•ööÄ—FVÒ°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢ööÄ–B7G&–æp¢ÖVF–76WD–B7G&–æsğ¢ÖVF–F‚7G&–æp¢ÖVF–G—R7G&–æp¢W&ÄÆ–'&'”–B7G&–æsğ¢W&Å6æ6†÷B7G&–æsğ¢÷6—F–öâ–çBFVfVÇBƒ¢7F—fR&ööÆVâFVfVÇB‡G'VR¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢ööÂ6ç57F÷'•ööÂ&VÆF–öâ†f–VÆG3¢·ööÄ–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢ÖVF–76WB6ç4ÖVF–76WCò&VÆF–öâ†f–VÆG3¢¶ÖVF–76WD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢W&ÄÆ–'&'’6ç5W&ÄÆ–'&'”—FVÓò&VÆF–öâ†f–VÆG3¢·W&ÄÆ–'&'”–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢W6vR6ç57F÷'•ööÅW6vUµĞ ¢–æFW‚…·ööÄ–BÂ7F—fRÂ÷6—F–öåÒ§Ğ ¦ÖöFVÂ6ç57F÷'•ööÅW6vR°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢66÷VçD–B7G&–æp¢ööÄ–B7G&–æp¢—FVÔ–B7G&–æp¢7–6ÆR–ç@¢W6VDBFFUF–ÖRFVfVÇB†æ÷r‚’¢66÷VçB6ç4–ç7Fw&Ô66÷VçB&VÆF–öâ†f–VÆG3¢¶66÷VçD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢ööÂ6ç57F÷'•ööÂ&VÆF–öâ†f–VÆG3¢·ööÄ–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢—FVÒ6ç57F÷'•ööÄ—FVÒ&VÆF–öâ†f–VÆG3¢¶—FVÔ–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶66÷VçD–BÂööÄ–BÂ—FVÔ–BÂ7–6ÆUÒ¢–æFW‚…¶66÷VçD–BÂööÄ–BÂ7–6ÆUÒ§Ğ ¦ÖöFVÂ6ç5W&ÄÆ–'&'”—FVÒ°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢W&Â7G&–æp¢æ÷FR7G&–æsğ¢7F—fR&ööÆVâFVfVÇB‡G'VR¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢7F÷'”—FV×26ç57F÷'•ööÄ—FVÕµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7F—fUÒ§Ğ ¦ÖöFVÂ6ç46öçFVçD–æ&÷„—FVÒ°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢G&—fTf–ÆT–B7G&–æsğ¢f–ÆTæÖR7G&–æp¢ÖVF–G—R7G&–æp¢6—¦T'—FW2&–t–çCğ¢6÷W&6T7&VFVDBFFUF–ÖSğ¢7FGW27G&–ærFVfVÇB‚$äUr"¢&Wf–WuW&Â7G&–æsğ¢ÖVF–76WD–B7G&–æsğ¢&V6—T–B7G&–æsğ¢W'&÷$6öFR7G&–æsğ¢W'&÷$ÖW76vR7G&–æsğ¢ÖWFFF§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢ÖVF–76WB6ç4ÖVF–76WCò&VÆF–öâ†f–VÆG3¢¶ÖVF–76WD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ ¢Væ—VR…¶÷&væ—¦F–öä–BÂG&—fTf–ÆT–EÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7FGW2ÂWFFVDEÒ§Ğ ¦ÖöFVÂ6ç4ÖVF–76WB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢6÷W&6R7G&–æp¢7F÷&vT¶W’7G&–æp¢f–ÆTæÖR7G&–æp¢Ö–ÖUG—R7G&–æsğ¢6—¦T'—FW2&–t–çCğ¢v–GF‚–çCğ¢†V–v‡B–çCğ¢GW&F–öâfÆöCğ¢—4÷&–v–æÂ&ööÆVâFVfVÇB†fÇ6R¢—4f–æÂ&ööÆVâFVfVÇB†fÇ6R¢V&Æ—6†VDBFFUF–ÖSğ¢ÖWFFF§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢7F÷'”—FV×26ç57F÷'•ööÄ—FVÕµĞ¢–æ&÷„—FV×26ç46öçFVçD–æ&÷„—FVÕµĞ¢÷&–v–æÄ6öçFVçG26ç46öçFVçEµÒ&VÆF–öâ‚%6ç46öçFVçD÷&–v–æÄ76WB"¢6öçFVçEf&–çG26ç46öçFVçEf&–çEµÒ&VÆF–öâ‚%6ç46öçFVçEf&–çD76WB" ¢–æFW‚…¶÷&væ—¦F–öä–BÂ—4f–æÂÂ7&VFVDEÒ§Ğ ¦ÖöFVÂ6ç46öçFVçB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢F—FÆR7G&–æsğ¢6öÖÖöä6öçFVçB7G&–ærFVfVÇB‚""¢6öÖÖöä†6‡Fw2§6öãğ¢6öÖÖöå66†VGVÆVDBFFUF–ÖSğ¢7FGW27G&–ærFVfVÇB‚$E$eB"¢÷&–v–æÄ76WD–B7G&–æsğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢÷&–v–æÄ76WB6ç4ÖVF–76WCò&VÆF–öâ‚%6ç46öçFVçD÷&–v–æÄ76WB"Âf–VÆG3¢¶÷&–v–æÄ76WD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢f&–çG26ç46öçFVçEf&–çEµĞ¢ÆFf÷&Ô÷fW'&–FW26ç46öçFVçEÆFf÷&Ô÷fW'&–FUµĞ¢FVÆ—fW&–W26ç4FVÆ—fW'•µĞ ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7FGW2ÂWFFVDEÒ¢–æFW‚…¶÷&–v–æÄ76WD–EÒ§Ğ ¦ÖöFVÂ6ç46öçFVçEf&–çB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6öçFVçD–B7G&–æp¢ÖVF–76WD–B7G&–æp¢æÖR7G&–æp¢—4FVfVÇB&ööÆVâFVfVÇB†fÇ6R¢ÖWFFF§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6öçFVçB6ç46öçFVçB&VÆF–öâ†f–VÆG3¢¶6öçFVçD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢ÖVF–76WB6ç4ÖVF–76WB&VÆF–öâ‚%6ç46öçFVçEf&–çD76WB"Âf–VÆG3¢¶ÖVF–76WD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢&W7G&–7B¢FVÆ—fW&–W26ç4FVÆ—fW'•µĞ ¢Væ—VR…¶6öçFVçD–BÂÖVF–76WD–EÒ¢–æFW‚…¶6öçFVçD–BÂ—4FVfVÇEÒ¢–æFW‚…¶ÖVF–76WD–EÒ§Ğ ¦ÖöFVÂ6ç46öçFVçEÆFf÷&Ô÷fW'&–FR°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6öçFVçD–B7G&–æp¢ÆFf÷&Ò7G&–æp¢6öçFVçD÷fW'&–FR7G&–æsğ¢†6‡Fw4÷fW'&–FR§6öãğ¢66†VGVÆVDD÷fW'&–FRFFUF–ÖSğ¢6WGF–æw4÷fW'&–FR§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6öçFVçB6ç46öçFVçB&VÆF–öâ†f–VÆG3¢¶6öçFVçD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶6öçFVçD–BÂÆFf÷&ÕÒ¢–æFW‚…¶6öçFVçD–EÒ§Ğ ¦ÖöFVÂ6ç4FVÆ—fW'’°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6öçFVçD–B7G&–æp¢f&–çD–B7G&–æsğ¢–çFVw&F–öä–B7G&–æp¢&÷f–FW$–FVçF–f–W"7G&–æp¢66÷VçDæÖR7G&–æsğ¢6öçFVçD÷fW'&–FR7G&–æsğ¢†6‡Fw4÷fW'&–FR§6öãğ¢66†VGVÆVDD÷fW'&–FRFFUF–ÖSğ¢6WGF–æw4÷fW'&–FR§6öãğ¢&÷f–FW%6WGF–æw56æ6†÷B§6öãğ¢&W6öÇfVD6öçFVçB7G&–æsğ¢&W6öÇfVD†6‡Fw2§6öãğ¢&W6öÇfVE66†VGVÆVDBFFUF–ÖSğ¢÷7D–B7G&–æsğ¢7FGW27G&–ærFVfVÇB‚%ÄääTB"¢Æ7DW'&÷"7G&–æsğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6öçFVçB6ç46öçFVçB&VÆF–öâ†f–VÆG3¢¶6öçFVçD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢f&–çB6ç46öçFVçEf&–çCò&VÆF–öâ†f–VÆG3¢·f&–çD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ ¢Væ—VR…¶6öçFVçD–BÂ–çFVw&F–öä–EÒ¢–æFW‚…¶6öçFVçD–BÂ7FGW5Ò¢–æFW‚…¶–çFVw&F–öä–EÒ¢–æFW‚…·&÷f–FW$–FVçF–f–W%Ò¢–æFW‚…·÷7D–EÒ§Ğ ¢òò66÷VçB&÷FV7F–öâ—2–çFVçF–öæÆÇ’—6öÆFVBg&öÒF†R6öÖÖöâV&Æ—6†–ærÖöFVÇ2à¢òò66÷VçD–Bö–çG2Fò–çFVw&F–öâ÷"6ç4–ç7Fw&Ô66÷VçB66÷&F–ærFò66÷VçEG—S°¢òòF†—2fö–G26†æv–ærV—F†W"ÆVv7’66÷VçBÖöFVÂ–â†6Rà¦ÖöFVÂ66÷VçE6V7W&—G•&öf–ÆR°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢66÷VçD–B7G&–æp¢66÷VçEG—R7G&–æp¢&÷f–FW"7G&–æp¢Væ&ÆVB&ööÆVâFVfVÇB‡G'VR¢6V7W&—G•7FFR7G&–ærFVfVÇB‚$„TÅD…’"¢WFöÖF–öåW6VB&ööÆVâFVfVÇB†fÇ6R¢W6U&V6öâ7G&–æsğ¢6V7&WE&Vb7G&–æsğ¢Æ7D†VÇF‡”BFFUF–ÖSğ¢Æ7Ev&æ–ætBFFUF–ÖSğ¢Æ7D6†ÆÆVævTBFFUF–ÖSğ¢Æ7DWF„f–ÇW&TBFFUF–ÖSğ¢Æ7E7V66W76gVÄ7F–öäBFFUF–ÖSğ¢6ööÆF÷våVçF–ÂFFUF–ÖSğ¢6öç6V7WF—fTWF„f–ÇW&W2–çBFVfVÇBƒ¢6öç6V7WF—fU&÷f–FW$f–ÇW&W2–çBFVfVÇBƒ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢'&÷w6W%&öf–ÆR66÷VçD'&÷w6W%&öf–ÆSğ¢6W76–öä†VÇF‚66÷VçE6W76–öä†VÇFƒğ¢7F–öä'VFvWG266÷VçD7F–öä'VFvWEµĞ¢6—&7V—E7FFW266÷VçD6—&7V—E7FFUµĞ¢W†V7WF–öäÆV6R66÷VçDW†V7WF–öäÆV6Sğ¢VF—DÆöw266÷VçE6V7W&—G”VF—DÆöuµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂ66÷VçEG—RÂ66÷VçD–EÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ&÷f–FW"Â6V7W&—G•7FFUÒ¢–æFW‚…·6V7W&—G•7FFRÂ6ööÆF÷våVçF–ÅÒ§Ğ ¦ÖöFVÂ66÷VçD'&÷w6W%&öf–ÆR°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6V7W&—G•&öf–ÆT–B7G&–ærVæ—VP¢&öf–ÆT¶W’7G&–ærVæ—VP¢&öf–ÆUF‚7G&–æp¢'&÷w6W$Væv–æR7G&–ærFVfVÇB‚&6‡&öÖ—VÒ"¢'&÷w6W$Ö¦÷%fW'6–öâ7G&–æsğ¢Æö6ÆR7G&–æsğ¢F–ÖW¦öæR7G&–æsğ¢÷4fÖ–Ç’7G&–æsğ¢7FGW27G&–ærFVfVÇB‚$Ô•54”är"¢Æ7D÷VæVDBFFUF–ÖSğ¢Æ7D6Æ÷6VDBFFUF–ÖSğ¢Æ7DÆöv–äBFFUF–ÖSğ¢Æ7E7V66W76gVÅ6W76–öäBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆR&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢–æFW‚…·7FGW2ÂWFFVDEÒ§Ğ ¦ÖöFVÂ66÷VçE6W76–öä†VÇF‚°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6V7W&—G•&öf–ÆT–B7G&–ærVæ—VP¢&÷f–FW"7G&–æp¢7FGW27G&–ærFVfVÇB‚%Tä´äõtâ"¢6†V6¶VDBFFUF–ÖSğ¢W‡—&W4BFFUF–ÖSğ¢Æ7E7V66W74BFFUF–ÖSğ¢Æ7Df–ÇW&TBFFUF–ÖSğ¢f–ÇW&T6öFR7G&–æsğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆR&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢–æFW‚…·&÷f–FW"Â7FGW2Â6†V6¶VDEÒ§Ğ ¦ÖöFVÂ66÷VçD7F–öä'VFvWB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6V7W&—G•&öf–ÆT–B7G&–æp¢&÷f–FW"7G&–æp¢7F–öåG—R7G&–æp¢v–æF÷u6V6öæG2–çBFVfVÇBƒc¢Ö„7F–öç2–çBFVfVÇBƒ¢W6VD7F–öç2–çBFVfVÇBƒ¢&W6WDBFFUF–ÖP¢6÷W&6R7G&–ærFVfVÇB‚%4dUôDTdTÅB"¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆR&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…·6V7W&—G•&öf–ÆT–BÂ&÷f–FW"Â7F–öåG—UÒ¢–æFW‚…·&W6WDEÒ§Ğ ¦ÖöFVÂ66÷VçD6—&7V—E7FFR°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6V7W&—G•&öf–ÆT–B7G&–æp¢&÷f–FW"7G&–æp¢7F–öåG—R7G&–æp¢7FFR7G&–ærFVfVÇB‚$4Äõ4TB"¢f–ÇW&T6÷VçB–çBFVfVÇBƒ¢÷VæVEVçF–ÂFFUF–ÖSğ¢Æ7Df–ÇW&TBFFUF–ÖSğ¢WFFVDBFFUF–ÖRWFFVD@¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆR&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…·6V7W&—G•&öf–ÆT–BÂ&÷f–FW"Â7F–öåG—UÒ¢–æFW‚…·7FFRÂ÷VæVEVçF–ÅÒ§Ğ ¦ÖöFVÂ66÷VçDW†V7WF–öäÆV6R°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢6V7W&—G•&öf–ÆT–B7G&–ærVæ—VP¢÷væW%Fö¶Vâ7G&–æp¢7F–öåG—R7G&–æp¢7V—&VDBFFUF–ÖRFVfVÇB†æ÷r‚’¢†V'F&VDBFFUF–ÖRFVfVÇB†æ÷r‚’¢W‡—&W4BFFUF–ÖP¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆR&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢–æFW‚…¶W‡—&W4EÒ§Ğ ¦ÖöFVÂ66÷VçE6V7W&—G”VF—DÆör°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢6V7W&—G•&öf–ÆT–B7G&–æsğ¢66÷VçD–B7G&–æsğ¢&÷f–FW"7G&–æsğ¢WfVçB7G&–æp¢6WfW&—G’7G&–ærFVfVÇB‚$”ädò"¢ÖW76vR7G&–æp¢ÖWFFF§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢6V7W&—G•&öf–ÆR66÷VçE6V7W&—G•&öf–ÆSò&VÆF–öâ†f–VÆG3¢·6V7W&—G•&öf–ÆT–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7&VFVDEÒ¢–æFW‚…·6V7W&—G•&öf–ÆT–BÂ7&VFVDEÒ¢–æFW‚…·&÷f–FW"ÂWfVçBÂ7&VFVDEÒ§Ğ ¦ÖöFVÂ6ç4VF—F–æu&W6WB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢6öæf–r§6öà¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ§Ğ ¦ÖöFVÂ6ç5f&–çE&W6WB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢6÷VçB–çBFVfVÇBƒ¢6WGF–æw2§6öà¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ§Ğ ¦ÖöFVÂ6ç4WFöÖF–öå&V6—R°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢–çWEG—R7G&–æp¢6öæf–r§6öà¢7F—fR&ööÆVâFVfVÇB‡G'VR¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢—VÆ–æU'Vç26ç5—VÆ–æU'VåµĞ ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7F—fUÒ§Ğ ¦ÖöFVÂ6ç5—VÆ–æU'Vâ°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢&V6—T–B7G&–æsğ¢7FGW27G&–ærFVfVÇB‚$äUr"¢7W'&VçE7FW7G&–æsğ¢–çWB§6öãğ¢÷WGWB§6öãğ¢W'&÷$6öFR7G&–æsğ¢W'&÷$ÖW76vR7G&–æsğ¢&÷fVDBFFUF–ÖSğ¢7F'FVDBFFUF–ÖSğ¢6ö×ÆWFVDBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢&V6—R6ç4WFöÖF–öå&V6—Sò&VÆF–öâ†f–VÆG3¢·&V6—T–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢7FW26ç5—VÆ–æU7FWµĞ¢V&Æ—6…&V6÷&G26ç5V&Æ—6…&V6÷&EµĞ ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7FGW2ÂWFFVDEÒ§Ğ ¦ÖöFVÂ6ç5—VÆ–æU7FW°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢'Vä–B7G&–æp¢æÖR7G&–æp¢7FGW27G&–ærFVfVÇB‚%TäD”är"¢–çWB§6öãğ¢÷WGWB§6öãğ¢W'&÷$6öFR7G&–æsğ¢W'&÷$ÖW76vR7G&–æsğ¢7F'FVDBFFUF–ÖSğ¢6ö×ÆWFVDBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢'Vâ6ç5—VÆ–æU'Vâ&VÆF–öâ†f–VÆG3¢·'Vä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…·'Vä–BÂæÖUÒ¢–æFW‚…·'Vä–BÂ7FGW5Ò§Ğ ¦ÖöFVÂ6ç5V&Æ—6…&V6÷&B°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢66÷VçD–B7G&–æp¢—VÆ–æU'Vä–B7G&–æsğ¢ÖVF––B7G&–æsğ¢ÖVF–F‚7G&–æsğ¢÷7EW&Â7G&–æsğ¢V&Æ—6…G—R7G&–æp¢7FGW27G&–æp¢G&–Å&VVÂ&ööÆVâFVfVÇB†fÇ6R¢6F–öâ7G&–æsğ¢V&Æ—6†VDBFFUF–ÖSğ¢W'&÷$6öFR7G&–æsğ¢W'&÷$ÖW76vR7G&–æsğ¢&V6—TæÖR7G&–æsğ¢&W6WDæÖR7G&–æsğ¢f&–çE6WGF–æw2§6öãğ¢GW&F–öâfÆöCğ¢&u&W7öç6R§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢66÷VçB6ç4–ç7Fw&Ô66÷VçB&VÆF–öâ†f–VÆG3¢¶66÷VçD–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢&W7G&–7B¢—VÆ–æU'Vâ6ç5—VÆ–æU'Vãò&VÆF–öâ†f–VÆG3¢·—VÆ–æU'Vä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢6WDçVÆÂ¢6æ6†÷G26ç4æÇ—F–756æ6†÷EµĞ ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7&VFVDEÒ¢–æFW‚…¶66÷VçD–BÂ7FGW2ÂV&Æ—6†VDEÒ§Ğ ¦ÖöFVÂ6ç4æÇ—F–756æ6†÷B°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢V&Æ—6…&V6÷&D–B7G&–æp¢6GW&VDBFFUF–ÖRFVfVÇB†æ÷r‚’¢ÖWG&–72§6öãğ¢&u&W7öç6R§6öãğ¢W'&÷$6öFR7G&–æsğ¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR¢V&Æ—6…&V6÷&B6ç5V&Æ—6…&V6÷&B&VÆF–öâ†f–VÆG3¢·V&Æ—6…&V6÷&D–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢–æFW‚…¶÷&væ—¦F–öä–BÂ6GW&VDEÒ¢–æFW‚…·V&Æ—6…&V6÷&D–BÂ6GW&VDEÒ§Ğ ¦ÖöFVÂ6ç46WGF–ær°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢¶W’7G&–æp¢fÇVR§6öà¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶÷&væ—¦F–öä–BÂ¶W•Ò§Ğ ¦ÖöFVÂ6ç5fö–6U&W6WB°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢æÖR7G&–æp¢6Æ÷G2§6öà¢GG56WGF–æw2§6öãğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢Væ—VR…¶÷&væ—¦F–öä–BÂæÖUÒ§Ğ ¦ÖöFVÂ6ç4vVæW&F–öä¦ö"°¢–B7G&–ær–BFVfVÇB†7V–B‚’¢÷&væ—¦F–öä–B7G&–æp¢7FGW27G&–ærFVfVÇB‚$äUr"¢VWVUF‚7G&–æsğ¢–çWDÖæ–fW7B§6öà¢&W7VÇDÖæ–fW7B§6öãğ¢W'&÷$6öFR7G&–æsğ¢W'&÷$ÖW76vR7G&–æsğ¢7V&Ö—GFVDBFFUF–ÖSğ¢6ö×ÆWFVDBFFUF–ÖSğ¢7&VFVDBFFUF–ÖRFVfVÇB†æ÷r‚’¢WFFVDBFFUF–ÖRWFFVD@¢÷&væ—¦F–öâ÷&væ—¦F–öâ&VÆF–öâ†f–VÆG3¢¶÷&væ—¦F–öä–EÒÂ&VfW&Væ6W3¢¶–EÒÂöäFVÆWFS¢666FR ¢–æFW‚…¶÷&væ—¦F–öä–BÂ7FGW2ÂWFFVDEÒ§Ğ
+// A repeat post keeps its original anchor publishDate forever (updatePost only
+// flips the state, the calendar expands occurrences virtually). If the workflow
+// gets that raw past date, any (re)start - an accidental edit resetting the
+// state to QUEUE, or a missing-posts sweep poke - sleeps 0 and publishes
+// instantly, machine-gunning the channel. Roll the returned date forward to the
+// next occurrence on the anchor grid instead, so fresh starts wait for the next
+// real occurrence. Only for the initial QUEUE run: repeat chain children
+// (postNow) run against a PUBLISHED post and must keep publishing immediately.
+// Occurrences missed within the grace window still catch up and post.
+function reanchorInterval(post: any) {
+  if (!post?.intervalInDays || post.state !== State.QUEUE) {
+    return post;
+  }
+
+  const interval = post.intervalInDays * 24 * 60 * 60 * 1000;
+  const late = Date.now() - new Date(post.publishDate).getTime();
+  if (late <= REANCHOR_GRACE_MS) {
+    return post;
+  }
+
+  const next =
+    new Date(post.publishDate).getTime() +
+    Math.ceil(late / interval) * interval;
+
+  return { ...post, publishDate: new Date(next) };
+}
+
+@Injectable()
+@Activity()
+export class PostActivity {
+  constructor(
+    private _postService: PostsService,
+    private _notificationService: NotificationService,
+    private _integrationManager: IntegrationManager,
+    private _integrationService: IntegrationService,
+    private _refreshIntegrationService: RefreshIntegrationService,
+    private _webhookService: WebhooksService,
+    private _temporalService: TemporalService,
+    private _subscriptionService: SubscriptionService,
+    private _accountProtection: AccountProtectionService
+  ) {}
+
+  @ActivityMethod()
+  async getIntegrationById(orgId: string, id: string) {
+    return this._integrationService.getIntegrationById(orgId, id);
+  }
+
+  @ActivityMethod()
+  async searchForMissingThreeHoursPosts() {
+    const list = await this._postService.searchForMissingThreeHoursPosts();
+    for (const post of list) {
+      await this._temporalService.client
+        .getRawClient()
+        .workflow.signalWithStart('postWorkflowV112', {
+          workflowId: `post_${post.id}`,
+          taskQueue: 'main',
+          signal: 'poke',
+          workflowIdConflictPolicy: 'USE_EXISTING',
+          signalArgs: [],
+          args: [
+            {
+              taskQueue: post.integration.providerIdentifier
+                .split('-')[0]
+                .toLowerCase(),
+              postId: post.id,
+              organizationId: post.organizationId,
+            },
+          ],
+          typedSearchAttributes: new TypedSearchAttributes([
+            {
+              key: postIdSearchParam,
+              value: post.id,
+            },
+            {
+              key: organizationId,
+              value: post.organizationId,
+            },
+          ]),
+        });
+    }
+  }
+
+  @ActivityMethod()
+  async updatePost(id: string, postId: string, releaseURL: string) {
+    await this._postService.updatePost(id, postId, releaseURL);
+  }
+
+  @ActivityMethod()
+  async getPost(orgId: string, postId: string) {
+    if (process.env.STRIPE_SECRET_KEY) {
+      const subscription = await this._subscriptionService.getSubscription(
+        orgId
+      );
+      if (!subscription) {
+        return false;
+      }
+    }
+    const post = await this._postService.getPostById(postId, orgId);
+    if (post.deletedAt) {
+      return false;
+    }
+
+    return reanchorInterval(post);
+  }
+
+  @ActivityMethod()
+  async getPostsList(orgId: string, postId: string) {
+    if (process.env.STRIPE_SECRET_KEY) {
+      const subscription = await this._subscriptionService.getSubscription(
+        orgId
+      );
+      if (!subscription) {
+        return [];
+      }
+    }
+
+    const getPosts = await this._postService.getPostsRecursively(
+      postId,
+      true,
+      orgId
+    );
+    if (!getPosts || getPosts.length === 0 || getPosts[0].parentPostId) {
+      return [];
+    }
+
+    // only the root drives the pre-publish sleep and the repeat schedule,
+    // the rest are comments
+    const [root, ...comments] = getPosts.map(slimPost);
+    return [reanchorInterval(root), ...comments];
+  }
+
+  @ActivityMethod()
+  async isCommentable(integration: Integration) {
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    return !!getIntegration.comment;
+  }
+
+  @ActivityMethod()
+  async postComment(
+    postId: string,
+    lastPostId: string | undefined,
+    integration: Integration,
+    posts: Post[]
+  ) {
+    // kept only for in-flight postWorkflowV108 runs, which set a
+    // heartbeatTimeout on this activity - removing the sender would kill
+    // them. Under V109+ (no heartbeatTimeout) this is a no-op and can be
+    // dropped once all V108 executions have drained
+    return withHeartbeat(() =>
+      this.handleDisconnect(integration, async () => {
+        const getIntegration = this._integrationManager.getSocialIntegration(
+          integration.providerIdentifier
+        );
+
+        const newPosts = await this._postService.updateTags(
+          integration.organizationId,
+          posts
+        );
+
+        return getIntegration.comment(
+          integration.internalId,
+          postId,
+          lastPostId,
+          integration.token,
+          await Promise.all(
+            (newPosts || []).map(async (p) => ({
+              id: p.id,
+              message: stripHtmlValidation(
+                getIntegration.editor,
+                p.content,
+                true,
+                false,
+                !/<\/?[a-z][\s\S]*>/i.test(p.content),
+                getIntegration.mentionFormat
+              ),
+              settings: JSON.parse(p.settings || '{}'),
+              media: await this._postService.updateMedia(
+                p.id,
+                JSON.parse(p.image || '[]'),
+                getIntegration?.convertToJPEG || false
+              ),
+            }))
+          ),
+          integration
+        );
+      })
+    );
+  }
+
+  @ActivityMethod()
+  async postSocial(integration: Integration, posts: Post[]) {
+    return this.postSocialInternal(integration, posts, false);
+  }
+
+  // Used by postWorkflowV106 and up: providers that implement `postPending`
+  // return a `pending` response the workflow resolves via checkPostStatus /
+  // finalizePost. Older workflow versions keep calling `postSocial` and get
+  // the old blocking behavior.
+  @ActivityMethod()
+  async postSocialPending(integration: Integration, posts: Post[]) {
+    return this.postSocialInternal(integration, posts, true);
+  }
+
+  // A Disconnect error means the platform will keep rejecting this channel no
+  // matter how many token refreshes (e.g. TikTok's daily active user cap):
+  // mark the channel as needing a re-connect and notify the user, then rethrow
+  // as BadBody so every workflow version - frozen once on main - treats it as
+  // a terminal error without needing a new workflow.
+  private async handleDisconnect<T>(
+    integration: Integration,
+    func: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await func();
+    } catch (err) {
+      if (err instanceof Disconnect) {
+        try {
+          await this._integrationService.disconnectChannel(
+            integration.organizationId,
+            integration,
+            err.message
+          );
+        } catch (e) {
+          /**empty**/
+        }
+
+        throw new BadBody(
+          integration.providerIdentifier,
+          JSON.stringify({}),
+          Buffer.from('{}'),
+          err.message
+        );
+      }
+
+      throw err;
+    }
+  }
+
+  private async postSocialInternal(
+    integration: Integration,
+    posts: Post[],
+    allowPending: boolean
+  ) {
+    // kept only for in-flight postWorkflowV108 runs, which set a
+    // heartbeatTimeout on this activity - removing the sender would kill
+    // them. Under V109+ (no heartbeatTimeout) this is a no-op and can be
+    // dropped once all V108 executions have drained
+    return this._accountProtection.run({
+      organizationId: integration.organizationId,
+      accountId: integration.internalId,
+      accountType: 'POSTIZ_INTEGRATION',
+      provider: integration.providerIdentifier,
+      action: 'PUBLISH',
+    }, () => withHeartbeat(() =>
+      this.handleDisconnect(integration, () => this.postSocialBody(integration, posts, allowPending))
+    ));
+  }
+
+  private async postSocialBody(
+    integration: Integration,
+    posts: Post[],
+    allowPending: boolean
+  ) {
+    // Stage markers: whatever ran last is what a timed-out activity reports.
+    // Providers that go through this.fetch overwrite these with the exact URL;
+    // the ones on their own HTTP client (x, youtube, bluesky) are still
+    // narrowed down to the step they hung on.
+    setHeartbeatDetails('subscription lookup');
+    if (process.env.STRIPE_SECRET_KEY) {
+      const subscription = await this._subscriptionService.getSubscription(
+        integration.organizationId
+      );
+
+      if (!subscription) {
+        throw new Error('No active subscription found for this organization.');
+      }
+    }
+
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    setHeartbeatDetails('update tags');
+    const newPosts = await this._postService.updateTags(
+      integration.organizationId,
+      posts
+    );
+
+    setHeartbeatDetails('resolve media');
+    const mappedPosts = await Promise.all(
+      (newPosts || []).map(async (p) => ({
+        id: p.id,
+        message: stripHtmlValidation(
+          getIntegration.editor,
+          p.content,
+          true,
+          false,
+          !/<\/?[a-z][\s\S]*>/i.test(p.content),
+          getIntegration.mentionFormat
+        ),
+        settings: JSON.parse(p.settings || '{}'),
+        media: await this._postService.updateMedia(
+          p.id,
+          JSON.parse(p.image || '[]'),
+          getIntegration?.convertToJPEG || false
+        ),
+      }))
+    );
+
+    setHeartbeatDetails(`${integration.providerIdentifier}: publish`);
+    const postNow =
+      allowPending && getIntegration.postPending
+        ? await getIntegration.postPending(
+            integration.internalId,
+            integration.token,
+            mappedPosts,
+            integration
+          )
+        : await getIntegration.post(
+            integration.internalId,
+            integration.token,
+            mappedPosts,
+            integration
+          );
+
+    // The post is already published at this point: the streak is best-effort,
+    // failing the activity here would retry it and publish again.
+    setHeartbeatDetails(`${integration.providerIdentifier}: published, streak`);
+    try {
+      await this._temporalService.client
+        .getRawClient()
+        .workflow.start('streakWorkflow', {
+          args: [{ organizationId: integration.organizationId }],
+          workflowId: `streak_${integration.organizationId}`,
+          taskQueue: 'main',
+          workflowIdConflictPolicy: 'TERMINATE_EXISTING',
+          typedSearchAttributes: new TypedSearchAttributes([
+            {
+              key: organizationId,
+              value: integration.organizationId,
+            },
+          ]),
+        });
+    } catch (err) {
+      /**empty**/
+    }
+
+    return postNow;
+  }
+
+  @ActivityMethod()
+  async checkPostStatus(integration: Integration, pendingData: any) {
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    return this.handleDisconnect(integration, () =>
+      getIntegration.checkPostStatus(integration.token, pendingData, integration)
+    );
+  }
+
+  @ActivityMethod()
+  async finalizePost(integration: Integration, pendingData: any) {
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    return withHeartbeat(() =>
+      this.handleDisconnect(integration, () =>
+        getIntegration.finalizePost(integration.token, pendingData, integration)
+      )
+    );
+  }
+
+  @ActivityMethod()
+  async inAppNotification(
+    orgId: string,
+    subject: string,
+    message: string,
+    sendEmail = false,
+    digest = false,
+    type: NotificationType = 'success'
+  ) {
+    await this._notificationService.inAppNotification(
+      orgId,
+      subject,
+      message,
+      sendEmail,
+      digest,
+      type
+    );
+  }
+
+  @ActivityMethod()
+  async globalPlugs(integration: Integration) {
+    return this._postService.checkPlugs(
+      integration.organizationId,
+      integration.providerIdentifier,
+      integration.id
+    );
+  }
+
+  @ActivityMethod()
+  async changeState(id: string, state: State, err?: any, body?: any) {
+    await this._postService.changeState(id, state, err, body);
+  }
+
+  @ActivityMethod()
+  async internalPlugs(integration: Integration, settings: any) {
+    return this._postService.checkInternalPlug(
+      integration,
+      integration.organizationId,
+      integration.id,
+      settings
+    );
+  }
+
+  @ActivityMethod()
+  async sendWebhooks(postId: string, orgId: string, integrationId: string) {
+    // Webhooks are best-effort and run after the post already published, so a
+    // failure here must not fail the workflow.
+    try {
+      const webhooks = (await this._webhookService.getWebhooks(orgId)).filter(
+        (f) => {
+          return (
+            f.integrations.length === 0 ||
+            f.integrations.some((i) => i.integration.id === integrationId)
+          );
+        }
+      );
+
+      if (webhooks.length === 0) {
+        return;
+      }
+
+      const post = await this._postService.getPostByForWebhookId(
+        postId,
+        integrationId
+      );
+      await Promise.all(
+        webhooks.map(async (webhook) => {
+          try {
+            // webhook.url is validated at save time, but DNS can change
+            // between then and now - pin resolution like every other
+            // user-influenced outbound request.
+            await fetch(webhook.url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(post),
+              // @ts-ignore â€” undici option, not in lib.dom fetch types
+              dispatcher: getSsrfSafeDispatcher(),
+            });
+          } catch (e) {
+            /**empty**/
+          }
+        })
+      );
+    } catch (err) {
+      /**empty**/
+    }
+  }
+  @ActivityMethod()
+  async processPlug(data: {
+    plugId: string;
+    postId: string;
+    delay: number;
+    totalRuns: number;
+    currentRun: number;
+  }) {
+    return this._integrationService.processPlugs(data);
+  }
+
+  @ActivityMethod()
+  async processInternalPlug(data: {
+    post: string;
+    originalIntegration: string;
+    integration: string;
+    plugName: string;
+    orgId: string;
+    delay: number;
+    information: any;
+  }) {
+    await this._integrationService.processInternalPlug(data);
+  }
+
+  @ActivityMethod()
+  async refreshToken(
+    integration: Integration
+  ): Promise<false | AuthTokenDetails> {
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    try {
+      const refresh = await this._refreshIntegrationService.refresh(
+        integration
+      );
+      if (!refresh) {
+        return false;
+      }
+
+      if (getIntegration.refreshWait) {
+        await timer(10000);
+      }
+
+      return refresh;
+    } catch (err) {
+      await this._refreshIntegrationService.setBetweenSteps(integration);
+      return false;
+    }
+  }
+
+  @ActivityMethod()
+  async refreshTokenWithCause(
+    integration: Integration,
+    cause: string
+  ): Promise<false | AuthTokenDetails> {
+    const getIntegration = this._integrationManager.getSocialIntegration(
+      integration.providerIdentifier
+    );
+
+    try {
+      const refresh = await this._refreshIntegrationService.refresh(
+        integration,
+        cause
+      );
+      if (!refresh) {
+        return false;
+      }
+
+      if (getIntegration.refreshWait) {
+        await timer(10000);
+      }
+
+      return refresh;
+    } catch (err) {
+      await this._refreshIntegrationService.setBetweenSteps(integration, cause);
+      return false;
+    }
+  }
+}
