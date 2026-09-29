@@ -372,6 +372,7 @@ describeDb('Account Protection database and browser E2E', () => {
     let app: import('@nestjs/common').INestApplication | undefined;
     let browser: import('playwright').Browser | undefined;
 
+    try {
     await prisma.user.create({
       data: {
         id: userId,
@@ -383,8 +384,6 @@ describeDb('Account Protection database and browser E2E', () => {
       },
     });
     await prisma.userOrganization.create({ data: { userId, organizationId, role: 'USER' } });
-
-    try {
       process.env.JWT_SECRET = randomBytes(32).toString('hex');
       const token = signJwt({ id: userId }, process.env.JWT_SECRET, { expiresIn: '5m' });
       app = await NestFactory.create(AccountProtectionAuthenticatedE2eModule, { logger: false });
