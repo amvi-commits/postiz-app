@@ -3,6 +3,7 @@ module.exports = {
   testMatch: [
     '<rootDir>/libraries/helpers/src/utils/*.spec.ts',
     '<rootDir>/apps/backend/src/services/sns-studio/*.spec.ts',
+    '<rootDir>/apps/backend/src/api/routes/*.spec.ts',
   ],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {

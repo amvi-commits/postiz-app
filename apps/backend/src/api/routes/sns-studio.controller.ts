@@ -38,6 +38,13 @@ class InstagramLoginDto {
   @IsOptional() @IsString() @MaxLength(32) verificationCode?: string;
 }
 
+class UpdateTikTokAccountDto {
+  @IsOptional() @IsBoolean() autoPublishEnabled?: boolean;
+  @IsOptional() @IsNumber() @Min(1) @Max(100) dailyPostLimit?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(365) duplicateWindowDays?: number;
+}
+type UpdateSocialAccountDto = UpdateTikTokAccountDto;
+
 class StoryPoolDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;
@@ -494,6 +501,217 @@ export class SnsStudioController {
       return { ...account, health, healthStatus: health.status, proxyConfigured: health.proxyConfigured ?? null, lastError: health.lastError || null };
     }));
   }
+
+  // ---------------------------------------------------------------------------
+  // TikTok Accounts (Postiz Integration + SnsAppSetting Adapter)
+  // ---------------------------------------------------------------------------
+
+  private readonly DEFAULT_TIKTOK_SETTINGS = {
+    autoPublishEnabled: true,
+    dailyPostLimit: 2,
+    duplicateWindowDays: 30,
+  };
+
+  /**
+   * List all TikTok / TikTok Business accounts for this organization.
+   * Uses Postiz Integration as Single Source of Truth.
+   * Account-specific settings (autoPublish, dailyPostLimit, duplicateWindowDays)
+   * are read from SnsAppSetting ('sns:tiktok:account:<integrationId>').
+   */
+  @Get('/tiktok/accounts')
+  async listTikTokAccounts(@GetOrgFromRequest() org: Organization) {
+    const integrations = await this.prisma.integration.findMany({
+      where: {
+        organizationId: org.id,
+        providerIdentifier: { in: ['tiktok', 'tiktok-business'] },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        providerIdentifier: true,
+        internalId: true,
+        name: true,
+        profile: true,
+        picture: true,
+        disabled: true,
+        tokenExpiration: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const settingKeys = integrations.map((i) => `sns:tiktok:account:${i.id}`);
+    const settings = settingKeys.length > 0
+      ? await this.prisma.snsAppSetting.findMany({
+          where: {
+            organizationId: org.id,
+            key: { in: settingKeys },
+          },
+        })
+      : [];
+    const settingMap = new Map<string, Record<string, any>>(
+      settings.map((s) => [s.key, (s.value && typeof s.value === 'object' ? s.value : {}) as Record<string, any>])
+    );
+
+    const now = new Date();
+    return integrations
+      .map((integration) => {
+        const isExpired = integration.tokenExpiration ? integration.tokenExpiration < now : false;
+        const isDisconnected = integration.disabled || isExpired;
+        const setting = settingMap.get(`sns:tiktok:account:${integration.id}`) || {};
+
+        return {
+          id: integration.id,
+          integrationId: integration.id,
+          providerIdentifier: integration.providerIdentifier, // 'tiktok' | 'tiktok-business'
+          platform: integration.providerIdentifier,
+          accountType: integration.providerIdentifier === 'tiktok-business' ? 'business' : 'personal',
+          username: integration.profile || integration.name || integration.internalId,
+          displayName: integration.name || integration.profile || integration.internalId,
+          picture: integration.picture,
+          status: isDisconnected ? 'DISCONNECTED' : 'ACTIVE',
+          autoPublishEnabled: typeof setting.autoPublishEnabled === 'boolean' ? setting.autoPublishEnabled : this.DEFAULT_TIKTOK_SETTINGS.autoPublishEnabled,
+          dailyPostLimit: typeof setting.dailyPostLimit === 'number' ? setting.dailyPostLimit : this.DEFAULT_TIKTOK_SETTINGS.dailyPostLimit,
+          duplicateWindowDays: typeof setting.duplicateWindowDays === 'number' ? setting.duplicateWindowDays : this.DEFAULT_TIKTOK_SETTINGS.duplicateWindowDays,
+          lastValidatedAt: isDisconnected ? null : (setting.lastValidatedAt || integration.updatedAt || integration.createdAt),
+          lastPublishedAt: setting.lastPublishedAt || null,
+          archivedAt: setting.archivedAt || null,
+        };
+      })
+      .filter((account) => !account.archivedAt);
+  }
+
+  // Backward compatibility alias for /social-accounts
+  @Get('/social-accounts')
+  async listSocialAccounts(@GetOrgFromRequest() org: Organization) {
+    return this.listTikTokAccounts(org);
+  }
+
+  /**
+   * Update TikTok account settings in SnsAppSetting.
+   */
+  @Put('/tiktok/accounts/:id')
+  async updateTikTokAccount(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: UpdateTikTokAccountDto,
+  ) {
+    const integration = await this.prisma.integration.findFirst({
+      where: {
+        id,
+        organizationId: org.id,
+        providerIdentifier: { in: ['tiktok', 'tiktok-business'] },
+      },
+    });
+    if (!integration) throw new HttpException('TikTok integration not found', HttpStatus.NOT_FOUND);
+
+    const key = `sns:tiktok:account:${id}`;
+    const existing = await this.prisma.snsAppSetting.findUnique({
+      where: {
+        organizationId_key: { organizationId: org.id, key },
+      },
+    });
+
+    const currentVal = (existing?.value && typeof existing.value === 'object' ? existing.value : {}) as Record<string, any>;
+    const newVal = {
+      ...currentVal,
+      ...(body.autoPublishEnabled !== undefined ? { autoPublishEnabled: body.autoPublishEnabled } : {}),
+      ...(body.dailyPostLimit !== undefined ? { dailyPostLimit: body.dailyPostLimit } : {}),
+      ...(body.duplicateWindowDays !== undefined ? { duplicateWindowDays: body.duplicateWindowDays } : {}),
+    };
+
+    if (newVal.autoPublishEnabled === undefined) newVal.autoPublishEnabled = true;
+    if (newVal.dailyPostLimit === undefined) newVal.dailyPostLimit = 2;
+    if (newVal.duplicateWindowDays === undefined) newVal.duplicateWindowDays = 30;
+
+    await this.prisma.snsAppSetting.upsert({
+      where: {
+        organizationId_key: { organizationId: org.id, key },
+      },
+      create: {
+        organizationId: org.id,
+        key,
+        value: newVal,
+      },
+      update: {
+        value: newVal,
+      },
+    });
+
+    return {
+      id: integration.id,
+      integrationId: integration.id,
+      providerIdentifier: integration.providerIdentifier,
+      platform: integration.providerIdentifier,
+      ...newVal,
+    };
+  }
+
+  // Backward compatibility alias for /social-accounts/:id
+  @Put('/social-accounts/:id')
+  async updateSocialAccount(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: UpdateTikTokAccountDto,
+  ) {
+    return this.updateTikTokAccount(org, id, body);
+  }
+
+  /**
+   * Archive (soft-delete) a TikTok account view in SNS Studio.
+   */
+  @Delete('/tiktok/accounts/:id')
+  async archiveTikTokAccount(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    const integration = await this.prisma.integration.findFirst({
+      where: {
+        id,
+        organizationId: org.id,
+        providerIdentifier: { in: ['tiktok', 'tiktok-business'] },
+      },
+    });
+    if (!integration) throw new HttpException('TikTok integration not found', HttpStatus.NOT_FOUND);
+
+    const key = `sns:tiktok:account:${id}`;
+    const existing = await this.prisma.snsAppSetting.findUnique({
+      where: {
+        organizationId_key: { organizationId: org.id, key },
+      },
+    });
+
+    const currentVal = (existing?.value && typeof existing.value === 'object' ? existing.value : {}) as Record<string, any>;
+    const newVal = {
+      ...currentVal,
+      archivedAt: new Date().toISOString(),
+    };
+
+    await this.prisma.snsAppSetting.upsert({
+      where: {
+        organizationId_key: { organizationId: org.id, key },
+      },
+      create: {
+        organizationId: org.id,
+        key,
+        value: newVal,
+      },
+      update: {
+        value: newVal,
+      },
+    });
+
+    return { archived: true };
+  }
+
+  // Backward compatibility alias for /social-accounts/:id
+  @Delete('/social-accounts/:id')
+  async archiveSocialAccount(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    return this.archiveTikTokAccount(org, id);
+  }
+
+
+  // ---------------------------------------------------------------------------
+  // Instagram-specific endpoints (existing)
+  // ---------------------------------------------------------------------------
 
   @Post('/accounts')
   async loginAccount(@GetOrgFromRequest() org: Organization, @Body() body: InstagramLoginDto) {
