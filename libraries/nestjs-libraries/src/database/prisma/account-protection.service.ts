@@ -1,10 +1,21 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { PrismaService } from './prisma.service';
+import { metrics } from '@opentelemetry/api';
 
 export type ProtectedAction = 'PUBLISH' | 'LOGIN' | 'SESSION_REFRESH' | 'BROWSER' | 'ACCOUNT_MUTATION';
 
 const SENSITIVE_KEY = /(authorization|token|secret|password|cookie|session|credential|email|username|body|content)/i;
+const actionMeter = metrics.getMeter('sns-studio-account-protection', '1.0.0');
+const actionCounter = actionMeter.createCounter('sns_studio.account_protection.actions');
+
+export function accountProtectionMetricAttributes(provider: string, action: ProtectedAction, outcome: string) {
+  return { provider, action, outcome };
+}
+
+function recordAction(provider: string, action: ProtectedAction, outcome: string) {
+  if (process.env.OTEL_ENABLED === 'true') actionCounter.add(1, accountProtectionMetricAttributes(provider, action, outcome));
+}
 
 export function sanitizeAccountSecurityMetadata(value: unknown): unknown {
   if (Array.isArray(value)) return value.slice(0, 30).map(sanitizeAccountSecurityMetadata);
@@ -70,11 +81,13 @@ export class AccountProtectionService {
       if (!consumed.count) throw new ServiceUnavailableException({ code: 'ACCOUNT_ACTION_BUDGET_EXCEEDED', retryAt: budget.resetAt });
       if (circuit?.state === 'OPEN') await this.prisma.accountCircuitState.update({ where: { id: circuit.id }, data: { state: 'HALF_OPEN' } });
       await this.audit(profile, 'ACTION_STARTED');
+      recordAction(input.provider, input.action, 'started');
       try {
         const result = await operation();
         await this.prisma.accountCircuitState.upsert({ where: circuitKey, create: { securityProfileId: profile.id, provider: input.provider, actionType: input.action, state: 'CLOSED', failureCount: 0 }, update: { state: 'CLOSED', failureCount: 0, openedUntil: null } });
         await this.prisma.accountSecurityProfile.update({ where: { id: profile.id }, data: { lastHealthyAt: new Date(), lastSuccessfulActionAt: new Date(), consecutiveProviderFailures: 0, consecutiveAuthFailures: 0, securityState: 'HEALTHY' } });
         await this.audit(profile, 'ACTION_SUCCEEDED');
+        recordAction(input.provider, input.action, 'succeeded');
         return result;
       } catch (error) {
         const err = error as any;
@@ -89,6 +102,7 @@ export class AccountProtectionService {
         }
         await this.prisma.accountSecurityProfile.update({ where: { id: profile.id }, data: challenge ? { securityState: 'REAUTH_REQUIRED', automationPaused: true, pauseReason: 'Provider requires user authentication', lastChallengeAt: new Date(), lastAuthFailureAt: new Date(), consecutiveAuthFailures: { increment: 1 } } : until ? { securityState: 'COOLDOWN', cooldownUntil: until, lastWarningAt: new Date() } : { securityState: 'WARNING', lastWarningAt: new Date(), consecutiveProviderFailures: { increment: 1 } } });
         await this.audit(profile, challenge ? 'AUTHENTICATION_REQUIRED' : until ? 'PROVIDER_RATE_LIMIT' : 'PROVIDER_ACTION_FAILED', challenge || until ? 'WARNING' : 'ERROR', { status, retryAfter });
+        recordAction(input.provider, input.action, challenge ? 'auth_required' : until ? 'rate_limited' : 'failed');
         throw error;
       }
     } finally {

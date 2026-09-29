@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Organization } from '@prisma/client';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
 import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
@@ -7,6 +7,19 @@ import { AccountProtectionService } from '@gitroom/nestjs-libraries/database/pri
 @Controller('/account-protection')
 export class AccountProtectionController {
   constructor(private readonly prisma: PrismaService, private readonly protection: AccountProtectionService) {}
+
+  private async resolveProfile(org: Organization, type: string, id: string) {
+    let provider: string | undefined;
+    if (type === 'POSTIZ_INTEGRATION') {
+      const account = await this.prisma.integration.findFirst({ where: { organizationId: org.id, internalId: id, deletedAt: null }, select: { providerIdentifier: true } });
+      provider = account?.providerIdentifier;
+    } else if (type === 'SNS_INSTAGRAM') {
+      const account = await this.prisma.snsInstagramAccount.findFirst({ where: { organizationId: org.id, id, archivedAt: null }, select: { id: true } });
+      if (account) provider = 'instagram-worker';
+    }
+    if (!provider) throw new NotFoundException('Account not found');
+    return this.protection.ensureProfile(org.id, id, type, provider);
+  }
 
   @Get()
   async list(@GetOrgFromRequest() org: Organization) {
@@ -27,7 +40,7 @@ export class AccountProtectionController {
 
   @Post(':accountType/:accountId/pause')
   async pause(@GetOrgFromRequest() org: Organization, @Param('accountType') type: string, @Param('accountId') id: string, @Body() body: { reason?: string }) {
-    const profile = await this.protection.ensureProfile(org.id, id, type, 'unknown');
+    const profile = await this.resolveProfile(org, type, id);
     const updated = await this.prisma.accountSecurityProfile.update({ where: { id: profile.id }, data: { automationPaused: true, securityState: 'PAUSED', pauseReason: (body?.reason || 'Paused by user').slice(0, 200) } });
     await this.protection.audit(updated, 'MANUAL_PAUSE');
     return { ok: true };
@@ -45,8 +58,7 @@ export class AccountProtectionController {
 
   @Post(':accountType/:accountId/session-check')
   async sessionCheck(@GetOrgFromRequest() org: Organization, @Param('accountType') type: string, @Param('accountId') id: string) {
-    const profile = await this.prisma.accountSecurityProfile.findFirst({ where: { organizationId: org.id, accountId: id, accountType: type } });
-    if (!profile) throw new BadRequestException('Account protection profile not found');
+    const profile = await this.resolveProfile(org, type, id);
     const check = await this.prisma.accountSessionHealth.upsert({ where: { securityProfileId: profile.id }, create: { securityProfileId: profile.id, provider: profile.provider, status: 'UNKNOWN', checkedAt: new Date() }, update: { status: 'UNKNOWN', checkedAt: new Date() } });
     await this.protection.audit(profile, 'SESSION_CHECK_REQUESTED');
     return { status: check.status, checkedAt: check.checkedAt, note: 'This provider does not expose a safe session validation API.' };

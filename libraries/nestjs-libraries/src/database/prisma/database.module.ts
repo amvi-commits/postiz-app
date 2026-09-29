@@ -51,6 +51,7 @@ import { ErrorsService } from '@gitroom/nestjs-libraries/database/prisma/errors/
 import { AdminStatsRepository } from '@gitroom/nestjs-libraries/database/prisma/admin-stats/admin-stats.repository';
 import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/admin-stats/admin-stats.service';
 import { AccountProtectionService } from './account-protection.service';
+import { AccountBrowserProfileManager } from './account-browser-profile.manager';
 
 @Global()
 @Module({
@@ -59,6 +60,7 @@ import { AccountProtectionService } from './account-protection.service';
   providers: [
     PrismaService,
     AccountProtectionService,
+    AccountBrowserProfileManager,
     PrismaRepository,
     PrismaTransaction,
     UsersService,

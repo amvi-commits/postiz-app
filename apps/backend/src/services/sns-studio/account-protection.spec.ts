@@ -1,5 +1,6 @@
-import { AccountProtectionService, sanitizeAccountSecurityMetadata } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection.service';
+import { AccountProtectionService, accountProtectionMetricAttributes, sanitizeAccountSecurityMetadata } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection.service';
 import { LocalEncryptedSecretStore } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-secret-store';
+import { assertBrowserProfileBinding } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-browser-profile.manager';
 import { mkdtemp, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,6 +15,15 @@ describe('SNS Studio account protection safety primitives', () => {
   });
   it('redacts sensitive audit metadata recursively', () => {
     expect(sanitizeAccountSecurityMetadata({ status: 429, token: 'secret', nested: { password: 'secret', count: 2 } })).toEqual({ status: 429, token: '[REDACTED]', nested: { password: '[REDACTED]', count: 2 } });
+  });
+  it('keeps account identifiers and credentials out of telemetry attributes', () => {
+    expect(accountProtectionMetricAttributes('instagram', 'PUBLISH', 'succeeded')).toEqual({ provider: 'instagram', action: 'PUBLISH', outcome: 'succeeded' });
+  });
+  it('rejects a profile bound to another account or path', () => {
+    const root = 'C:/sns-profiles';
+    const expected = { accountId: 'account-b', accountType: 'POSTIZ_INTEGRATION', provider: 'threads' };
+    expect(() => assertBrowserProfileBinding(expected, { ...expected, accountId: 'account-a', profileKey: 'e1c2eac8-20f0-4f76-b5c7-4f209cc45aa0', profilePath: `${root}/e1c2eac8-20f0-4f76-b5c7-4f209cc45aa0` }, root)).toThrow('PROFILE_BINDING_MISMATCH');
+    expect(() => assertBrowserProfileBinding(expected, { ...expected, profileKey: 'e1c2eac8-20f0-4f76-b5c7-4f209cc45aa0', profilePath: `${root}/another-profile` }, root)).toThrow('PROFILE_BINDING_MISMATCH');
   });
   it('encrypts local secrets at rest and requires a key', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sns-protection-test-'));
