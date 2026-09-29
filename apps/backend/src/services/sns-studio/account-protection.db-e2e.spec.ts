@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import { mkdir, rm } from 'fs/promises';
 import { resolve, join } from 'path';
-import { Controller, Get, Module, Req } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { sign as signJwt } from 'jsonwebtoken';
@@ -31,22 +31,8 @@ async function expectErrorCode(promise: Promise<unknown>, code: string) {
 }
 
 
-@Controller('/user')
-class AccountProtectionAuthenticatedUserController {
-  @Get('self')
-  self(@Req() request: any) {
-    return {
-      ...request.user,
-      orgId: request.org.id,
-      organization: { id: request.org.id, name: request.org.name },
-      tier: 'FREE',
-      admin: false,
-    };
-  }
-}
-
 @Module({
-  controllers: [AccountProtectionController, AccountProtectionAuthenticatedUserController],
+  controllers: [AccountProtectionController],
   providers: [
     PrismaService,
     AccountProtectionService,
@@ -395,12 +381,12 @@ describeDb('Account Protection database and browser E2E', () => {
         { name: 'showorg', value: organizationId, url: frontendUrl, httpOnly: true, sameSite: 'Lax' },
       ]);
 
-      const selfResponsePromise = page.waitForResponse((response) =>
-        new URL(response.url()).pathname === '/user/self' && response.request().method() === 'GET'
+      const accountResponsePromise = page.waitForResponse((response) =>
+        new URL(response.url()).pathname === '/account-protection' && response.request().method() === 'GET'
       );
       await page.goto(frontendUrl + '/account-protection', { waitUntil: 'domcontentloaded', timeout: 120000 });
-      const selfResponse = await selfResponsePromise;
-      expect(selfResponse.status()).toBe(200);
+      const accountResponse = await accountResponsePromise;
+      expect(accountResponse.status()).toBe(200);
       await page.getByRole('heading', { name: 'Account Protection' }).waitFor({ state: 'visible', timeout: 120000 });
 
       const accountSection = page.locator('section').filter({ hasText: 'Fixture A' });
