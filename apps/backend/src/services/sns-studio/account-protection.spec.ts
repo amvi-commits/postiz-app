@@ -68,6 +68,10 @@ describe('SNS Studio account protection safety primitives', () => {
       await expect(store.getSecret('account')).resolves.toBe('cookie-value');
       await store.setSecret('account', 'updated-cookie-value');
       await expect(store.getSecret('account')).resolves.toBe('updated-cookie-value');
+      const configuredKey = process.env.ACCOUNT_SECRET_ENCRYPTION_KEY!;
+      process.env.ACCOUNT_SECRET_ENCRYPTION_KEY = Buffer.alloc(32, 10).toString('base64');
+      await expect(store.getSecret('account')).rejects.toThrow();
+      process.env.ACCOUNT_SECRET_ENCRYPTION_KEY = configuredKey;
       await store.deleteSecret('account');
       await expect(store.getSecret('account')).resolves.toBeNull();
       delete process.env.ACCOUNT_SECRET_ENCRYPTION_KEY;
