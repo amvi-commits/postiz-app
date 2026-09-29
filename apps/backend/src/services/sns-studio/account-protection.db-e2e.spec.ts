@@ -67,6 +67,7 @@ describeDb('Account Protection database and browser E2E', () => {
   let server: Server | undefined;
   let profileRoot: string;
   let originalProfileRoot: string | undefined;
+  let authUiUserId: string | undefined;
 
   beforeAll(async () => {
     const databaseUrl = new URL(process.env.DATABASE_URL || '');
@@ -105,6 +106,8 @@ describeDb('Account Protection database and browser E2E', () => {
     if (prisma) {
       await prisma.integration.deleteMany({ where: { organizationId } });
       await prisma.accountSecurityProfile.deleteMany({ where: { organizationId } });
+      await prisma.userOrganization.deleteMany({ where: { organizationId } });
+      if (authUiUserId) await prisma.user.deleteMany({ where: { id: authUiUserId } });
       await prisma.organization.deleteMany({ where: { id: organizationId } });
       await prisma.$disconnect();
     }
@@ -350,6 +353,7 @@ describeDb('Account Protection database and browser E2E', () => {
     const { chromium } = require('playwright') as typeof import('playwright');
     const frontendUrl = 'http://localhost:4200';
     const userId = randomUUID();
+    authUiUserId = userId;
     const previousJwtSecret = process.env.JWT_SECRET;
     let app: import('@nestjs/common').INestApplication | undefined;
     let browser: import('playwright').Browser | undefined;
@@ -382,9 +386,9 @@ describeDb('Account Protection database and browser E2E', () => {
       ]);
 
       const accountResponsePromise = page.waitForResponse((response) =>
-        new URL(response.url()).pathname === '/account-protection' && response.request().method() === 'GET'
+        new URL(response.url()).pathname === '/account-protection' && response.request().resourceType() === 'fetch'
       );
-      await page.goto(frontendUrl + '/account-protection', { waitUntil: 'domcontentloaded', timeout: 120000 });
+      await page.goto(frontendUrl + '/account-protection', { waitUntil: 'domcontentloaded', timeout: 30000 });
       const accountResponse = await accountResponsePromise;
       expect(accountResponse.status()).toBe(200);
       await page.getByRole('heading', { name: 'Account Protection' }).waitFor({ state: 'visible', timeout: 120000 });
