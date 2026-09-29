@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import { mkdir, rm } from 'fs/promises';
 import { resolve, join } from 'path';
-import { Controller, Get, MiddlewareConsumer, Module, NestModule, Req } from '@nestjs/common';
+import { Controller, Get, Module, Req } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { sign as signJwt } from 'jsonwebtoken';
@@ -69,13 +69,7 @@ class AccountProtectionAuthenticatedUserController {
     },
   ],
 })
-class AccountProtectionAuthenticatedE2eModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer
-      .apply(AuthMiddleware)
-      .forRoutes(AccountProtectionController, AccountProtectionAuthenticatedUserController);
-  }
-}
+class AccountProtectionAuthenticatedE2eModule {}
 
 describeDb('Account Protection database and browser E2E', () => {
   let prisma: PrismaService;
@@ -390,6 +384,8 @@ describeDb('Account Protection database and browser E2E', () => {
       const token = signJwt({ id: userId }, process.env.JWT_SECRET, { expiresIn: '5m' });
       app = await NestFactory.create(AccountProtectionAuthenticatedE2eModule, { logger: false });
       app.use(cookieParser());
+      const authMiddleware = app.get(AuthMiddleware);
+      app.use((request, response, next) => authMiddleware.use(request, response, next));
       await app.listen(3000, '127.0.0.1');
 
       browser = await chromium.launch({ headless: true });
