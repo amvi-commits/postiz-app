@@ -120,7 +120,7 @@ export class AccountProtectionService implements OnModuleInit {
         const err = error as any;
         const status = Number(err?.status || err?.statusCode || err?.response?.status);
         const text = String(err?.message || '').toLowerCase();
-        const challenge = /challenge|checkpoint|two[\s-]?factor|2fa|invalid credential|unauthorized|authentication|session revoked|revoked session|session expired/.test(text) || status === 401;
+        const challenge = /challenge|checkpoint|two[\s-]?factor|2fa|invalid credential|unauthorized|authentication|session invalid|invalid session|session revoked|revoked session|session expired/.test(text) || status === 401;
         const retryAfterHeader = err?.retryAfter ?? err?.response?.headers?.['retry-after'];
         const retryAfterMs = retryAfterMilliseconds(retryAfterHeader);
         const until = status === 429 ? new Date(Date.now() + (retryAfterMs === undefined ? 60_000 : Math.max(1000, retryAfterMs))) : undefined;
@@ -140,3 +140,4 @@ export class AccountProtectionService implements OnModuleInit {
     }
   }
 }
+
