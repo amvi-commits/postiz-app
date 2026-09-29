@@ -90,14 +90,6 @@
       "reason": "Historical setup documentation line contains the same non-placeholder Cloudflare secret-key candidate as the environment example; value withheld. History remains potentially exposed."
     },
     {
-      "path": "apps/frontend/src/components/agents/agent.tsx",
-      "rule": "generic-api-key",
-      "startLine": 236,
-      "endLine": 236,
-      "classification": "TRUE_SECRET",
-      "reason": "Historical publicApiKey source-comment line contains a non-empty high-entropy value; value withheld and public-key status is unverified. Treat it as potentially exposed."
-    },
-    {
       "path": "apps/frontend/src/components/launches/polonto.tsx",
       "rule": "generic-api-key",
       "startLine": 14,
