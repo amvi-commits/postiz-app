@@ -1,8 +1,13 @@
 import { createServer, Server } from 'http';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
 import { mkdir, rm } from 'fs/promises';
 import { resolve, join } from 'path';
+import { Controller, Get, MiddlewareConsumer, Module, NestModule, Req } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
+import { sign as signJwt } from 'jsonwebtoken';
+import { AuthMiddleware } from '../auth/auth.middleware';
 import { AccountProtectionController } from '../../api/routes/account-protection.controller';
 import { AccountProtectionService } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection.service';
 import { AccountBrowserProfileManager } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-browser-profile.manager';
@@ -21,6 +26,53 @@ async function expectErrorCode(promise: Promise<unknown>, code: string) {
   expect(caught).toBeDefined();
   const response = typeof caught?.getResponse === 'function' ? caught.getResponse() : caught?.response;
   expect(response?.code).toBe(code);
+}
+
+
+@Controller('/user')
+class AccountProtectionAuthenticatedUserController {
+  @Get('self')
+  self(@Req() request: any) {
+    return {
+      ...request.user,
+      orgId: request.org.id,
+      organization: { id: request.org.id, name: request.org.name },
+      tier: 'FREE',
+      admin: false,
+    };
+  }
+}
+
+@Module({
+  controllers: [AccountProtectionController, AccountProtectionAuthenticatedUserController],
+  providers: [
+    PrismaService,
+    AccountProtectionService,
+    {
+      provide: AuthMiddleware,
+      inject: [PrismaService],
+      useFactory: (database: PrismaService) =>
+        new AuthMiddleware(
+          {
+            getOrgsByUserId: (userId: string) =>
+              database.organization.findMany({
+                where: { users: { some: { userId, disabled: false } } },
+                include: { users: { where: { userId } } },
+              }),
+          } as any,
+          {
+            getUserById: (id: string) => database.user.findUnique({ where: { id } }),
+          } as any,
+        ),
+    },
+  ],
+})
+class AccountProtectionAuthenticatedE2eModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(AuthMiddleware)
+      .forRoutes(AccountProtectionController, AccountProtectionAuthenticatedUserController);
+  }
 }
 
 describeDb('Account Protection database and browser E2E', () => {
@@ -50,7 +102,7 @@ describeDb('Account Protection database and browser E2E', () => {
     accountA = 'fixture-account-a-' + randomUUID();
     accountB = 'fixture-account-b-' + randomUUID();
 
-    await prisma.organization.create({ data: { id: organizationId, name: 'Account Protection E2E' } });
+    await prisma.organization.create({ data: { id: organizationId, name: 'Account Protection E2E', apiKey: randomUUID() } });
     await prisma.integration.createMany({
       data: [
         { internalId: accountA, organizationId, name: 'Fixture A', providerIdentifier: 'instagram', type: 'profile', token: '' },
@@ -308,6 +360,77 @@ describeDb('Account Protection database and browser E2E', () => {
     const mismatched = jest.fn(async () => 'should not launch');
     await expectErrorCode(manager.withProfile(inputB, mismatched), 'PROFILE_BINDING_MISMATCH');
     expect(mismatched).not.toHaveBeenCalled();
+  }, 120000);
+
+  const authUiTest = process.env.ACCOUNT_PROTECTION_AUTH_UI_E2E === '1' ? it : it.skip;
+
+  authUiTest('authenticated Account Protection UI smoke uses the real controller and database', async () => {
+    const { chromium } = require('playwright') as typeof import('playwright');
+    const frontendUrl = 'http://localhost:4200';
+    const userId = randomUUID();
+    const previousJwtSecret = process.env.JWT_SECRET;
+    let app: import('@nestjs/common').INestApplication | undefined;
+    let browser: import('playwright').Browser | undefined;
+
+    await prisma.user.create({
+      data: {
+        id: userId,
+        email: 'account-protection-e2e-' + userId + '@example.invalid',
+        name: 'Account Protection E2E User',
+        providerName: 'LOCAL',
+        timezone: 0,
+        activated: true,
+      },
+    });
+    await prisma.userOrganization.create({ data: { userId, organizationId, role: 'USER' } });
+
+    try {
+      process.env.JWT_SECRET = randomBytes(32).toString('hex');
+      const token = signJwt({ id: userId }, process.env.JWT_SECRET, { expiresIn: '5m' });
+      app = await NestFactory.create(AccountProtectionAuthenticatedE2eModule, { logger: false });
+      app.use(cookieParser());
+      await app.listen(3000, '127.0.0.1');
+
+      browser = await chromium.launch({ headless: true });
+      const page = await browser.newPage();
+      await page.context().addCookies([
+        { name: 'auth', value: token, url: frontendUrl, httpOnly: true, sameSite: 'Lax' },
+        { name: 'showorg', value: organizationId, url: frontendUrl, httpOnly: true, sameSite: 'Lax' },
+      ]);
+
+      const selfResponsePromise = page.waitForResponse((response) =>
+        new URL(response.url()).pathname === '/user/self' && response.request().method() === 'GET'
+      );
+      await page.goto(frontendUrl + '/account-protection', { waitUntil: 'domcontentloaded', timeout: 120000 });
+      const selfResponse = await selfResponsePromise;
+      expect(selfResponse.status()).toBe(200);
+      await page.getByRole('heading', { name: 'Account Protection' }).waitFor({ state: 'visible', timeout: 120000 });
+
+      const accountSection = page.locator('section').filter({ hasText: 'Fixture A' });
+      await accountSection.getByRole('button', { name: '一時停止' }).waitFor({ state: 'visible', timeout: 30000 });
+      const pauseResponsePromise = page.waitForResponse((response) =>
+        response.request().method() === 'POST' && new URL(response.url()).pathname.includes('/account-protection/')
+      );
+      await accountSection.getByRole('button', { name: '一時停止' }).click();
+      const pauseResponse = await pauseResponsePromise;
+      expect(pauseResponse.ok()).toBe(true);
+      await accountSection.getByText('保護状態: PAUSED').waitFor({ state: 'visible', timeout: 30000 });
+
+      const saved = await prisma.accountSecurityProfile.findUniqueOrThrow({
+        where: { organizationId_accountType_accountId: { organizationId, accountType: 'POSTIZ_INTEGRATION', accountId: accountA } },
+      });
+      expect(saved.automationPaused).toBe(true);
+      expect(saved.securityState).toBe('PAUSED');
+      const audit = await prisma.accountSecurityAuditLog.findMany({ where: { securityProfileId: saved.id } });
+      expect(audit.some((item) => item.event === 'MANUAL_PAUSE')).toBe(true);
+    } finally {
+      if (browser) await browser.close();
+      if (app) await app.close();
+      await prisma.userOrganization.deleteMany({ where: { userId } });
+      await prisma.user.deleteMany({ where: { id: userId } });
+      if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = previousJwtSecret;
+    }
   }, 120000);
 });
 
