@@ -109,6 +109,45 @@ jobs:
             apps/backend/src/services/sns-studio/account-protection.spec.ts \
             apps/backend/src/services/sns-studio/instagram-metrics.spec.ts
 
+      - name: Start the frontend and local API proxy for UI smoke
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/account-protection-ui"
+          (
+            cd apps/frontend
+            nohup env \
+              NEXT_PUBLIC_BACKEND_URL=http://localhost:4200 \
+              FRONTEND_URL=http://localhost:4200 \
+              STORAGE_PROVIDER=local \
+              NOT_SECURED=1 \
+              NEXT_TELEMETRY_DISABLED=1 \
+              pnpm exec next dev -p 4201 --hostname 127.0.0.1 \
+              > "$RUNNER_TEMP/account-protection-ui/frontend.log" 2>&1 < /dev/null &
+            echo $! > "$RUNNER_TEMP/account-protection-ui/frontend.pid"
+          )
+          nohup node .github/scripts/account-protection-e2e-proxy.cjs \
+            > "$RUNNER_TEMP/account-protection-ui/proxy.log" 2>&1 < /dev/null &
+          echo $! > "$RUNNER_TEMP/account-protection-ui/proxy.pid"
+
+      - name: Wait for the frontend smoke target
+        shell: bash
+        run: |
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent http://127.0.0.1:4200/auth/login >/dev/null; then
+              echo "Frontend smoke target is ready."
+              exit 0
+            fi
+            sleep 5
+          done
+          tail -n 100 "$RUNNER_TEMP/account-protection-ui/frontend.log"
+          exit 1
+
+      - name: Run authenticated Account Protection UI smoke
+        run: |
+          ACCOUNT_PROTECTION_AUTH_UI_E2E=1 pnpm exec jest --runInBand \
+            --runTestsByPath apps/backend/src/services/sns-studio/account-protection.db-e2e.spec.ts \
+            --testNamePattern="authenticated Account Protection UI smoke"
+
       - name: Verify fixtures and publishing data were cleaned up
         if: always()
         run: |
