@@ -3,9 +3,28 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { useAddProvider } from '@gitroom/frontend/components/launches/add.provider.component';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
+// TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
+type TikTokAccount = {
+  id: string; // Integration.id
+  integrationId: string;
+  providerIdentifier: string; // 'tiktok' | 'tiktok-business'
+  platform: 'tiktok' | string;
+  accountType: 'personal' | 'business';
+  username: string;
+  displayName?: string | null;
+  picture?: string | null;
+  status: 'ACTIVE' | 'DISCONNECTED' | 'NEEDS_USER_ACTION' | string;
+  tokenExpired?: boolean;
+  autoPublishEnabled: boolean;
+  dailyPostLimit: number;
+  duplicateWindowDays: number;
+  lastValidatedAt?: string | null;
+  lastPublishedAt?: string | null;
+};
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
@@ -81,10 +100,16 @@ export const SnsStudio = () => {
   const { data: editingPresets = [], mutate: refreshEditingPresets } = useSWR<any[]>('/sns-studio/editing-presets', load);
   const { data: voicePresets = [], mutate: refreshVoicePresets } = useSWR<any[]>('/sns-studio/voice-presets', load);
   const { data: generationJobs = [], mutate: refreshGenerationJobs } = useSWR<any[]>('/sns-studio/generation/jobs', load);
+  // TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
+  const { data: tiktokAccounts = [], mutate: refreshTikTokAccounts } = useSWR<TikTokAccount[]>('/sns-studio/tiktok/accounts', load);
+  // Local edits for TikTok account settings (before saving)
+  const [tiktokAccountEdits, setTikTokAccountEdits] = useState<Record<string, Partial<TikTokAccount>>>({});
+  // Reusable Postiz Add Provider modal (for TikTok OAuth)
+  const connectTikTok = useAddProvider(refreshTikTokAccounts);
 
   const refresh = useCallback(async () => {
-    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs()]);
-  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs]);
+    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts()]);
+  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts]);
 
   const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -267,18 +292,128 @@ export const SnsStudio = () => {
             <button className={primaryButton} disabled={busy}>Login / Save session</button>
           </div>
         </form>
-        <div className={card}>
-          <h2 className="text-lg font-bold">Accounts</h2>
-          <div className="mt-4 grid gap-3">
-            {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
-            {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
-              <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus || account.status} · Session: {account.health?.session || account.status} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}</div>
-              <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>Validate</button>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/caption-settings`, { method: 'PUT', body: JSON.stringify({ enabled: !account.captionAIEnabled }) }), 'AI Caption設定を更新しました。')} disabled={busy}>AI Caption {account.captionAIEnabled ? 'ON' : 'OFF'}</button>
-              <button className={secondaryButton} onClick={() => void run(async () => { const result = await request(`/sns-studio/accounts/${account.id}/trial-reel-eligibility`); setTrialEligibility((current) => ({ ...current, [account.id]: !!result.eligible })); return result; }, 'Trial Reelの利用可否を確認しました。')} disabled={busy}>Trial Reel check</button>
-            </div>)}
+        <div className="flex flex-col gap-5">
+          <div className={card}>
+            <h2 className="text-lg font-bold">Instagram Accounts</h2>
+            <div className="mt-4 grid gap-3">
+              {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
+              {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
+                <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus || account.status} · Session: {account.health?.session || account.status} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}</div>
+                <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>Validate</button>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/caption-settings`, { method: 'PUT', body: JSON.stringify({ enabled: !account.captionAIEnabled }) }), 'AI Caption設定を更新しました。')} disabled={busy}>AI Caption {account.captionAIEnabled ? 'ON' : 'OFF'}</button>
+                <button className={secondaryButton} onClick={() => void run(async () => { const result = await request(`/sns-studio/accounts/${account.id}/trial-reel-eligibility`); setTrialEligibility((current) => ({ ...current, [account.id]: !!result.eligible })); return result; }, 'Trial Reelの利用可否を確認しました。')} disabled={busy}>Trial Reel check</button>
+              </div>)}
+            </div>
+          </div>
+
+          {/* TikTok / TikTok Business Accounts — linked from Postiz Integration */}
+          <div className={card}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">TikTok Accounts</h2>
+                <p className="mt-1 text-sm text-textItemBlur">
+                  PostizでTikTokを接続済みのアカウントが自動的に表示されます。
+                  接続はPostiz標準のOAuth画面を利用します。
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button className={primaryButton} onClick={connectTikTok}>TikTokを接続</button>
+                <button className={secondaryButton} disabled={busy} onClick={() => void run(() => refreshTikTokAccounts(), 'TikTokアカウントを同期しました。')}>同期</button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {tiktokAccounts.filter((a) => a.platform === 'tiktok').length === 0 && (
+                <Empty>
+                  <div>TikTokアカウントが見つかりません。</div>
+                  <div className="mt-1 text-xs text-textItemBlur">PostizのIntegration設定でTikTokまたはTikTok Businessを接続してください。</div>
+                  <button className={`${primaryButton} mt-3`} onClick={connectTikTok}>TikTokを接続する</button>
+                </Empty>
+              )}
+              {tiktokAccounts
+                .filter((a) => a.platform === 'tiktok')
+                .map((account) => {
+                  const edits = tiktokAccountEdits[account.id] ?? {};
+                  const current = { ...account, ...edits };
+                  const isBusiness = account.providerIdentifier === 'tiktok-business' || account.accountType === 'business';
+                  return (
+                    <div key={account.id} className="rounded-lg border border-blockSeparator p-4">
+                      <div className="flex flex-wrap items-start gap-3">
+                        {/* TikTok icon placeholder */}
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-black text-white text-sm font-bold">TT</div>
+                        <div className="flex-1 min-w-[180px]">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold">@{account.username}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isBusiness ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                              {isBusiness ? 'Business' : 'Personal'}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${account.status === 'ACTIVE' ? 'text-green-400' : account.status === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300'}`}>
+                              {account.status === 'ACTIVE' ? '接続済み' : account.status === 'NEEDS_USER_ACTION' ? '要再認証' : '切断済み'}
+                            </span>
+                          </div>
+                          {account.displayName && account.displayName !== account.username && (
+                            <div className="mt-0.5 text-xs text-textItemBlur">{account.displayName}</div>
+                          )}
+                          <div className="mt-1 text-xs text-textItemBlur">
+                            Last validated: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '—'}
+                            {account.lastPublishedAt && ` · Last post: ${new Date(account.lastPublishedAt).toLocaleString()}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={current.autoPublishEnabled}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], autoPublishEnabled: e.target.checked } }))}
+                          />
+                          <span>自動投稿 {current.autoPublishEnabled ? 'ON' : 'OFF'}</span>
+                        </label>
+                        <Field label="1日投稿上限">
+                          <input
+                            className={field}
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={current.dailyPostLimit}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], dailyPostLimit: Number(e.target.value) } }))}
+                          />
+                        </Field>
+                        <Field label="再投稿禁止期間（日）">
+                          <input
+                            className={field}
+                            type="number"
+                            min={0}
+                            max={365}
+                            value={current.duplicateWindowDays}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], duplicateWindowDays: Number(e.target.value) } }))}
+                          />
+                        </Field>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          className={primaryButton}
+                          disabled={busy}
+                          onClick={() => void run(
+                            () => request(`/sns-studio/tiktok/accounts/${account.id}`, {
+                              method: 'PUT',
+                              body: JSON.stringify({
+                                autoPublishEnabled: current.autoPublishEnabled,
+                                dailyPostLimit: current.dailyPostLimit,
+                                duplicateWindowDays: current.duplicateWindowDays,
+                              }),
+                            }),
+                            '設定を保存しました。',
+                          )}
+                        >
+                          設定を保存
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
         </div>
       </section>}
