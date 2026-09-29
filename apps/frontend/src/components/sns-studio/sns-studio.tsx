@@ -5,15 +5,16 @@ import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
+import { ThreadsWorkspace } from '@gitroom/frontend/components/sns-studio/threads/threads-workspace';
 
-type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
+type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Threads' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
 type PublishRecord = { id: string; publishType: string; status: string; postUrl?: string | null; mediaId?: string | null; publishedAt?: string | null; errorCode?: string | null; account: { username: string }; snapshots?: Array<{ metrics?: Record<string, unknown> | null }> };
 
-const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
+const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field = 'w-full rounded-lg border border-blockSeparator bg-newBgColorInner px-3 py-2 text-newTextColor outline-none focus:border-[#7774ff]';
 const primaryButton = 'rounded-lg bg-[#5145ff] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
@@ -349,6 +350,15 @@ export const SnsStudio = () => {
       </section>}
 
       {activeTab === 'Publish' && <SnsStudioCommonPublisher prefill={commonPostPrefill} />}
+
+      {activeTab === 'Threads' && (
+        <ThreadsWorkspace
+          onOpenPublish={(prefill) => {
+            setCommonPostPrefill(prefill);
+            setActiveTab('Publish');
+          }}
+        />
+      )}
 
       {activeTab === 'Create' && <section className="grid gap-5 xl:grid-cols-2">
         <form className={card} onSubmit={submit(publishReel, 'Reel投稿が完了しました。')}>
