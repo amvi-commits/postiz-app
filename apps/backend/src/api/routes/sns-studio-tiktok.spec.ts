@@ -8,6 +8,25 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+jest.mock('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: {
+    sanitize: (val: any) => val,
+  },
+  sanitize: (val: any) => val,
+}));
+
+jest.mock('nostr-tools', () => ({
+  getPublicKey: jest.fn(),
+  Relay: jest.fn(),
+  finalizeEvent: jest.fn(),
+  SimplePool: jest.fn(),
+}));
+
+jest.mock('file-type', () => ({
+  fileTypeFromBuffer: jest.fn(),
+}));
+
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SnsStudioController } from './sns-studio.controller';
 
@@ -372,6 +391,23 @@ describe('SNS Studio TikTok Phase 1', () => {
 
     it('TikTokPublishAdapter delegates validation to PostsService.validatePosts', () => {
       expect(adapterContent).toContain('this.postsService.validatePosts');
+    });
+
+    it('TikTokPublishAdapter extracts real postId from createdPosts[0].postId without fallback', () => {
+      expect(adapterContent).toContain('createdPosts?.[0]?.postId');
+      expect(adapterContent).not.toContain("|| 'created'");
+    });
+
+    it('TikTokPublishAdapter evaluates emptyContent, settings validity, media validity, and tooLong', () => {
+      expect(adapterContent).toContain('validationResult.emptyContent');
+      expect(adapterContent).toContain('validationResult.valid');
+      expect(adapterContent).toContain('validationResult.errors !== true');
+      expect(adapterContent).toContain('validationResult.tooLong');
+    });
+
+    it('TikTokPublishAdapter allows draft mode without approval requirement', () => {
+      expect(adapterContent).toContain("const isPublishing = input.mode !== 'draft';");
+      expect(adapterContent).toContain('if (isPublishing && !autoPublishEnabled && input.approved !== true)');
     });
 
     it('Controller exposes /tiktok/preflight and /tiktok/publish endpoints', () => {

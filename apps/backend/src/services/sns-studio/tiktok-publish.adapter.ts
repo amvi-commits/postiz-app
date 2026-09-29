@@ -15,6 +15,7 @@ import { CreatePostDto } from '@gitroom/nestjs-libraries/dtos/posts/create.post.
 import { CreationMethod, Integration } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { hasExtension } from '@gitroom/helpers/utils/has.extension';
 
 export interface TikTokPublishMediaItem {
   id?: string;
@@ -201,42 +202,52 @@ export class TikTokPublishAdapter {
   }
 
   /**
-   * Check Creator Info / max video duration for Personal TikTok DIRECT_POST.
+   * Check Creator Info / max video duration for Personal TikTok DIRECT_POST with video.
    */
   async checkCreatorInfo(
     integration: Integration,
     resolvedSettings: Record<string, any>,
+    media?: TikTokPublishMediaItem[],
     mediaDurationSeconds?: number
-  ): Promise<number | undefined> {
-    // Only Personal TikTok with DIRECT_POST supports creator_info query in standard provider
+  ): Promise<{
+    maxDurationSeconds?: number;
+    warning?: TikTokPreflightWarning;
+  }> {
+    // Only Personal TikTok with DIRECT_POST and video media checks creator_info
+    const hasVideo = (media || []).some(
+      (m) =>
+        hasExtension(m?.path, 'mp4') || (m?.path?.indexOf?.('mp4') ?? -1) > -1
+    );
+
     if (
       integration.providerIdentifier !== 'tiktok' ||
-      resolvedSettings.content_posting_method !== 'DIRECT_POST'
+      resolvedSettings.content_posting_method !== 'DIRECT_POST' ||
+      !hasVideo
     ) {
-      return undefined;
+      return {};
+    }
+
+    let accessToken = integration.token;
+    const now = new Date();
+    if (integration.tokenExpiration && integration.tokenExpiration < now) {
+      // Token expired; attempt refresh via RefreshIntegrationService
+      const refreshed = await this.refreshIntegrationService.refresh(
+        integration,
+        'creator_info_preflight'
+      );
+      if (!refreshed || !refreshed.accessToken) {
+        throw new BadRequestException({
+          code: 'TIKTOK_REAUTH_REQUIRED',
+          message: 'TikTok token expired and refresh failed. Please re-authorize.',
+        });
+      }
+      accessToken = refreshed.accessToken;
     }
 
     try {
       const provider = this.integrationManager.getSocialIntegration('tiktok') as any;
       if (!provider || typeof provider.maxVideoLength !== 'function') {
-        return undefined;
-      }
-
-      let accessToken = integration.token;
-      const now = new Date();
-      if (integration.tokenExpiration && integration.tokenExpiration < now) {
-        // Token expired; attempt refresh via RefreshIntegrationService
-        const refreshed = await this.refreshIntegrationService.refresh(
-          integration,
-          'creator_info_preflight'
-        );
-        if (!refreshed || !refreshed.accessToken) {
-          throw new BadRequestException({
-            code: 'TIKTOK_REAUTH_REQUIRED',
-            message: 'TikTok token expired and refresh failed. Please re-authorize.',
-          });
-        }
-        accessToken = refreshed.accessToken;
+        return {};
       }
 
       const creatorInfo = await provider.maxVideoLength(accessToken);
@@ -253,11 +264,17 @@ export class TikTokPublishAdapter {
         });
       }
 
-      return maxDuration;
+      return { maxDurationSeconds: maxDuration };
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
-      // Network or API failure querying creator info is treated as non-fatal warning unless explicitly duration exceeded
-      return undefined;
+      // Network or API failure querying creator info is treated as non-fatal warning
+      return {
+        warning: {
+          code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
+          message:
+            'TikTok Creator Infoを取得できなかったため、アカウント固有の動画尺上限を事前確認できませんでした。',
+        },
+      };
     }
   }
 
@@ -278,14 +295,20 @@ export class TikTokPublishAdapter {
         input.settings
       );
 
-    // 3. Creator info duration check
-    const maxDurationSeconds = await this.checkCreatorInfo(
-      integration,
-      resolvedSettings,
-      input.mediaDurationSeconds
-    );
+    // 3. Creator info duration check (only for Personal video DIRECT_POST)
+    const { maxDurationSeconds, warning: creatorWarning } =
+      await this.checkCreatorInfo(
+        integration,
+        resolvedSettings,
+        input.media,
+        input.mediaDurationSeconds
+      );
 
-    // 4. Delegate media & length validation to PostsService.validatePosts()
+    if (creatorWarning) {
+      warnings.push(creatorWarning);
+    }
+
+    // 4. Delegate validation to PostsService.validatePosts()
     const postsValidationPayload = [
       {
         integration: { id: integration.id },
@@ -308,15 +331,43 @@ export class TikTokPublishAdapter {
       postsValidationPayload as any
     );
 
-    if (validationResult && !validationResult.valid) {
-      throw new BadRequestException({
-        code: 'TIKTOK_PREFLIGHT_FAILED',
-        message:
-          validationResult.settingsError ||
-          (typeof validationResult.errors === 'string'
-            ? validationResult.errors
-            : 'Media or content validation failed'),
-      });
+    if (validationResult) {
+      // 4a. Check emptyContent
+      if (validationResult.emptyContent) {
+        throw new BadRequestException({
+          code: 'TIKTOK_EMPTY_CONTENT',
+          message: 'TikTok post requires content or media.',
+        });
+      }
+
+      // 4b. Check settings DTO valid
+      if (!validationResult.valid) {
+        throw new BadRequestException({
+          code: 'TIKTOK_PREFLIGHT_FAILED',
+          message:
+            validationResult.settingsError ||
+            'TikTok settings validation failed.',
+        });
+      }
+
+      // 4c. Check Provider checkValidity
+      if (validationResult.errors !== true) {
+        throw new BadRequestException({
+          code: 'TIKTOK_MEDIA_INVALID',
+          message:
+            typeof validationResult.errors === 'string'
+              ? validationResult.errors
+              : 'TikTok media validation failed.',
+        });
+      }
+
+      // 4d. Check tooLong
+      if (validationResult.tooLong) {
+        throw new BadRequestException({
+          code: 'TIKTOK_CONTENT_TOO_LONG',
+          message: `TikTok content exceeds the maximum length (${validationResult.maximumCharacters}).`,
+        });
+      }
     }
 
     return {
@@ -345,7 +396,9 @@ export class TikTokPublishAdapter {
     // 1. Run Preflight
     const preflightResult = await this.preflight(orgId, input);
 
-    // 2. Check autoPublishEnabled setting in SnsAppSetting
+    // 2. Check autoPublishEnabled setting in SnsAppSetting (only publishing requires approval, not draft)
+    const isPublishing = input.mode !== 'draft';
+
     const settingKey = `sns:tiktok:account:${input.integrationId}`;
     const settingRecord = await this.prisma.snsAppSetting.findUnique({
       where: {
@@ -365,7 +418,7 @@ export class TikTokPublishAdapter {
         ? settingValue.autoPublishEnabled
         : true;
 
-    if (!autoPublishEnabled && input.approved !== true) {
+    if (isPublishing && !autoPublishEnabled && input.approved !== true) {
       throw new ForbiddenException({
         code: 'TIKTOK_APPROVAL_REQUIRED',
         message:
@@ -381,11 +434,14 @@ export class TikTokPublishAdapter {
       tags: [],
       posts: [
         {
+          group: '',
           integration: {
             id: input.integrationId,
           },
           value: [
             {
+              id: '1',
+              delay: 0,
               content: input.content || '',
               image: (input.media || []).map((m) => ({
                 id: m.id || '',
@@ -394,7 +450,7 @@ export class TikTokPublishAdapter {
               })),
             },
           ],
-          settings: preflightResult.resolvedSettings,
+          settings: preflightResult.resolvedSettings as any,
         },
       ],
     };
@@ -412,8 +468,14 @@ export class TikTokPublishAdapter {
       CreationMethod.API
     );
 
-    const postId =
-      createdPosts?.[0]?.id || createdPosts?.[0]?.group || 'created';
+    const postId = createdPosts?.[0]?.postId;
+
+    if (!postId) {
+      throw new BadRequestException({
+        code: 'TIKTOK_POST_CREATE_FAILED',
+        message: 'Postiz did not return a postId for the TikTok post.',
+      });
+    }
 
     return {
       postId,
