@@ -8,7 +8,7 @@ module.exports = {
     '^@gitroom/nestjs-libraries/user/org\\.from\\.request$': '<rootDir>/libraries/nestjs-libraries/src/user/org.from.request',
     '^@gitroom/nestjs-libraries/database/prisma/prisma\\.service$': '<rootDir>/libraries/nestjs-libraries/src/database/prisma/prisma.service',
     '^@gitroom/nestjs-libraries/database/prisma/account-protection\\.service$': '<rootDir>/libraries/nestjs-libraries/src/database/prisma/account-protection.service',
-    '^@gitroom/backend/(.*)
+    '^@gitroom/backend/(.*)$': '<rootDir>/apps/backend/src/$1',
     '^@gitroom/nestjs-libraries/(.*)$': '<rootDir>/libraries/nestjs-libraries/src/$1',
   },
   transform: {
