@@ -7,25 +7,24 @@ import { useAddProvider } from '@gitroom/frontend/components/launches/add.provid
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
-// TikTok / Social accounts synced from Postiz Integration + SnsAppSetting adapter
+// TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
 type TikTokAccount = {
   id: string; // Integration.id
   integrationId: string;
   providerIdentifier: string; // 'tiktok' | 'tiktok-business'
-  platform: string;
-  accountType: 'personal' | 'business' | string;
+  platform: 'tiktok' | string;
+  accountType: 'personal' | 'business';
   username: string;
   displayName?: string | null;
   picture?: string | null;
-  status: 'ACTIVE' | 'DISCONNECTED' | string;
+  status: 'ACTIVE' | 'DISCONNECTED' | 'NEEDS_USER_ACTION' | string;
+  tokenExpired?: boolean;
   autoPublishEnabled: boolean;
   dailyPostLimit: number;
   duplicateWindowDays: number;
   lastValidatedAt?: string | null;
   lastPublishedAt?: string | null;
-  archivedAt?: string | null;
 };
-type SocialAccount = TikTokAccount;
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
@@ -102,15 +101,15 @@ export const SnsStudio = () => {
   const { data: voicePresets = [], mutate: refreshVoicePresets } = useSWR<any[]>('/sns-studio/voice-presets', load);
   const { data: generationJobs = [], mutate: refreshGenerationJobs } = useSWR<any[]>('/sns-studio/generation/jobs', load);
   // TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
-  const { data: socialAccounts = [], mutate: refreshSocialAccounts } = useSWR<TikTokAccount[]>('/sns-studio/tiktok/accounts', load);
-  // Local edits for social account settings (before saving)
-  const [socialAccountEdits, setSocialAccountEdits] = useState<Record<string, Partial<TikTokAccount>>>({});
+  const { data: tiktokAccounts = [], mutate: refreshTikTokAccounts } = useSWR<TikTokAccount[]>('/sns-studio/tiktok/accounts', load);
+  // Local edits for TikTok account settings (before saving)
+  const [tiktokAccountEdits, setTikTokAccountEdits] = useState<Record<string, Partial<TikTokAccount>>>({});
   // Reusable Postiz Add Provider modal (for TikTok OAuth)
-  const connectTikTok = useAddProvider(refreshSocialAccounts);
+  const connectTikTok = useAddProvider(refreshTikTokAccounts);
 
   const refresh = useCallback(async () => {
-    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshSocialAccounts()]);
-  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshSocialAccounts]);
+    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts()]);
+  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts]);
 
   const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -321,23 +320,23 @@ export const SnsStudio = () => {
               </div>
               <div className="flex gap-2">
                 <button className={primaryButton} onClick={connectTikTok}>TikTokを接続</button>
-                <button className={secondaryButton} disabled={busy} onClick={() => void run(() => refreshSocialAccounts(), 'TikTokアカウントを同期しました。')}>同期</button>
+                <button className={secondaryButton} disabled={busy} onClick={() => void run(() => refreshTikTokAccounts(), 'TikTokアカウントを同期しました。')}>同期</button>
               </div>
             </div>
             <div className="mt-4 grid gap-3">
-              {socialAccounts.filter((a) => a.platform === 'tiktok' || a.platform === 'tiktok-business').length === 0 && (
+              {tiktokAccounts.filter((a) => a.platform === 'tiktok').length === 0 && (
                 <Empty>
                   <div>TikTokアカウントが見つかりません。</div>
                   <div className="mt-1 text-xs text-textItemBlur">PostizのIntegration設定でTikTokまたはTikTok Businessを接続してください。</div>
                   <button className={`${primaryButton} mt-3`} onClick={connectTikTok}>TikTokを接続する</button>
                 </Empty>
               )}
-              {socialAccounts
-                .filter((a) => a.platform === 'tiktok' || a.platform === 'tiktok-business')
+              {tiktokAccounts
+                .filter((a) => a.platform === 'tiktok')
                 .map((account) => {
-                  const edits = socialAccountEdits[account.id] ?? {};
+                  const edits = tiktokAccountEdits[account.id] ?? {};
                   const current = { ...account, ...edits };
-                  const isBusiness = account.platform === 'tiktok-business';
+                  const isBusiness = account.providerIdentifier === 'tiktok-business' || account.accountType === 'business';
                   return (
                     <div key={account.id} className="rounded-lg border border-blockSeparator p-4">
                       <div className="flex flex-wrap items-start gap-3">
@@ -349,8 +348,8 @@ export const SnsStudio = () => {
                             <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isBusiness ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}>
                               {isBusiness ? 'Business' : 'Personal'}
                             </span>
-                            <span className={`rounded-full px-2 py-0.5 text-xs ${account.status === 'ACTIVE' ? 'text-green-400' : 'text-red-300'}`}>
-                              {account.status === 'ACTIVE' ? '接続済み' : account.status}
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${account.status === 'ACTIVE' ? 'text-green-400' : account.status === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300'}`}>
+                              {account.status === 'ACTIVE' ? '接続済み' : account.status === 'NEEDS_USER_ACTION' ? '要再認証' : '切断済み'}
                             </span>
                           </div>
                           {account.displayName && account.displayName !== account.username && (
@@ -367,7 +366,7 @@ export const SnsStudio = () => {
                           <input
                             type="checkbox"
                             checked={current.autoPublishEnabled}
-                            onChange={(e) => setSocialAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], autoPublishEnabled: e.target.checked } }))}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], autoPublishEnabled: e.target.checked } }))}
                           />
                           <span>自動投稿 {current.autoPublishEnabled ? 'ON' : 'OFF'}</span>
                         </label>
@@ -378,7 +377,7 @@ export const SnsStudio = () => {
                             min={1}
                             max={100}
                             value={current.dailyPostLimit}
-                            onChange={(e) => setSocialAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], dailyPostLimit: Number(e.target.value) } }))}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], dailyPostLimit: Number(e.target.value) } }))}
                           />
                         </Field>
                         <Field label="再投稿禁止期間（日）">
@@ -388,7 +387,7 @@ export const SnsStudio = () => {
                             min={0}
                             max={365}
                             value={current.duplicateWindowDays}
-                            onChange={(e) => setSocialAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], duplicateWindowDays: Number(e.target.value) } }))}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], duplicateWindowDays: Number(e.target.value) } }))}
                           />
                         </Field>
                       </div>
@@ -409,16 +408,6 @@ export const SnsStudio = () => {
                           )}
                         >
                           設定を保存
-                        </button>
-                        <button
-                          className={secondaryButton}
-                          disabled={busy}
-                          onClick={() => void run(
-                            () => request(`/sns-studio/tiktok/accounts/${account.id}`, { method: 'DELETE' }),
-                            'アカウントをアーカイブしました。',
-                          )}
-                        >
-                          アーカイブ
                         </button>
                       </div>
                     </div>
