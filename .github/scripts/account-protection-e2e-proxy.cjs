@@ -5,17 +5,21 @@ const FRONTEND_PORT = 4201;
 const BACKEND_PORT = 3000;
 const PROXY_PORT = 4200;
 
-function targetPort(pathname) {
+function targetPort(pathname, request) {
+  const isAccountProtectionDocument =
+    pathname === '/account-protection' &&
+    request.method === 'GET' &&
+    String(request.headers.accept || '').includes('text/html');
   return pathname === '/user/self' ||
-    pathname === '/account-protection' ||
-    pathname.startsWith('/account-protection/')
+    pathname.startsWith('/account-protection/') ||
+    (pathname === '/account-protection' && !isAccountProtectionDocument)
     ? BACKEND_PORT
     : FRONTEND_PORT;
 }
 
 const server = http.createServer((request, response) => {
   const pathname = new URL(request.url || '/', 'http://localhost').pathname;
-  const port = targetPort(pathname);
+  const port = targetPort(pathname, request);
   const upstream = http.request({
     hostname: '127.0.0.1',
     port,
