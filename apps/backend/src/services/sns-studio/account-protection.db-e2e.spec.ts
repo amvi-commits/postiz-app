@@ -32,9 +32,15 @@ describeDb('Account Protection database and browser E2E', () => {
   let accountB: string;
   let server: Server | undefined;
   let profileRoot: string;
+  let originalProfileRoot: string | undefined;
 
   beforeAll(async () => {
-    expect(process.env.DATABASE_URL).toContain('sns_studio_account_protection_e2e');
+    const databaseUrl = new URL(process.env.DATABASE_URL || '');
+    expect(databaseUrl.protocol).toBe('postgresql:');
+    expect(databaseUrl.pathname).toBe('/sns_studio_account_protection_e2e');
+    expect(['localhost', '127.0.0.1', 'account-protection-db', 'postgres']).toContain(databaseUrl.hostname);
+    expect(['sns_account_e2e', 'postgres']).toContain(decodeURIComponent(databaseUrl.username));
+    originalProfileRoot = process.env.BROWSER_PROFILE_ROOT;
     process.env.OTEL_ENABLED = 'false';
     prisma = new PrismaService();
     await prisma.$connect();
@@ -69,7 +75,8 @@ describeDb('Account Protection database and browser E2E', () => {
       await prisma.$disconnect();
     }
     if (profileRoot) await rm(profileRoot, { recursive: true, force: true });
-    delete process.env.BROWSER_PROFILE_ROOT;
+    if (originalProfileRoot === undefined) delete process.env.BROWSER_PROFILE_ROOT;
+    else process.env.BROWSER_PROFILE_ROOT = originalProfileRoot;
   }, 120000);
 
   it('persists pause/resume, session status, and audit state for A without changing B', async () => {
