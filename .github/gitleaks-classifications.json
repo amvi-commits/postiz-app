@@ -1,21 +1,33 @@
 {
-  "version": 1,
+  "version": 2,
   "findings": [
     {
       "path": ".env.example",
       "rule": "cloudflare-api-key",
       "startLine": 17,
       "endLine": 17,
-      "classification": "TRUE_SECRET",
-      "reason": "Historical environment example line contains a non-placeholder Cloudflare secret-key candidate; value withheld. Current source is sanitized, but history remains potentially exposed."
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "4552f88950739e776786c38be335f5445c3e7f84:.env.example:cloudflare-api-key:17:17"
+      ],
+      "currentBlobSha": "71b3d0324d318e342e336e9b3e136391275b4884",
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
     },
     {
       "path": ".env.example",
       "rule": "cloudflare-api-key",
       "startLine": 26,
       "endLine": 26,
-      "classification": "TRUE_SECRET",
-      "reason": "Historical environment example line contains a non-placeholder Cloudflare secret-key candidate; value withheld. Current source is sanitized, but history remains potentially exposed."
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "6224634dcb125d08651d8b5217c3881b90a9323d:.env.example:cloudflare-api-key:26:26"
+      ],
+      "currentBlobSha": "71b3d0324d318e342e336e9b3e136391275b4884",
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
     },
     {
       "path": "README.md",
@@ -23,7 +35,11 @@
       "startLine": 24,
       "endLine": 24,
       "classification": "FALSE_POSITIVE",
-      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:24:24"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
     },
     {
       "path": "README.md",
@@ -31,7 +47,11 @@
       "startLine": 27,
       "endLine": 27,
       "classification": "FALSE_POSITIVE",
-      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:27:27"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
     },
     {
       "path": "README.md",
@@ -39,7 +59,11 @@
       "startLine": 30,
       "endLine": 30,
       "classification": "FALSE_POSITIVE",
-      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:30:30"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
     },
     {
       "path": "README.md",
@@ -47,7 +71,11 @@
       "startLine": 33,
       "endLine": 33,
       "classification": "FALSE_POSITIVE",
-      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential."
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:33:33"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -55,7 +83,11 @@
       "startLine": 25,
       "endLine": 25,
       "classification": "SYNTHETIC_TEST_FIXTURE",
-      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [
+        "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:25:25"
+      ],
+      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -63,7 +95,11 @@
       "startLine": 26,
       "endLine": 26,
       "classification": "SYNTHETIC_TEST_FIXTURE",
-      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [
+        "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:26:26"
+      ],
+      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -71,7 +107,9 @@
       "startLine": 56,
       "endLine": 56,
       "classification": "SYNTHETIC_TEST_FIXTURE",
-      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [],
+      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -79,15 +117,22 @@
       "startLine": 57,
       "endLine": 57,
       "classification": "SYNTHETIC_TEST_FIXTURE",
-      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider."
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [],
+      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
     },
     {
       "path": "apps/docs/installation/development.mdx",
       "rule": "cloudflare-api-key",
       "startLine": 99,
       "endLine": 99,
-      "classification": "TRUE_SECRET",
-      "reason": "Historical setup documentation line contains the same non-placeholder Cloudflare secret-key candidate as the environment example; value withheld. History remains potentially exposed."
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "75648cd90bd8748e0a091b6bf52942d91c159c96:apps/docs/installation/development.mdx:cloudflare-api-key:99:99"
+      ],
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
     },
     {
       "path": "apps/frontend/src/components/launches/polonto.tsx",
@@ -95,7 +140,11 @@
       "startLine": 14,
       "endLine": 14,
       "classification": "FALSE_POSITIVE",
-      "reason": "This exact value is the UI state-store namespace passed as createStore({ key }); it is not an authentication credential."
+      "reason": "This exact value is the UI state-store namespace passed as createStore({ key }); it is not an authentication credential.",
+      "fingerprints": [
+        "150b873b03916b9fdf950160c00dab4cf4612364:apps/frontend/src/components/launches/polonto.tsx:generic-api-key:14:14"
+      ],
+      "currentBlobSha": "cb3305a22a321bda12733641f6dd4cd9f07c17c6"
     },
     {
       "path": "i18n.lock",
@@ -103,7 +152,11 @@
       "startLine": 141,
       "endLine": 141,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:discord-client-secret:141:141"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -111,7 +164,9 @@
       "startLine": 149,
       "endLine": 149,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -119,7 +174,11 @@
       "startLine": 42,
       "endLine": 42,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:42:42"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -127,7 +186,9 @@
       "startLine": 48,
       "endLine": 48,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -135,7 +196,11 @@
       "startLine": 226,
       "endLine": 226,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:226:226"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -143,7 +208,9 @@
       "startLine": 242,
       "endLine": 242,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -151,7 +218,11 @@
       "startLine": 276,
       "endLine": 276,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:276:276"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -159,7 +230,11 @@
       "startLine": 277,
       "endLine": 277,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:277:277"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -167,7 +242,11 @@
       "startLine": 278,
       "endLine": 278,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:278:278"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -175,7 +254,11 @@
       "startLine": 280,
       "endLine": 280,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:280:280"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -183,7 +266,11 @@
       "startLine": 281,
       "endLine": 281,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:281:281"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -191,7 +278,9 @@
       "startLine": 292,
       "endLine": 292,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -199,7 +288,9 @@
       "startLine": 293,
       "endLine": 293,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -207,7 +298,9 @@
       "startLine": 294,
       "endLine": 294,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -215,7 +308,9 @@
       "startLine": 296,
       "endLine": 296,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -223,7 +318,9 @@
       "startLine": 297,
       "endLine": 297,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -231,7 +328,11 @@
       "startLine": 349,
       "endLine": 349,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:349:349"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -239,7 +340,11 @@
       "startLine": 363,
       "endLine": 363,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:363:363"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -247,7 +352,11 @@
       "startLine": 365,
       "endLine": 365,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:365:365"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -255,7 +364,9 @@
       "startLine": 379,
       "endLine": 379,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -263,7 +374,9 @@
       "startLine": 381,
       "endLine": 381,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -271,7 +384,11 @@
       "startLine": 410,
       "endLine": 410,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:410:410"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -279,7 +396,9 @@
       "startLine": 426,
       "endLine": 426,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -287,7 +406,11 @@
       "startLine": 580,
       "endLine": 580,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "cd085e27cab868c82634d800b3876d41ef7e6ab9:i18n.lock:generic-api-key:580:580"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -295,7 +418,9 @@
       "startLine": 616,
       "endLine": 616,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -303,7 +428,11 @@
       "startLine": 710,
       "endLine": 710,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:710:710"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -311,7 +440,11 @@
       "startLine": 712,
       "endLine": 712,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:712:712"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -319,7 +452,9 @@
       "startLine": 714,
       "endLine": 714,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -327,7 +462,9 @@
       "startLine": 716,
       "endLine": 716,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -335,7 +472,11 @@
       "startLine": 717,
       "endLine": 717,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:717:717"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "i18n.lock",
@@ -343,15 +484,23 @@
       "startLine": 721,
       "endLine": 721,
       "classification": "GENERATED_OR_VENDOR",
-      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential."
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
     },
     {
       "path": "sonar-project.properties",
       "rule": "sonar-api-token",
       "startLine": 12,
       "endLine": 12,
-      "classification": "TRUE_SECRET",
-      "reason": "Historical sonar.token property contains a non-empty SonarQube token-form value; value withheld. Treat it as potentially exposed."
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "313830806627da9d4df541cc97945512f5175cec:sonar-project.properties:sonar-api-token:12:12"
+      ],
+      "currentBlobSha": "5f07148dc6b5ed1551c44a8b79b97b386c1c48c3",
+      "exposureType": "SONAR_TOKEN_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
     }
   ]
 }
