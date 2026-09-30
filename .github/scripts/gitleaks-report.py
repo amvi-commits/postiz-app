@@ -221,6 +221,8 @@ def gather():
         selected_ids = sorted(observations)
         if selected_ids and primary != "current":
             row["commit"] = selected_ids[0].split(":", 1)[0]
+            if classification == "UNKNOWN_REQUIRES_OPERATOR_REVIEW":
+                row["fingerprintCommits"] = sorted({value.split(":", 1)[0] for value in selected_ids})
         output.append(row)
     return output, errors
 
