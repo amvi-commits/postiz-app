@@ -10,19 +10,12 @@ from pathlib import Path
 
 TEMP = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
 MODES = ("current", "pr-range", "base-history", "history")
-ORIGIN = {
-    "base-history": "BASE_EXISTING",
-    "pr-range": "PR_INTRODUCED",
-    "current": "CURRENT_TREE_ONLY",
-    "history": "HISTORY_ONLY",
-}
-CLASSIFICATIONS = {
-    "TRUE_SECRET",
+SECRET_CLASSES = {"TRUE_SECRET", "HISTORICAL_TRUE_SECRET", "UNKNOWN_REQUIRES_OPERATOR_REVIEW"}
+CLASSIFICATIONS = SECRET_CLASSES | {
     "SYNTHETIC_TEST_FIXTURE",
     "PLACEHOLDER_OR_EXAMPLE",
     "FALSE_POSITIVE",
     "GENERATED_OR_VENDOR",
-    "UNKNOWN_REQUIRES_OPERATOR_REVIEW",
 }
 
 def scan(mode):
@@ -63,6 +56,25 @@ def scan(mode):
     finally:
         log.unlink(missing_ok=True)
 
+def current_blob_sha(path):
+    head = os.environ.get("HEAD_SHA", "HEAD")
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", f"{head}:{path}"],
+            check=False, capture_output=True, text=True, timeout=15,
+        )
+        value = result.stdout.strip().lower()
+        if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", value):
+            return value
+    except Exception:
+        pass
+    return ""
+
+def finding_fingerprint(commit, path, rule, start, end):
+    if not commit:
+        return ""
+    return f"{commit}:{path}:{rule}:{start}:{end}"
+
 def read_scan(mode):
     report = TEMP / f"gitleaks-{mode}.json"
     status = TEMP / f"gitleaks-{mode}.exit"
@@ -91,10 +103,51 @@ def read_scan(mode):
         commit = item.get("Commit")
         if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit):
             commit = ""
-        safe.append((path, rule, start, end, commit))
+        safe.append({
+            "path": path, "rule": rule, "start": start, "end": end,
+            "commit": commit.lower(),
+            "fingerprint": finding_fingerprint(commit.lower(), path, rule, start, end),
+            "blob": current_blob_sha(path) if mode == "current" else "",
+        })
+    if mode == "current" and any(not row["blob"] for row in safe):
+        return None, "current tree fingerprint unavailable"
     return (safe, result), None
 
-def summary():
+def load_config():
+    config = json.loads(Path(".github/gitleaks-classifications.json").read_text(encoding="utf-8"))
+    if config.get("version") != 2 or not isinstance(config.get("findings"), list):
+        raise ValueError
+    reviewed = {}
+    for item in config["findings"]:
+        key = (item["path"], item["rule"], int(item["startLine"]), int(item["endLine"]))
+        classification, reason = item["classification"], item.get("reason")
+        if (
+            classification not in CLASSIFICATIONS
+            or not isinstance(reason, str) or not reason.strip()
+            or key in reviewed
+        ):
+            raise ValueError
+        fingerprints = item.get("fingerprints", [])
+        if not isinstance(fingerprints, list) or any(
+            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{7,64}:.+:[^:]+:[0-9]+:[0-9]+", value)
+            for value in fingerprints
+        ):
+            raise ValueError
+        blob = item.get("currentBlobSha")
+        if blob is not None and (not isinstance(blob, str) or not re.fullmatch(r"[0-9a-f]{40,64}", blob)):
+            raise ValueError
+        if not fingerprints and not blob:
+            raise ValueError
+        if classification == "HISTORICAL_TRUE_SECRET" and not fingerprints:
+            raise ValueError
+        reviewed[key] = {
+            "classification": classification,
+            "fingerprints": set(fingerprints),
+            "currentBlobSha": blob or "",
+        }
+    return reviewed
+
+def gather():
     scans, errors = {}, []
     for mode in MODES:
         result, error = read_scan(mode)
@@ -113,91 +166,136 @@ def summary():
     for mode in required:
         if mode not in scans:
             errors.append(f"{mode}: required scan did not run")
-
     try:
-        config = json.loads(Path(".github/gitleaks-classifications.json").read_text(encoding="utf-8"))
-        reviewed = {}
-        for item in config.get("findings", []):
-            key = (item["path"], item["rule"], int(item["startLine"]), int(item["endLine"]))
-            classification, reason = item["classification"], item.get("reason")
-            if classification not in CLASSIFICATIONS or classification == "UNKNOWN_REQUIRES_OPERATOR_REVIEW" or not isinstance(reason, str) or not reason.strip():
-                raise ValueError
-            reviewed[key] = classification
+        reviewed = load_config()
     except Exception:
-        reviewed, errors = {}, errors + ["classification file invalid"]
+        reviewed = {}
+        errors.append("classification file invalid")
 
-    grouped = defaultdict(lambda: {"sources": set(), "counts": Counter(), "commits": set()})
+    grouped = defaultdict(lambda: {
+        "sources": set(), "counts": Counter(), "observations": defaultdict(set)
+    })
     for mode, findings in scans.items():
-        for path, rule, start, end, commit in findings:
-            key = (path, rule, start, end)
-            grouped[key]["sources"].add(mode)
-            grouped[key]["counts"][mode] += 1
-            if commit:
-                grouped[key]["commits"].add(commit)
+        for item in findings:
+            key = (item["path"], item["rule"], item["start"], item["end"])
+            group = grouped[key]
+            group["sources"].add(mode)
+            group["counts"][mode] += 1
+            identity = item["blob"] if mode == "current" else item["fingerprint"]
+            if identity:
+                group["observations"][mode].add(identity)
 
     output = []
     for key, value in sorted(grouped.items()):
-        if "base-history" in value["sources"]:
-            origin, source = "BASE_EXISTING", "base-history"
-        elif "pr-range" in value["sources"]:
-            origin, source = "PR_INTRODUCED", "pr-range"
-        elif "current" in value["sources"]:
-            origin, source = "CURRENT_TREE_ONLY", "current"
+        sources = value["sources"]
+        if "pr-range" in sources:
+            primary = "pr-range"
+            origin = "PR_INTRODUCED"
+        elif "current" in sources:
+            primary = "current"
+            origin = "CURRENT_TREE_ONLY"
+        elif "base-history" in sources:
+            primary = "base-history"
+            origin = "BASE_EXISTING"
         else:
-            origin, source = "HISTORY_ONLY", "history"
+            primary = "history"
+            origin = "HISTORY_ONLY"
+        config_item = reviewed.get(key)
+        observations = value["observations"].get(primary, set())
+        classification = "UNKNOWN_REQUIRES_OPERATOR_REVIEW"
+        if config_item and observations:
+            if primary == "current":
+                matches = config_item["currentBlobSha"] and observations == {config_item["currentBlobSha"]}
+            else:
+                matches = config_item["fingerprints"] and observations.issubset(config_item["fingerprints"])
+            if matches:
+                classification = config_item["classification"]
+                if classification == "HISTORICAL_TRUE_SECRET" and primary not in ("base-history", "history"):
+                    classification = "UNKNOWN_REQUIRES_OPERATOR_REVIEW"
         row = {
             "path": key[0], "rule": key[1], "startLine": key[2], "endLine": key[3],
-            "origin": origin,
-            "classification": reviewed.get(key, "UNKNOWN_REQUIRES_OPERATOR_REVIEW"),
-            "occurrenceCount": value["counts"].get(source, 1),
+            "origin": origin, "sources": sorted(sources), "historical": bool({"base-history", "history"} & sources),
+            "classification": classification,
+            "occurrenceCount": value["counts"].get(primary, 1),
         }
-        commits = sorted(value["commits"])
-        if commits and source != "current":
-            row["commit"] = commits[0]
+        selected_ids = sorted(observations)
+        if selected_ids and primary != "current":
+            row["commit"] = selected_ids[0].split(":", 1)[0]
         output.append(row)
+    return output, errors
 
-    origin_counts = Counter(row["origin"] for row in output)
-    class_counts = Counter(row["classification"] for row in output)
-    print(f"Sanitized Gitleaks findings: {len(output)} unique locations.")
-    for key in ORIGIN:
-        print(f"{ORIGIN[key]}: {origin_counts.get(ORIGIN[key], 0)}")
-    for classification in sorted(CLASSIFICATIONS):
-        print(f"{classification}: {class_counts.get(classification, 0)}")
-    for row in output:
-        print(json.dumps(row, ensure_ascii=True, sort_keys=True))
-
+def write_findings(rows, errors, heading):
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        with open(summary_path, "a", encoding="utf-8") as file:
-            file.write("## Gitleaks v8.30.0 sanitized findings\n\n")
-            file.write("| Path | Rule | Line(s) | Origin | Classification | Count |\n|---|---|---:|---|---|---:|\n")
-            for row in output:
-                path = row["path"].replace("|", "\\|")
-                rule = row["rule"].replace("|", "\\|")
-                line = str(row["startLine"]) if row["startLine"] == row["endLine"] else f"{row['startLine']}-{row['endLine']}"
-                file.write(f"| {path} | {rule} | {line} | {row['origin']} | {row['classification']} | {row['occurrenceCount']} |\n")
-            if errors:
-                file.write("\nA scan was missing or invalid; raw diagnostics were withheld.\n")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as file:
+        file.write(f"## {heading}\n\n")
+        file.write("| Path | Rule | Line(s) | Origin | Scans | Classification | Count |\n|---|---|---:|---|---|---|---:|\n")
+        for row in rows:
+            path = row["path"].replace("|", "\\|")
+            rule = row["rule"].replace("|", "\\|")
+            line = str(row["startLine"]) if row["startLine"] == row["endLine"] else f"{row['startLine']}-{row['endLine']}"
+            file.write(f"| {path} | {rule} | {line} | {row['origin']} | {', '.join(row['sources'])} | {row['classification']} | {row['occurrenceCount']} |\n")
+        if errors:
+            file.write("\nOne or more scans or the exact-fingerprint classification file could not be validated; raw diagnostics were withheld.\n")
 
-    blocked = bool(errors)
-    for row in output:
-        if row["classification"] == "TRUE_SECRET":
-            blocked = True
-        if row["origin"] in ("PR_INTRODUCED", "CURRENT_TREE_ONLY") and row["classification"] == "UNKNOWN_REQUIRES_OPERATOR_REVIEW":
-            blocked = True
+def policy():
+    rows, errors = gather()
+    print(f"PR Security Gate: {len(rows)} unique sanitized findings.")
+    for mode in MODES:
+        count = sum(mode in row["sources"] for row in rows)
+        print(f"{mode} scan locations: {count}")
+    blocking = bool(errors)
+    blocked_rows = []
+    for row in rows:
+        active_sources = {"pr-range", "current"} & set(row["sources"])
+        if active_sources and row["classification"] in SECRET_CLASSES:
+            blocking = True
+            blocked_rows.append(row)
+        elif not active_sources and row["classification"] == "UNKNOWN_REQUIRES_OPERATOR_REVIEW":
+            blocking = True
+            blocked_rows.append(row)
+    for row in rows:
+        print(json.dumps(row, ensure_ascii=True, sort_keys=True))
+    if errors:
+        print("One or more required scans or fingerprints could not be validated; diagnostics withheld.")
+    print(f"PR_INTRODUCED blocking findings: {sum('pr-range' in row['sources'] for row in blocked_rows)}")
+    print(f"CURRENT TREE blocking findings: {sum('current' in row['sources'] for row in blocked_rows)}")
+    write_findings(rows, errors, "PR Security Gate")
+    if blocking:
+        print("PR Security Gate: BLOCKED.")
+        return 1
+    print("PR Security Gate: PASS.")
+    return 0
+
+def audit():
+    rows, errors = gather()
+    historic = [row for row in rows if row["historical"]]
+    exposures = [row for row in historic if row["classification"] == "HISTORICAL_TRUE_SECRET"]
+    print(f"Repository Historical Audit: {len(historic)} historical findings reported.")
+    print(f"Tracked HISTORICAL_TRUE_SECRET findings: {len(exposures)}")
+    for row in exposures:
+        print(json.dumps(row, ensure_ascii=True, sort_keys=True))
+    if errors:
+        print("Historical audit data is incomplete; the PR Security Gate reports scan validation separately.")
+    write_findings(historic, errors, "Repository Historical Audit")
+    return 0
+
+def cleanup():
     for mode in MODES:
         for extension in ("json", "exit", "log"):
             (TEMP / f"gitleaks-{mode}.{extension}").unlink(missing_ok=True)
-    if errors:
-        print("One or more scans could not be validated; details withheld.")
-    if blocked:
-        print("Gitleaks policy result: BLOCKED.")
-        return 1
-    print("Gitleaks policy result: PASS.")
     return 0
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "scan":
+    command = sys.argv[1] if len(sys.argv) > 1 else "policy"
+    if command == "scan":
         raise SystemExit(scan(sys.argv[2] if len(sys.argv) > 2 else ""))
-    raise SystemExit(summary())
-
+    if command == "policy":
+        raise SystemExit(policy())
+    if command == "audit":
+        raise SystemExit(audit())
+    if command == "cleanup":
+        raise SystemExit(cleanup())
+    print("Unsupported command.")
+    raise SystemExit(2)
