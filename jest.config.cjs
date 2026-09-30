@@ -4,6 +4,7 @@ module.exports = {
     '<rootDir>/libraries/helpers/src/utils/*.spec.ts',
     '<rootDir>/apps/backend/src/services/sns-studio/*.spec.ts',
     '<rootDir>/libraries/nestjs-libraries/src/**/*.spec.ts',
+    '<rootDir>/apps/backend/src/api/routes/*.spec.ts',
   ],
   moduleNameMapper: {
     '^@gitroom/nestjs-libraries/user/org\\.from\\.request$': '<rootDir>/libraries/nestjs-libraries/src/user/org.from.request',
