@@ -6,8 +6,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "types": [
+      "jest",
+      "node"
+    ],
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "types": ["jest", "node"]
+    "emitDecoratorMetadata": true
   }
 }

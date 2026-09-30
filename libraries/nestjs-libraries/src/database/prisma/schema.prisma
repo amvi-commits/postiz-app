@@ -65,6 +65,8 @@ model Organization {
   snsThreadsReferencePosts SnsThreadsReferencePost[]
   snsThreadsAccountSettings SnsThreadsAccountSetting[]
   snsThreadsAutomationRules SnsThreadsAutomationRule[]
+  accountSecurityProfiles AccountSecurityProfile[]
+  accountSecurityAuditLogs AccountSecurityAuditLog[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -2061,6 +2063,148 @@ model SnsDelivery {
   @@index([integrationId])
   @@index([providerIdentifier])
   @@index([postId])
+}
+
+// Account Protection is intentionally isolated from the common publishing models.
+// accountId points to Integration or SnsInstagramAccount according to accountType;
+// this avoids changing either legacy account model in Phase A.
+model AccountSecurityProfile {
+  id                        String   @id @default(cuid())
+  organizationId            String
+  accountId                 String
+  accountType               String
+  provider                  String
+  enabled                   Boolean  @default(true)
+  securityState             String   @default("HEALTHY")
+  automationPaused          Boolean  @default(false)
+  pauseReason               String?
+  secretRef                 String?
+  lastHealthyAt             DateTime?
+  lastWarningAt             DateTime?
+  lastChallengeAt           DateTime?
+  lastAuthFailureAt         DateTime?
+  lastSuccessfulActionAt    DateTime?
+  cooldownUntil             DateTime?
+  consecutiveAuthFailures   Int      @default(0)
+  consecutiveProviderFailures Int    @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  organization              Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  browserProfile            AccountBrowserProfile?
+  sessionHealth             AccountSessionHealth?
+  actionBudgets             AccountActionBudget[]
+  circuitStates             AccountCircuitState[]
+  executionLease            AccountExecutionLease?
+  auditLogs                 AccountSecurityAuditLog[]
+
+  @@unique([organizationId, accountType, accountId])
+  @@index([organizationId, provider, securityState])
+  @@index([securityState, cooldownUntil])
+}
+
+model AccountBrowserProfile {
+  id                     String   @id @default(cuid())
+  securityProfileId      String   @unique
+  profileKey             String   @unique
+  profilePath            String
+  browserEngine          String   @default("chromium")
+  browserMajorVersion    String?
+  locale                 String?
+  timezone               String?
+  osFamily               String?
+  status                 String   @default("MISSING")
+  lastOpenedAt           DateTime?
+  lastClosedAt           DateTime?
+  lastLoginAt            DateTime?
+  lastSuccessfulSessionAt DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  securityProfile        AccountSecurityProfile @relation(fields: [securityProfileId], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+}
+
+model AccountSessionHealth {
+  id                String   @id @default(cuid())
+  securityProfileId String   @unique
+  provider          String
+  status            String   @default("UNKNOWN")
+  checkedAt         DateTime?
+  expiresAt         DateTime?
+  lastSuccessAt     DateTime?
+  lastFailureAt     DateTime?
+  failureCode       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  securityProfile   AccountSecurityProfile @relation(fields: [securityProfileId], references: [id], onDelete: Cascade)
+
+  @@index([provider, status, checkedAt])
+}
+
+model AccountActionBudget {
+  id                String   @id @default(cuid())
+  securityProfileId String
+  provider          String
+  actionType        String
+  windowSeconds     Int      @default(60)
+  maxActions        Int      @default(1)
+  usedActions       Int      @default(0)
+  resetAt           DateTime
+  source            String   @default("SAFE_DEFAULT")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  securityProfile   AccountSecurityProfile @relation(fields: [securityProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([securityProfileId, provider, actionType])
+  @@index([resetAt])
+}
+
+model AccountCircuitState {
+  id                String   @id @default(cuid())
+  securityProfileId String
+  provider          String
+  actionType        String
+  state             String   @default("CLOSED")
+  failureCount      Int      @default(0)
+  openedUntil       DateTime?
+  lastFailureAt     DateTime?
+  updatedAt         DateTime @updatedAt
+  securityProfile   AccountSecurityProfile @relation(fields: [securityProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([securityProfileId, provider, actionType])
+  @@index([state, openedUntil])
+}
+
+model AccountExecutionLease {
+  id                String   @id @default(cuid())
+  securityProfileId String   @unique
+  ownerToken        String
+  actionType        String
+  acquiredAt        DateTime @default(now())
+  heartbeatAt       DateTime @default(now())
+  expiresAt         DateTime
+  securityProfile   AccountSecurityProfile @relation(fields: [securityProfileId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model AccountSecurityAuditLog {
+  id                String   @id @default(cuid())
+  organizationId    String
+  securityProfileId String?
+  accountId         String?
+  provider          String?
+  event             String
+  severity          String   @default("INFO")
+  message           String
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  securityProfile   AccountSecurityProfile? @relation(fields: [securityProfileId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([securityProfileId, createdAt])
+  @@index([provider, event, createdAt])
 }
 
 model SnsEditingPreset {

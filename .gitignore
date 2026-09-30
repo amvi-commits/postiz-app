@@ -62,6 +62,9 @@ i18n.cache
 
 # Local SNS Studio credentials, media and virtual environments
 .sns-studio-data/
+**/browser-profiles/
+**/playwright-profiles/
+**/storageState/
 uploads/sns-studio/
 services/*/.venv/
 services/*/data/
