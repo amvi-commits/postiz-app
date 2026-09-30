@@ -496,11 +496,25 @@
       "classification": "HISTORICAL_TRUE_SECRET",
       "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
       "fingerprints": [
-        "313830806627da9d4df541cc97945512f5175cec:sonar-project.properties:sonar-api-token:12:12"
+        "313830806627da9d4df541cc97945512f5175cec:sonar-project.properties:sonar-api-token:12:12",
+        "39f617a54aa8a6b2e690824e62481d41f0275863:sonar-project.properties:sonar-api-token:12:12"
       ],
       "currentBlobSha": "5f07148dc6b5ed1551c44a8b79b97b386c1c48c3",
       "exposureType": "SONAR_TOKEN_HISTORY",
       "historyRewriteStatus": "NOT_PERFORMED"
+    },
+    {
+      "path": "apps/frontend/src/components/agents/agent.tsx",
+      "rule": "generic-api-key",
+      "startLine": 236,
+      "endLine": 236,
+      "classification": "FALSE_POSITIVE",
+      "reason": "CopilotKit publicApiKey is documented and used as a public frontend identifier",
+      "evidence": "https://github.com/CopilotKit/CopilotKit/blob/cc24b7128ca2d5edc62076f2875b9d50a2c0a981/packages/react-core/src/v1-deprecated/components/copilot-provider/copilotkit-props.tsx",
+      "fingerprints": [
+        "73ba9acf8c537e7fffb55ad76888597e6c36f81a:apps/frontend/src/components/agents/agent.tsx:generic-api-key:236:236"
+      ],
+      "currentBlobSha": "af6d3af63471505fd518c48cd421626f8f750098"
     }
   ]
 }
