@@ -36,7 +36,7 @@ Do not start this migration until the production secret manager and rollback own
 **LEGACY_REPOSITORY_SECRET_EXPOSURE** is tracked separately from Account Protection behavior. Gitleaks found potentially real credentials in repository history; values are intentionally omitted.
 
 - Cloudflare credential history: `.env.example` (historical findings at commits `4552f88950739e776786c38be335f5445c3e7f84` and `6224634dcb125d08651d8b5217c3881b90a9323d`) and `apps/docs/installation/development.mdx` (historical finding at `75648cd90bd8748e0a091b6bf52942d91c159c96`). Current tree: sanitized or absent.
-- Sonar token history: `sonar-project.properties` (historical finding at `313830806627da9d4df541cc97945512f5175cec`). Current tree has no `sonar.token`.
+- Sonar token history: `sonar-project.properties` (historical findings at `313830806627da9d4df541cc97945512f5175cec` and `39f617a54aa8a6b2e690824e62481d41f0275863`). Current tree has no `sonar.token`.
 - Cloudflare credential rotation status: `OPERATOR_CONFIRMATION_REQUIRED`.
 - Sonar credential rotation status: `OPERATOR_CONFIRMATION_REQUIRED`.
 - History rewrite status: `NOT_PERFORMED`. Any history rewrite must be evaluated separately after operators confirm credential rotation, with coordination across active branches.
