@@ -30,3 +30,15 @@ Recommended follow-up migration, once an external secret-store adapter and opera
 6. Verify all supported provider flows, backups, deletion, and rollback before removing fallback code. Rotate provider credentials if any historical exposure is confirmed.
 
 Do not start this migration until the production secret manager and rollback owner are defined. Never copy production credentials into the E2E fixtures or repository.
+
+## Historical repository credential exposure
+
+**LEGACY_REPOSITORY_SECRET_EXPOSURE** is tracked separately from Account Protection behavior. Gitleaks found potentially real credentials in repository history; values are intentionally omitted.
+
+- Cloudflare credential history: `.env.example` (historical findings at commits `4552f88950739e776786c38be335f5445c3e7f84` and `6224634dcb125d08651d8b5217c3881b90a9323d`) and `apps/docs/installation/development.mdx` (historical finding at `75648cd90bd8748e0a091b6bf52942d91c159c96`). Current tree: sanitized or absent.
+- Sonar token history: `sonar-project.properties` (historical finding at `313830806627da9d4df541cc97945512f5175cec`). Current tree has no `sonar.token`.
+- Cloudflare credential rotation status: `OPERATOR_CONFIRMATION_REQUIRED`.
+- Sonar credential rotation status: `OPERATOR_CONFIRMATION_REQUIRED`.
+- History rewrite status: `NOT_PERFORMED`. Any history rewrite must be evaluated separately after operators confirm credential rotation, with coordination across active branches.
+
+The PR Security Gate blocks exact PR-introduced and current-tree true or unreviewed findings. The Historical Audit continues to report historical exposure but does not fail this PR solely for the explicitly tracked findings above. Baseline classifications are limited to exact commit/path/rule/line fingerprints or an exact current file blob SHA plus path/rule/line. No Gitleaks rules, history scans, or broad path categories are disabled.
