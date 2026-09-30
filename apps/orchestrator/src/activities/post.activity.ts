@@ -12,6 +12,7 @@ import {
 import { Integration, Post, State } from '@prisma/client';
 import { stripHtmlValidation } from '@gitroom/helpers/utils/strip.html.validation';
 import { IntegrationManager } from '@gitroom/nestjs-libraries/integrations/integration.manager';
+import { AccountProtectionService } from '@gitroom/nestjs-libraries/database/prisma/account-protection.service';
 import { AuthTokenDetails } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { RefreshIntegrationService } from '@gitroom/nestjs-libraries/integrations/refresh.integration.service';
 import { timer } from '@gitroom/helpers/utils/timer';
@@ -103,7 +104,8 @@ export class PostActivity {
     private _refreshIntegrationService: RefreshIntegrationService,
     private _webhookService: WebhooksService,
     private _temporalService: TemporalService,
-    private _subscriptionService: SubscriptionService
+    private _subscriptionService: SubscriptionService,
+    private _accountProtection: AccountProtectionService
   ) {}
 
   @ActivityMethod()
@@ -314,11 +316,15 @@ export class PostActivity {
     // heartbeatTimeout on this activity - removing the sender would kill
     // them. Under V109+ (no heartbeatTimeout) this is a no-op and can be
     // dropped once all V108 executions have drained
-    return withHeartbeat(() =>
-      this.handleDisconnect(integration, () =>
-        this.postSocialBody(integration, posts, allowPending)
-      )
-    );
+    return this._accountProtection.run({
+      organizationId: integration.organizationId,
+      accountId: integration.internalId,
+      accountType: 'POSTIZ_INTEGRATION',
+      provider: integration.providerIdentifier,
+      action: 'PUBLISH',
+    }, () => withHeartbeat(() =>
+      this.handleDisconnect(integration, () => this.postSocialBody(integration, posts, allowPending))
+    ));
   }
 
   private async postSocialBody(

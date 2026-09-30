@@ -1,0 +1,180 @@
+name: Account Protection isolated E2E
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feature/sns-studio-account-protection
+
+permissions:
+  contents: read
+
+jobs:
+  database-browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sns_studio_account_protection_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sns_studio_account_protection_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sns_studio_account_protection_e2e?schema=public
+      ACCOUNT_PROTECTION_DB_E2E: '1'
+      OTEL_ENABLED: 'false'
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Use Node.js 22.12.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.6.1
+          run_install: false
+
+      - name: Verify isolated disposable database target
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url = new URL(process.env.DATABASE_URL);
+          if (
+            url.protocol !== 'postgresql:' ||
+            url.hostname !== 'localhost' ||
+            url.port !== '5432' ||
+            url.pathname !== '/sns_studio_account_protection_e2e' ||
+            decodeURIComponent(url.username) !== 'postgres'
+          ) {
+            throw new Error('Refusing to run against an unrecognized database target.');
+          }
+          console.log('Database target verified: localhost / sns_studio_account_protection_e2e.');
+          NODE
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for the isolated browser test
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Validate Prisma schema and prepare the empty disposable database
+        run: |
+          pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
+          pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
+
+      - name: Verify empty baseline tables and zero data
+        run: |
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          (async () => {
+            const prisma = new PrismaClient();
+            try {
+              const counts = {
+                Organization: await prisma.organization.count(),
+                User: await prisma.user.count(),
+                UserOrganization: await prisma.userOrganization.count(),
+                Integration: await prisma.integration.count(),
+                Post: await prisma.post.count(),
+                SnsPublishRecord: await prisma.snsPublishRecord.count(),
+                SnsContent: await prisma.snsContent.count(),
+                SnsDelivery: await prisma.snsDelivery.count(),
+                AccountSecurityProfile: await prisma.accountSecurityProfile.count(),
+              };
+              if (Object.values(counts).some((count) => count !== 0)) {
+                throw new Error('Fresh E2E database was not empty before the test.');
+              }
+              console.log('Baseline table counts verified at zero.');
+            } finally {
+              await prisma.$disconnect();
+            }
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+          NODE
+
+      - name: Run Account Protection DB/browser and regression suites
+        run: |
+          pnpm exec jest --runInBand --runTestsByPath \
+            apps/backend/src/services/sns-studio/account-protection.db-e2e.spec.ts \
+            apps/backend/src/services/sns-studio/account-protection.spec.ts \
+            apps/backend/src/services/sns-studio/instagram-metrics.spec.ts
+
+      - name: Start the frontend and local API proxy for UI smoke
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/account-protection-ui"
+          (
+            cd apps/frontend
+            nohup env \
+              NEXT_PUBLIC_BACKEND_URL=http://localhost:4200 \
+              FRONTEND_URL=http://localhost:4200 \
+              STORAGE_PROVIDER=local \
+              NOT_SECURED=1 \
+              NEXT_TELEMETRY_DISABLED=1 \
+              pnpm exec next dev -p 4201 --hostname 127.0.0.1 \
+              > "$RUNNER_TEMP/account-protection-ui/frontend.log" 2>&1 < /dev/null &
+            echo $! > "$RUNNER_TEMP/account-protection-ui/frontend.pid"
+          )
+          nohup node .github/scripts/account-protection-e2e-proxy.cjs \
+            > "$RUNNER_TEMP/account-protection-ui/proxy.log" 2>&1 < /dev/null &
+          echo $! > "$RUNNER_TEMP/account-protection-ui/proxy.pid"
+
+      - name: Wait for the frontend smoke target
+        shell: bash
+        run: |
+          for attempt in $(seq 1 36); do
+            if curl --fail --silent http://127.0.0.1:4200/auth/login >/dev/null; then
+              echo "Frontend smoke target is ready."
+              exit 0
+            fi
+            sleep 5
+          done
+          tail -n 100 "$RUNNER_TEMP/account-protection-ui/frontend.log"
+          exit 1
+
+      - name: Run authenticated Account Protection UI smoke
+        run: |
+          ACCOUNT_PROTECTION_AUTH_UI_E2E=1 pnpm exec jest --runInBand \
+            --runTestsByPath apps/backend/src/services/sns-studio/account-protection.db-e2e.spec.ts \
+            --testNamePattern="authenticated Account Protection UI smoke"
+
+      - name: Verify fixtures and publishing data were cleaned up
+        if: always()
+        run: |
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          (async () => {
+            const prisma = new PrismaClient();
+            try {
+              const counts = {
+                Organization: await prisma.organization.count(),
+                User: await prisma.user.count(),
+                UserOrganization: await prisma.userOrganization.count(),
+                Integration: await prisma.integration.count(),
+                Post: await prisma.post.count(),
+                SnsPublishRecord: await prisma.snsPublishRecord.count(),
+                SnsContent: await prisma.snsContent.count(),
+                SnsDelivery: await prisma.snsDelivery.count(),
+                AccountSecurityProfile: await prisma.accountSecurityProfile.count(),
+              };
+              if (Object.values(counts).some((count) => count !== 0)) {
+                throw new Error('E2E database contains residual test data.');
+              }
+              console.log('Post, Instagram legacy, common publishing, and Account Protection counts are zero.');
+            } finally {
+              await prisma.$disconnect();
+            }
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+          NODE

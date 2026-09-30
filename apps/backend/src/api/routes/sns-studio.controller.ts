@@ -24,6 +24,7 @@ import { randomUUID } from 'crypto';
 import { extname, resolve, sep } from 'path';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
 import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
+import { AccountProtectionService, ProtectedAction } from '@gitroom/nestjs-libraries/database/prisma/account-protection.service';
 import { ApiTags } from '@nestjs/swagger';
 import { chooseShuffleBagItem } from '@gitroom/helpers/utils/shuffle-bag';
 import { GoogleDriveStorageProvider } from '@gitroom/backend/services/sns-studio/google-drive.storage';
@@ -175,8 +176,13 @@ export class SnsStudioController {
     private readonly googleDrive: GoogleDriveStorageProvider,
     private readonly generationProvider: GoogleDriveGenerationProvider,
     private readonly mediaService: MediaService,
+    private readonly accountProtection: AccountProtectionService,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
   ) {}
+
+  private protectedInstagram<T>(org: Organization, accountId: string, action: ProtectedAction, operation: () => Promise<T>) {
+    return this.accountProtection.run({ organizationId: org.id, accountId, accountType: 'SNS_INSTAGRAM', provider: 'instagram-worker', action }, operation);
+  }
 
   private async worker<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
     const baseUrl = process.env.INSTAGRAM_WORKER_URL;
@@ -822,13 +828,13 @@ export class SnsStudioController {
       update: { status: 'CONNECTING', archivedAt: null },
     });
     try {
-      await this.worker('/accounts/login', 'POST', {
+      await this.protectedInstagram(org, account.id, 'LOGIN', () => this.worker('/accounts/login', 'POST', {
         accountId: account.id,
         username,
         password: body.password,
         proxy: body.proxy || null,
         verificationCode: body.verificationCode || null,
-      });
+      }));
       return this.prisma.snsInstagramAccount.update({
         where: { id: account.id },
         data: { status: 'ACTIVE', lastValidatedAt: new Date() },
@@ -848,7 +854,7 @@ export class SnsStudioController {
   @Post('/accounts/:id/validate')
   async validateAccount(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
     await this.account(org, id);
-    const result = await this.worker(`/accounts/${encodeURIComponent(id)}/validate`, 'POST', {});
+    const result = await this.protectedInstagram(org, id, 'SESSION_REFRESH', () => this.worker(`/accounts/${encodeURIComponent(id)}/validate`, 'POST', {}));
     await this.prisma.snsInstagramAccount.update({ where: { id }, data: { status: 'ACTIVE', lastValidatedAt: new Date() } });
     return result;
   }
@@ -1735,7 +1741,7 @@ export class SnsStudioController {
         this.prisma.snsPipelineRun.update({ where: { id: body.pipelineRunId }, data: { status: 'PUBLISHING', currentStep: 'PUBLISH' } }),
         this.prisma.snsPipelineStep.updateMany({ where: { runId: body.pipelineRunId, name: 'PUBLISH' }, data: { status: 'RUNNING', startedAt: new Date(), errorCode: null, errorMessage: null } }),
       ]);
-      const result = await this.worker('/publish/reel', 'POST', body);
+      const result = await this.protectedInstagram(org, account.id, 'PUBLISH', () => this.worker('/publish/reel', 'POST', body));
       await this.prisma.snsInstagramAccount.update({ where: { id: account.id }, data: { status: 'ACTIVE', lastPublishedAt: new Date() } });
       await this.prisma.snsMediaAsset.updateMany({ where: { organizationId: org.id, storageKey: body.videoPath, isFinal: true }, data: { publishedAt: new Date() } });
       if (body.pipelineRunId) await this.prisma.$transaction([
@@ -1787,7 +1793,7 @@ export class SnsStudioController {
         this.prisma.snsPipelineRun.update({ where: { id: body.pipelineRunId }, data: { status: 'PUBLISHING', currentStep: 'PUBLISH' } }),
         this.prisma.snsPipelineStep.updateMany({ where: { runId: body.pipelineRunId, name: 'PUBLISH' }, data: { status: 'RUNNING', startedAt: new Date(), errorCode: null, errorMessage: null } }),
       ]);
-      const result = await this.worker('/publish/story', 'POST', body);
+      const result = await this.protectedInstagram(org, account.id, 'PUBLISH', () => this.worker('/publish/story', 'POST', body));
       await this.prisma.snsInstagramAccount.update({ where: { id: account.id }, data: { status: 'ACTIVE', lastPublishedAt: new Date() } });
       await this.prisma.snsMediaAsset.updateMany({ where: { organizationId: org.id, storageKey: body.mediaPath, isFinal: true }, data: { publishedAt: new Date() } });
       if (body.pipelineRunId) await this.prisma.$transaction([
@@ -1836,14 +1842,14 @@ export class SnsStudioController {
         const preflight = await this.preflightReel(org, { accountId: previous.accountId, mediaPath: previous.mediaPath, caption: previous.caption || '', trialReel: previous.trialReel, thumbnailPath });
         if (!preflight.ready) throw new HttpException({ code: 'PREFLIGHT_FAILED', errors: preflight.errors, warnings: preflight.warnings }, HttpStatus.CONFLICT);
         const publishBody = { accountId: previous.accountId, videoPath: previous.mediaPath, caption: previous.caption || '', trialReel: previous.trialReel, thumbnailPath: typeof variant.thumbnailPath === 'string' ? variant.thumbnailPath : undefined };
-        result = await this.worker('/publish/reel', 'POST', publishBody);
+        result = await this.protectedInstagram(org, previous.accountId, 'PUBLISH', () => this.worker('/publish/reel', 'POST', publishBody));
       } else if (previous.publishType === 'STORY') {
         const variant = previous.variantSettings && typeof previous.variantSettings === 'object' && !Array.isArray(previous.variantSettings) ? previous.variantSettings as Record<string, any> : {};
         const sticker = variant.sticker;
         if (!sticker || typeof variant.linkUrl !== 'string' || !['image', 'video'].includes(variant.mediaType)) throw new HttpException({ code: 'STORY_RETRY_DATA_MISSING' }, HttpStatus.CONFLICT);
         const preflight = await this.preflightStory(org, { accountId: previous.accountId, mediaPath: previous.mediaPath, mediaType: variant.mediaType, linkUrl: variant.linkUrl, sticker });
         if (!preflight.ready) throw new HttpException({ code: 'PREFLIGHT_FAILED', errors: preflight.errors, warnings: preflight.warnings }, HttpStatus.CONFLICT);
-        result = await this.worker('/publish/story', 'POST', { accountId: previous.accountId, mediaPath: previous.mediaPath, mediaType: variant.mediaType, linkUrl: variant.linkUrl, sticker });
+        result = await this.protectedInstagram(org, previous.accountId, 'PUBLISH', () => this.worker('/publish/story', 'POST', { accountId: previous.accountId, mediaPath: previous.mediaPath, mediaType: variant.mediaType, linkUrl: variant.linkUrl, sticker }));
       } else {
         throw new HttpException({ code: 'PUBLISH_RETRY_NOT_AVAILABLE' }, HttpStatus.CONFLICT);
       }
