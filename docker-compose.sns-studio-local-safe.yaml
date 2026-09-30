@@ -1,0 +1,11 @@
+services:
+  postiz:
+    command:
+      - /bin/sh
+      - /app/scripts/sns-studio/start-local-safe.sh
+    restart: unless-stopped
+    networks:
+      - postiz-network
+      - temporal-network
+    volumes:
+      - ./scripts/sns-studio/start-local-safe.sh:/app/scripts/sns-studio/start-local-safe.sh:ro
