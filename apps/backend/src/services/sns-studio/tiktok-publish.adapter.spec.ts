@@ -444,6 +444,43 @@ describe('TikTokPublishAdapter', () => {
       expect(calledDto.posts[0].integration.id).toBe('int_business');
     });
 
+    it('builds a new Postiz payload without placeholder post fields', async () => {
+      await adapter.publish(orgId, {
+        integrationId: 'int_personal',
+        content: 'New TikTok post',
+        media: [
+          {
+            id: 'media_123',
+            path: '/uploads/video.mp4',
+            thumbnail: '/uploads/video-thumb.jpg',
+          },
+        ],
+        mode: 'now',
+      });
+
+      const [calledDto] = mockPostsService.mapTypeToPost.mock.calls[0];
+      const post = calledDto.posts[0];
+      const value = post.value[0];
+
+      expect(post).not.toHaveProperty('group');
+      expect(post.integration.id).toBe('int_personal');
+      expect(value).not.toHaveProperty('id');
+      expect(value).not.toHaveProperty('delay');
+      expect(value.content).toBe('New TikTok post');
+      expect(value.image).toEqual([
+        {
+          id: 'media_123',
+          path: '/uploads/video.mp4',
+          thumbnail: '/uploads/video-thumb.jpg',
+        },
+      ]);
+      expect(post.settings).toEqual(
+        expect.objectContaining({
+          content_posting_method: 'DIRECT_POST',
+        })
+      );
+    });
+
     it('returns actual postId from PostsService.createPost', async () => {
       mockPostsService.createPost.mockResolvedValueOnce([
         {

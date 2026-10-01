@@ -427,21 +427,18 @@ export class TikTokPublishAdapter {
     }
 
     // 3. Build Postiz CreatePostDto
-    const createPostDto: CreatePostDto = {
+    const createPostDto = {
       type: input.mode === 'draft' ? 'draft' : 'now',
       shortLink: false,
       date: new Date().toISOString(),
       tags: [],
       posts: [
         {
-          group: '',
           integration: {
             id: input.integrationId,
           },
           value: [
             {
-              id: '1',
-              delay: 0,
               content: input.content || '',
               image: (input.media || []).map((m) => ({
                 id: m.id || '',
@@ -453,7 +450,7 @@ export class TikTokPublishAdapter {
           settings: preflightResult.resolvedSettings as any,
         },
       ],
-    };
+    } as unknown as CreatePostDto;
 
     // 4. Map settings and set __type via PostsService.mapTypeToPost()
     const mappedPostDto = await this.postsService.mapTypeToPost(
