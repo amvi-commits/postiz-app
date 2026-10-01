@@ -59,6 +59,12 @@ model Organization {
   snsAppSettings      SnsAppSetting[]
   snsVoicePresets     SnsVoicePreset[]
   snsGenerationJobs   SnsGenerationJob[]
+  snsContents         SnsContent[]
+  snsThreadsPostMetadata   SnsThreadsPostMetadata[]
+  snsThreadsInboxItems     SnsThreadsInboxItem[]
+  snsThreadsReferencePosts SnsThreadsReferencePost[]
+  snsThreadsAccountSettings SnsThreadsAccountSetting[]
+  snsThreadsAutomationRules SnsThreadsAutomationRule[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1961,13 +1967,105 @@ model SnsMediaAsset {
   isOriginal     Boolean      @default(false)
   isFinal        Boolean      @default(false)
   publishedAt    DateTime?
+  parentId       String?
+  assetType      String?      @default("ORIGINAL")
   metadata       Json?
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent         SnsMediaAsset? @relation("SnsMediaHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children       SnsMediaAsset[] @relation("SnsMediaHierarchy")
   storyItems     SnsStoryPoolItem[]
   inboxItems     SnsContentInboxItem[]
+  originalContents SnsContent[]        @relation("SnsContentOriginalAsset")
+  contentVariants  SnsContentVariant[] @relation("SnsContentVariantAsset")
 
   @@index([organizationId, isFinal, createdAt])
+  @@index([organizationId, parentId])
+}
+
+model SnsContent {
+  id                String       @id @default(cuid())
+  organizationId    String
+  title             String?
+  commonContent     String       @default("")
+  commonHashtags    Json?
+  commonScheduledAt DateTime?
+  status            String       @default("DRAFT")
+  originalAssetId   String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  originalAsset     SnsMediaAsset? @relation("SnsContentOriginalAsset", fields: [originalAssetId], references: [id], onDelete: SetNull)
+  variants          SnsContentVariant[]
+  platformOverrides SnsContentPlatformOverride[]
+  deliveries        SnsDelivery[]
+
+  @@index([organizationId, status, updatedAt])
+  @@index([originalAssetId])
+}
+
+model SnsContentVariant {
+  id           String       @id @default(cuid())
+  contentId    String
+  mediaAssetId String
+  name         String
+  isDefault    Boolean      @default(false)
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  content      SnsContent   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  mediaAsset   SnsMediaAsset @relation("SnsContentVariantAsset", fields: [mediaAssetId], references: [id], onDelete: Restrict)
+  deliveries   SnsDelivery[]
+
+  @@unique([contentId, mediaAssetId])
+  @@index([contentId, isDefault])
+  @@index([mediaAssetId])
+}
+
+model SnsContentPlatformOverride {
+  id                  String     @id @default(cuid())
+  contentId           String
+  platform            String
+  contentOverride     String?
+  hashtagsOverride    Json?
+  scheduledAtOverride DateTime?
+  settingsOverride    Json?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  content             SnsContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, platform])
+  @@index([contentId])
+}
+
+model SnsDelivery {
+  id                  String      @id @default(cuid())
+  contentId           String
+  variantId           String?
+  integrationId       String
+  providerIdentifier  String
+  accountName         String?
+  contentOverride     String?
+  hashtagsOverride    Json?
+  scheduledAtOverride      DateTime?
+  settingsOverride         Json?
+  providerSettingsSnapshot Json?
+  resolvedContent          String?
+  resolvedHashtags    Json?
+  resolvedScheduledAt DateTime?
+  postId              String?
+  status              String      @default("PLANNED")
+  lastError           String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  content             SnsContent  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  variant             SnsContentVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([contentId, integrationId])
+  @@index([contentId, status])
+  @@index([integrationId])
+  @@index([providerIdentifier])
+  @@index([postId])
 }
 
 model SnsEditingPreset {
@@ -2056,14 +2154,18 @@ model SnsPipelineStep {
 model SnsPublishRecord {
   id             String       @id @default(cuid())
   organizationId String
-  accountId      String
+  accountId      String?
+  integrationId  String?
+  platform       String       @default("INSTAGRAM")
   pipelineRunId  String?
+  postId         String?
   mediaId        String?
   mediaPath      String?
   postUrl        String?
   publishType    String
   status         String
   trialReel      Boolean      @default(false)
+  title          String?
   caption        String?
   publishedAt    DateTime?
   errorCode      String?
@@ -2076,12 +2178,14 @@ model SnsPublishRecord {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  account        SnsInstagramAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  account        SnsInstagramAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
   pipelineRun    SnsPipelineRun? @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
   snapshots      SnsAnalyticsSnapshot[]
 
   @@index([organizationId, createdAt])
   @@index([accountId, status, publishedAt])
+  @@index([integrationId, status, publishedAt])
+  @@index([platform, status])
 }
 
 model SnsAnalyticsSnapshot {
@@ -2139,4 +2243,138 @@ model SnsGenerationJob {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, status, updatedAt])
+}
+
+model SnsThreadsPostMetadata {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  postId               String       @unique
+  isGhostPost          Boolean      @default(false)
+  ghostExpiresAt       DateTime?
+  isArchived           Boolean      @default(false)
+  topicTag             String?
+  locationId           String?
+  locationName         String?
+  hasPoll              Boolean      @default(false)
+  hasSpoiler           Boolean      @default(false)
+  hasTextAttachment    Boolean      @default(false)
+  quotePostId          String?
+  replyControl         String?
+  replyApprovalsEnabled Boolean     @default(false)
+  aiGenerated          Boolean      @default(false)
+  templateId           String?
+  referencePostId      String?
+  characterCount       Int          @default(0)
+  threadCount          Int          @default(1)
+  mediaType            String?
+  rawSettings          Json?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isGhostPost])
+  @@index([organizationId, isArchived])
+  @@index([ghostExpiresAt])
+}
+
+model SnsThreadsInboxItem {
+  id                  String       @id @default(cuid())
+  organizationId      String
+  integrationId       String
+  threadsMediaId      String
+  threadsReplyId      String       @unique
+  senderId            String
+  senderUsername      String
+  senderProfilePic    String?
+  text                String
+  postSnippet         String?
+  itemType            String       @default("REPLY") // REPLY | MENTION
+  status              String       @default("UNHANDLED") // UNHANDLED | HANDLED | PENDING_APPROVAL | HIDDEN
+  approvalStatus      String?      // PENDING | APPROVED | IGNORED
+  isPendingApproval   Boolean      @default(false)
+  isHidden            Boolean      @default(false)
+  parentReplyId       String?
+  repliedAt           DateTime
+  handledAt           DateTime?
+  ourReplyId          String?
+  ourReplyText        String?
+  aiDraftText         String?
+  metadata            Json?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, integrationId, status])
+  @@index([threadsMediaId])
+  @@index([repliedAt])
+}
+
+model SnsThreadsReferencePost {
+  id               String       @id @default(cuid())
+  organizationId   String
+  threadsPostId    String
+  authorUsername   String
+  authorProfilePic String?
+  content          String
+  mediaUrls        Json?
+  topicTag         String?
+  permalink        String?
+  likesCount       Int          @default(0)
+  repliesCount     Int          @default(0)
+  repostsCount     Int          @default(0)
+  quotesCount      Int          @default(0)
+  viewsCount       Int          @default(0)
+  postedAt         DateTime?
+  category         String?
+  notes            String?
+  analysisTags     Json?
+  savedAt          DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, threadsPostId])
+  @@index([organizationId, category])
+}
+
+model SnsThreadsAccountSetting {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  integrationId        String       @unique
+  displayName          String?
+  autoPostEnabled      Boolean      @default(true)
+  defaultReplyControl  String       @default("everyone")
+  aiReplyEnabled       Boolean      @default(true)
+  autoReplyEnabled     Boolean      @default(false)
+  autoReplyRules       Json?
+  maxPostsPerDay       Int          @default(10)
+  maxRepliesPerDay     Int          @default(50)
+  defaultPostTimes     Json?
+  aiCharacter          String?
+  tone                 String       @default("polite")
+  ngWords              Json?
+  autoPlugEnabled      Boolean      @default(false)
+  autoPlugRules        Json?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model SnsThreadsAutomationRule {
+  id             String       @id @default(cuid())
+  organizationId String
+  integrationId  String?
+  ruleType       String       // "AUTO_REPLY" | "AUTO_PLUG"
+  name           String
+  active         Boolean      @default(true)
+  conditions     Json         // Trigger conditions
+  actions        Json         // Action payload
+  triggerCount   Int          @default(0)
+  lastTriggeredAt DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, ruleType, active])
 }
