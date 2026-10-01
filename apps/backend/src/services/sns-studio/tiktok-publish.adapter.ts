@@ -16,6 +16,10 @@ import { CreationMethod, Integration } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import {
+  TikTokPublishGuard,
+  TikTokPublishGuardResult,
+} from './tiktok-publish.guard';
 
 export interface TikTokPublishMediaItem {
   id?: string;
@@ -48,6 +52,7 @@ export interface TikTokPreflightResult {
   maxDurationSeconds?: number;
   warnings: TikTokPreflightWarning[];
   errors: Array<{ code: string; message: string }>;
+  guard?: TikTokPublishGuardResult;
 }
 
 export interface TikTokPublishResult {
@@ -78,7 +83,8 @@ export class TikTokPublishAdapter {
     private readonly prisma: PrismaService,
     private readonly postsService: PostsService,
     private readonly integrationManager: IntegrationManager,
-    private readonly refreshIntegrationService: RefreshIntegrationService
+    private readonly refreshIntegrationService: RefreshIntegrationService,
+    private readonly publishGuard: TikTokPublishGuard
   ) {}
 
   /**
@@ -370,6 +376,16 @@ export class TikTokPublishAdapter {
       }
     }
 
+    const guard =
+      input.mode === 'draft'
+        ? undefined
+        : await this.publishGuard.check({
+            organizationId: orgId,
+            integrationId: integration.id,
+            settings: resolvedSettings,
+            media: input.media,
+          });
+
     return {
       valid: true,
       integrationId: integration.id,
@@ -383,6 +399,7 @@ export class TikTokPublishAdapter {
       maxDurationSeconds,
       warnings,
       errors: [],
+      ...(guard ? { guard } : {}),
     };
   }
 
@@ -452,18 +469,39 @@ export class TikTokPublishAdapter {
       ],
     } as unknown as CreatePostDto;
 
-    // 4. Map settings and set __type via PostsService.mapTypeToPost()
-    const mappedPostDto = await this.postsService.mapTypeToPost(
-      createPostDto,
-      orgId
-    );
+    const createPost = async () => {
+      // The final check and standard Postiz creation share an account-scoped
+      // process-local lock so concurrent requests cannot use the same slot.
+      if (isPublishing) {
+        await this.publishGuard.check({
+          organizationId: orgId,
+          integrationId: input.integrationId,
+          settings: preflightResult.resolvedSettings,
+          media: input.media,
+        });
+      }
 
-    // 5. Delegate to PostsService.createPost with CreationMethod.API
-    const createdPosts = await this.postsService.createPost(
-      orgId,
-      mappedPostDto,
-      CreationMethod.API
-    );
+      // 4. Map settings and set __type via PostsService.mapTypeToPost()
+      const mappedPostDto = await this.postsService.mapTypeToPost(
+        createPostDto,
+        orgId
+      );
+
+      // 5. Delegate to PostsService.createPost with CreationMethod.API
+      return this.postsService.createPost(
+        orgId,
+        mappedPostDto,
+        CreationMethod.API
+      );
+    };
+
+    const createdPosts = isPublishing
+      ? await this.publishGuard.withIntegrationLock(
+          orgId,
+          input.integrationId,
+          createPost
+        )
+      : await createPost();
 
     const postId = createdPosts?.[0]?.postId;
 

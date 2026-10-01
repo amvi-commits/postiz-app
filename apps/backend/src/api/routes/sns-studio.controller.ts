@@ -56,6 +56,7 @@ class TikTokPreflightDto {
   @IsOptional() @IsString() content?: string;
   @IsOptional() @ValidateNested({ each: true }) @Type(() => TikTokPublishMediaItemDto) media?: TikTokPublishMediaItemDto[];
   @IsOptional() settings?: Record<string, any>;
+  @IsOptional() @IsIn(['now', 'draft']) mode?: 'now' | 'draft';
   @IsOptional() @IsNumber() mediaDurationSeconds?: number;
 }
 
