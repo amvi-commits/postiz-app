@@ -8,6 +8,25 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+jest.mock('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: {
+    sanitize: (val: any) => val,
+  },
+  sanitize: (val: any) => val,
+}));
+
+jest.mock('nostr-tools', () => ({
+  getPublicKey: jest.fn(),
+  Relay: jest.fn(),
+  finalizeEvent: jest.fn(),
+  SimplePool: jest.fn(),
+}));
+
+jest.mock('file-type', () => ({
+  fileTypeFromBuffer: jest.fn(),
+}));
+
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SnsStudioController } from './sns-studio.controller';
 
@@ -34,12 +53,18 @@ describe('SNS Studio TikTok Phase 1', () => {
         },
       };
 
+      const mockTikTokPublishAdapter = {
+        preflight: jest.fn(),
+        publish: jest.fn(),
+      };
+
       // Instantiate controller with mock Prisma and dummy services
       controller = new SnsStudioController(
         mockPrisma,
         {} as any,
         {} as any,
-        {} as any
+        {} as any,
+        mockTikTokPublishAdapter as any
       );
     });
 
@@ -335,6 +360,63 @@ describe('SNS Studio TikTok Phase 1', () => {
     it('integrates Postiz useAddProvider for TikTok connect', () => {
       expect(frontendContent).toContain('useAddProvider(refreshTikTokAccounts)');
       expect(frontendContent).toContain('TikTokを接続');
+    });
+  });
+
+  // =========================================================================
+  // Phase 2: TikTok Publish Adapter & Publishing Bridge Tests
+  // =========================================================================
+
+  describe('Phase 2: TikTokPublishAdapter & Publishing Bridge', () => {
+    const adapterPath = path.resolve(
+      __dirname,
+      '../../services/sns-studio/tiktok-publish.adapter.ts'
+    );
+    const adapterContent = fs.readFileSync(adapterPath, 'utf8');
+
+    it('TikTokPublishAdapter does NOT call provider.post() or provider.postPending() directly', () => {
+      expect(adapterContent).not.toMatch(/\bprovider\.post\(/);
+      expect(adapterContent).not.toMatch(/\bprovider\.postPending\(/);
+      expect(adapterContent).not.toMatch(/\bTiktokProvider\.post\(/);
+    });
+
+    it('TikTokPublishAdapter delegates creation to PostsService.createPost with CreationMethod.API', () => {
+      expect(adapterContent).toContain('this.postsService.createPost');
+      expect(adapterContent).toContain('CreationMethod.API');
+    });
+
+    it('TikTokPublishAdapter delegates settings mapping to PostsService.mapTypeToPost', () => {
+      expect(adapterContent).toContain('this.postsService.mapTypeToPost');
+    });
+
+    it('TikTokPublishAdapter delegates validation to PostsService.validatePosts', () => {
+      expect(adapterContent).toContain('this.postsService.validatePosts');
+    });
+
+    it('TikTokPublishAdapter extracts real postId from createdPosts[0].postId without fallback', () => {
+      expect(adapterContent).toContain('createdPosts?.[0]?.postId');
+      expect(adapterContent).not.toContain("|| 'created'");
+    });
+
+    it('TikTokPublishAdapter evaluates emptyContent, settings validity, media validity, and tooLong', () => {
+      expect(adapterContent).toContain('validationResult.emptyContent');
+      expect(adapterContent).toContain('validationResult.valid');
+      expect(adapterContent).toContain('validationResult.errors !== true');
+      expect(adapterContent).toContain('validationResult.tooLong');
+    });
+
+    it('TikTokPublishAdapter allows draft mode without approval requirement', () => {
+      expect(adapterContent).toContain("const isPublishing = input.mode !== 'draft';");
+      expect(adapterContent).toContain('if (isPublishing && !autoPublishEnabled && input.approved !== true)');
+    });
+
+    it('Controller exposes /tiktok/preflight and /tiktok/publish endpoints', () => {
+      const controllerPath = path.resolve(__dirname, './sns-studio.controller.ts');
+      const controllerContent = fs.readFileSync(controllerPath, 'utf8');
+      expect(controllerContent).toContain("@Post('/tiktok/preflight')");
+      expect(controllerContent).toContain("@Post('/tiktok/publish')");
+      expect(controllerContent).toContain('this.tiktokPublishAdapter.preflight');
+      expect(controllerContent).toContain('this.tiktokPublishAdapter.publish');
     });
   });
 });
