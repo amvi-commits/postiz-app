@@ -115,6 +115,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
               : `${process?.env.FRONTEND_URL}`
           }/integrations/social/threads`
         )}` +
+        `&response_type=code` +
         `&state=${state}` +
         `&scope=${encodeURIComponent(this.scopes.join(','))}`,
       codeVerifier: makeSecureId(10),
