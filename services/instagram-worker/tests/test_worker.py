@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -59,7 +60,8 @@ def make_client(tmp_path: Path):
     return TestClient(app, headers=headers), store, tmp_path / "uploads" / "reel.mp4"
 
 
-def test_health_and_login_do_not_return_secrets(tmp_path):
+def test_health_and_login_do_not_return_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("SNS_STUDIO_SERVICE_TOKEN", "test-service-token")
     client, store, _ = make_client(tmp_path)
     assert client.get("/health").json()["status"] == "ok"
     assert client.post(
@@ -74,9 +76,152 @@ def test_health_and_login_do_not_return_secrets(tmp_path):
     )
     assert response.status_code == 200
     assert "password" not in response.text
-    assert "session" not in response.text
+    assert response.json()["sessionStatus"] == "VALID"
+    assert "session" not in response.json()
+    assert "cookies" not in response.json()
     assert store.load("account-1")["password"] == "secret"
     assert b"secret" not in (store.data_dir / "account-1.enc").read_bytes()
+
+
+def test_login_route_saves_session_and_health_moves_to_valid(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="sns-instagram-worker")
+    client, store, _ = make_client(tmp_path)
+    initial = client.get("/accounts/account-1/health")
+    assert initial.status_code == 200
+    assert initial.json()["loginState"] == "LOGIN_REQUIRED"
+
+    response = client.post(
+        "/accounts/login",
+        json={
+            "accountId": "account-1",
+            "username": "test_account",
+            "password": "private-password",
+            "proxy": "http://proxy-secret@proxy.example:8080",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["sessionStatus"] == "VALID"
+    assert store.load("account-1")["status"] == "ACTIVE"
+    assert client.get("/accounts/account-1/health").json()["status"] == "GREEN"
+    assert "LOGIN_REQUEST_RECEIVED accountId=account-1" in caplog.text
+    assert "LOGIN_ATTEMPT usernameMasked=te***t" in caplog.text
+    assert "LOGIN_SUCCESS accountId=account-1" in caplog.text
+    assert "SESSION_SAVED accountId=account-1" in caplog.text
+    assert "private-password" not in caplog.text
+    assert "proxy-secret" not in caplog.text
+
+
+def test_bad_password_is_reported_without_secrets(tmp_path, caplog):
+    class BadPasswordError(Exception):
+        pass
+
+    class BadPasswordClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            raise BadPasswordError("private-password")
+
+    store = CredentialStore(tmp_path / "secure")
+    app = create_app(store=store, client_factory=BadPasswordClient)
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    response = client.post(
+        "/accounts/login",
+        json={"accountId": "account-bad-pass", "username": "private-user", "password": "private-password"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["errorCode"] == "IG_BAD_PASSWORD"
+    assert response.json()["detail"]["requiresAction"] is False
+    assert "LOGIN_BAD_PASSWORD accountId=account-bad-pass" in caplog.text
+    assert "private-password" not in caplog.text
+    assert "private-user" not in caplog.text
+
+
+def test_two_factor_login_can_continue_and_save_session(tmp_path, caplog):
+    class TwoFactorRequiredError(Exception):
+        pass
+
+    class TwoFactorClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            if not kwargs.get("verification_code"):
+                self.settings = {"username": username, "pending_2fa": True}
+                raise TwoFactorRequiredError("private-password")
+            self.logged_in = True
+            self.settings = {"username": username, "device": "stable-device"}
+
+    store = CredentialStore(tmp_path / "secure")
+    app = create_app(store=store, client_factory=TwoFactorClient)
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    login = client.post(
+        "/accounts/login",
+        json={"accountId": "account-2fa", "username": "test_account", "password": "private-password"},
+    )
+    assert login.status_code == 409
+    assert login.json()["detail"]["errorCode"] == "IG_2FA_REQUIRED"
+    assert login.json()["detail"]["requiresAction"] is True
+    assert client.get("/accounts/account-2fa/health").json()["loginState"] == "2FA_REQUIRED"
+    assert "private-password" not in (store.data_dir / "account-2fa.enc").read_bytes().decode("latin1")
+
+    continued = client.post("/accounts/account-2fa/login/continue", json={"verificationCode": "123456"})
+    assert continued.status_code == 200
+    assert continued.json()["sessionStatus"] == "VALID"
+    assert client.get("/accounts/account-2fa/health").json()["status"] == "GREEN"
+    assert store.load("account-2fa")["lastError"] is None
+    assert "LOGIN_2FA_REQUIRED accountId=account-2fa" in caplog.text
+
+
+def test_challenge_is_reported_and_recheck_uses_approved_session(tmp_path):
+    class ChallengeRequiredError(Exception):
+        pass
+
+    approved = {"value": False}
+
+    class ChallengeClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            self.settings = {"username": username, "challenge_pending": True}
+            raise ChallengeRequiredError("challenge")
+
+        def account_info(self):
+            if self.settings.get("challenge_pending") and not approved["value"]:
+                raise ChallengeRequiredError("challenge")
+            return {"username": "test_account", "pk": "123"}
+
+    store = CredentialStore(tmp_path / "secure")
+    app = create_app(store=store, client_factory=ChallengeClient)
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    login = client.post(
+        "/accounts/login",
+        json={"accountId": "account-challenge", "username": "test_account", "password": "private-password"},
+    )
+    assert login.status_code == 409
+    assert login.json()["detail"]["errorCode"] == "IG_CHALLENGE_REQUIRED"
+    assert client.get("/accounts/account-challenge/health").json()["loginState"] == "CHALLENGE_REQUIRED"
+
+    approved["value"] = True
+    rechecked = client.post("/accounts/account-challenge/login/recheck", json={})
+    assert rechecked.status_code == 200
+    assert rechecked.json()["sessionStatus"] == "VALID"
+    assert client.get("/accounts/account-challenge/health").json()["status"] == "GREEN"
+
+
+def test_saved_session_is_reused_after_worker_restart_without_password_login(tmp_path):
+    first_store = CredentialStore(tmp_path / "secure")
+    first_app = create_app(store=first_store, client_factory=FakeClient)
+    first = TestClient(first_app, headers={"Authorization": f"Bearer {first_app.state.token}"})
+    assert first.post(
+        "/accounts/login",
+        json={"accountId": "account-restart", "username": "test_account", "password": "private-password"},
+    ).status_code == 200
+
+    class SessionOnlyClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            raise AssertionError("saved session should be validated without password login")
+
+    restarted_store = CredentialStore(tmp_path / "secure")
+    restarted_app = create_app(store=restarted_store, client_factory=SessionOnlyClient)
+    restarted = TestClient(restarted_app, headers={"Authorization": f"Bearer {restarted_app.state.token}"})
+    health = restarted.get("/accounts/account-restart/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "GREEN"
+    assert health.json()["sessionStatus"] == "VALID"
+    assert restarted_store.load("account-restart")["session"]["device"] == "stable-device"
 
 
 def test_trial_eligibility_and_reel_publish(tmp_path):

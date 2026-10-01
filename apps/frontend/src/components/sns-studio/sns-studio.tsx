@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
-type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
+type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
@@ -20,7 +20,7 @@ const secondaryButton = 'rounded-lg border border-blockSeparator px-4 py-2 font-
 const explainError = (payload: any) => {
   const detail = payload?.detail ?? payload?.response?.data?.detail ?? payload?.response?.data ?? payload;
   if (Array.isArray(detail?.errors) && detail.errors.length) return `Preflightで停止しました: ${detail.errors.join(', ')}`;
-  return typeof detail === 'string' ? detail : detail?.message || detail?.code || payload?.message || '処理に失敗しました。';
+  return typeof detail === 'string' ? detail : detail?.message || detail?.errorCode || detail?.code || payload?.message || '処理に失敗しました。';
 };
 
 export const SnsStudio = () => {
@@ -28,7 +28,9 @@ export const SnsStudio = () => {
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '', verificationCode: '' });
+  const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '' });
+  const [loginOpenFor, setLoginOpenFor] = useState<string | null>(null);
+  const [loginDrafts, setLoginDrafts] = useState<Record<string, { password: string; proxy: string; verificationCode: string }>>({});
   const [reelForm, setReelForm] = useState({ accountId: '', videoPath: '', caption: '', thumbnailPath: '', trialReel: false, pipelineRunId: '' });
   const [storyForm, setStoryForm] = useState({ accountId: '', mediaPath: '', mediaType: 'image', linkUrl: '', x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0, pipelineRunId: '' });
   const [poolForm, setPoolForm] = useState({ name: '', description: '' });
@@ -59,7 +61,13 @@ export const SnsStudio = () => {
       headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(explainError(data));
+    if (!response.ok) {
+      const detail = data?.detail ?? data?.response?.data?.detail ?? data?.response?.data ?? data;
+      const error = new Error(explainError(data)) as Error & { errorCode?: string; requiresAction?: boolean };
+      error.errorCode = detail?.errorCode || detail?.code;
+      error.requiresAction = !!detail?.requiresAction;
+      throw error;
+    }
     return data;
   }, [fetch]);
 
@@ -103,6 +111,93 @@ export const SnsStudio = () => {
   const submit = (action: () => Promise<unknown>, success: string) => (event: FormEvent) => {
     event.preventDefault();
     void run(action, success);
+  };
+
+  const accountLoginState = (account: Account) => account.health?.loginState || (
+    account.lastError === 'IG_2FA_REQUIRED' ? '2FA_REQUIRED' :
+      account.lastError === 'IG_CHALLENGE_REQUIRED' ? 'CHALLENGE_REQUIRED' :
+        account.lastError === 'IG_BAD_PASSWORD' ? 'BAD_PASSWORD' :
+          account.healthStatus === 'GREEN' ? 'ACTIVE' : 'LOGIN_REQUIRED'
+  );
+
+  const updateLoginDraft = (accountId: string, fieldName: 'password' | 'proxy' | 'verificationCode', value: string) => {
+    setLoginDrafts((current) => ({ ...current, [accountId]: { password: '', proxy: '', verificationCode: '', ...current[accountId], [fieldName]: value } }));
+  };
+
+  const submitNewInstagramLogin = (event: FormEvent) => {
+    event.preventDefault();
+    const submitted = { ...accountForm, username: accountForm.username.trim().replace(/^@/, '') };
+    void run(async () => {
+      try {
+        return await request('/sns-studio/accounts', {
+          method: 'POST',
+          body: JSON.stringify({ username: submitted.username, password: submitted.password, proxy: submitted.proxy || undefined }),
+        });
+      } catch (error) {
+        const latest = await refreshAccounts().catch(() => undefined);
+        const code = (error as Error & { errorCode?: string }).errorCode;
+        const account = (latest || accounts).find((candidate: Account) => candidate.username.toLowerCase() === submitted.username.toLowerCase());
+        if (account && ['IG_2FA_REQUIRED', 'IG_CHALLENGE_REQUIRED'].includes(code || '')) setLoginOpenFor(account.id);
+        throw error;
+      } finally {
+        setAccountForm((current) => ({ ...current, password: '' }));
+      }
+    }, 'Instagramへログインしました。');
+  };
+
+  const submitExistingInstagramLogin = (account: Account) => {
+    const draft = loginDrafts[account.id] || { password: '', proxy: '', verificationCode: '' };
+    if (!draft.password) {
+      setMessage('Instagramへログインするため、パスワードを入力してください。');
+      return;
+    }
+    void run(async () => {
+      try {
+        return await request('/sns-studio/accounts', {
+          method: 'POST',
+          body: JSON.stringify({ username: account.username, password: draft.password, proxy: draft.proxy || undefined }),
+        });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      } finally {
+        updateLoginDraft(account.id, 'password', '');
+      }
+    }, 'Instagramへログインしました。');
+  };
+
+  const submitTwoFactorCode = (account: Account) => {
+    const verificationCode = loginDrafts[account.id]?.verificationCode?.trim();
+    if (!verificationCode) {
+      setMessage('Instagramの2FAコードを入力してください。');
+      return;
+    }
+    void run(async () => {
+      try {
+        return await request(`/sns-studio/accounts/${account.id}/login/continue`, {
+          method: 'POST',
+          body: JSON.stringify({ verificationCode }),
+        });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      } finally {
+        updateLoginDraft(account.id, 'verificationCode', '');
+      }
+    }, 'Instagramの2FAを確認しました。Sessionを保存しました。');
+  };
+
+  const recheckInstagramChallenge = (account: Account): void => {
+    void run(async () => {
+      try {
+        return await request(`/sns-studio/accounts/${account.id}/login/recheck`, { method: 'POST', body: '{}' });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      }
+    },
+      'Instagramログインを確認しました。Sessionを保存しました。',
+    );
   };
 
   const defaultAccount = useMemo(() => accounts[0]?.id || '', [accounts]);
@@ -255,16 +350,15 @@ export const SnsStudio = () => {
       </section>}
 
       {activeTab === 'Accounts' && <section className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_1fr]">
-        <form className={card} onSubmit={submit(async () => { const result = await request('/sns-studio/accounts', { method: 'POST', body: JSON.stringify(accountForm) }); setAccountForm((current) => ({ ...current, password: '', verificationCode: '' })); return result; }, 'Instagramアカウントを接続しました。')}>
-          <h2 className="text-lg font-bold">Instagramアカウントを接続</h2>
+        <form className={card} onSubmit={submitNewInstagramLogin}>
+          <h2 className="text-lg font-bold">Instagramアカウントを追加</h2>
           <p className="mb-4 mt-1 text-sm text-textItemBlur">パスワードとセッションはInstagram Worker内で暗号化して保存します。</p>
           <div className="grid gap-3">
             <Field label="Username"><input className={field} autoComplete="username" value={accountForm.username} onChange={(e) => setAccountForm({ ...accountForm, username: e.target.value })} required /></Field>
             <Field label="Password"><input className={field} type="password" autoComplete="current-password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} required /></Field>
             <Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={accountForm.proxy} onChange={(e) => setAccountForm({ ...accountForm, proxy: e.target.value })} /></Field>
             <button type="button" className={secondaryButton} disabled={busy || !accountForm.proxy.trim()} onClick={() => void run(async () => { const result = await request('/sns-studio/proxy/test', { method: 'POST', body: JSON.stringify({ proxy: accountForm.proxy }) }); if (!result.reachable) throw new Error(result.code || 'Proxy connection failed'); }, 'Proxy接続を確認しました。')}>Test Proxy</button>
-            <Field label="2FA code (when requested)"><input className={field} inputMode="numeric" value={accountForm.verificationCode} onChange={(e) => setAccountForm({ ...accountForm, verificationCode: e.target.value })} /></Field>
-            <button className={primaryButton} disabled={busy}>Login / Save session</button>
+            <button className={primaryButton} disabled={busy}>Instagramへログイン</button>
           </div>
         </form>
         <div className={card}>
@@ -272,10 +366,15 @@ export const SnsStudio = () => {
           <div className="mt-4 grid gap-3">
             {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
             {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
-              <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus || account.status} · Session: {account.health?.session || account.status} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}</div>
+              <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' || account.healthStatus === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus === 'GREEN' ? 'ACTIVE · Session: VALID · Health: GREEN' : `YELLOW · Session: ${account.health?.session || 'INVALID'} · ${accountLoginState(account)}`} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}
+                {account.healthStatus !== 'GREEN' && (loginOpenFor === account.id || ['2FA_REQUIRED', 'CHALLENGE_REQUIRED'].includes(accountLoginState(account))) && <div className="mt-3 grid w-full gap-3 rounded-lg border border-blockSeparator p-3">
+                  {accountLoginState(account) === '2FA_REQUIRED' ? <><p className="text-sm">Instagramの2FAコードを入力してください。</p><Field label="2FAコード"><input className={field} inputMode="numeric" autoComplete="one-time-code" value={loginDrafts[account.id]?.verificationCode || ''} onChange={(e) => updateLoginDraft(account.id, 'verificationCode', e.target.value)} /></Field><button type="button" className={primaryButton} disabled={busy} onClick={() => submitTwoFactorCode(account)}>確認</button></> : accountLoginState(account) === 'CHALLENGE_REQUIRED' ? <p className="text-sm">Instagramアプリでログインを承認してください。承認後、［再確認］を押してください。</p> : <><p className="text-sm">保存済みアカウント @{account.username} にログインします。</p><Field label="Password"><input className={field} type="password" autoComplete="current-password" value={loginDrafts[account.id]?.password || ''} onChange={(e) => updateLoginDraft(account.id, 'password', e.target.value)} /></Field><Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={loginDrafts[account.id]?.proxy || ''} onChange={(e) => updateLoginDraft(account.id, 'proxy', e.target.value)} /></Field><button type="button" className={primaryButton} disabled={busy || !loginDrafts[account.id]?.password} onClick={() => submitExistingInstagramLogin(account)}>Instagramへログイン</button></>}
+                </div>}
+              </div>
+              {account.healthStatus !== 'GREEN' && <button type="button" className={secondaryButton} onClick={() => accountLoginState(account) === 'CHALLENGE_REQUIRED' ? recheckInstagramChallenge(account) : setLoginOpenFor(account.id)} disabled={busy}>{accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : accountLoginState(account) === '2FA_REQUIRED' ? '2FAコードを入力' : 'Instagramへログイン'}</button>}
               <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
               <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>Validate</button>
+              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>{accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : 'Validate'}</button>
               <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/caption-settings`, { method: 'PUT', body: JSON.stringify({ enabled: !account.captionAIEnabled }) }), 'AI Caption設定を更新しました。')} disabled={busy}>AI Caption {account.captionAIEnabled ? 'ON' : 'OFF'}</button>
               <button className={secondaryButton} onClick={() => void run(async () => { const result = await request(`/sns-studio/accounts/${account.id}/trial-reel-eligibility`); setTrialEligibility((current) => ({ ...current, [account.id]: !!result.eligible })); return result; }, 'Trial Reelの利用可否を確認しました。')} disabled={busy}>Trial Reel check</button>
             </div>)}

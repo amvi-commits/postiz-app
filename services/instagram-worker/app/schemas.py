@@ -12,6 +12,10 @@ class LoginRequest(BaseModel):
     verificationCode: str | None = Field(default=None, max_length=32)
 
 
+class LoginCodeRequest(BaseModel):
+    verificationCode: str = Field(min_length=1, max_length=32)
+
+
 class AccountIdRequest(BaseModel):
     accountId: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
 
