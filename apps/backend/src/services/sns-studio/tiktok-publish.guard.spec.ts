@@ -26,7 +26,18 @@ function setup(settingValue?: unknown, posts: any[] = []) {
       ),
     },
     post: {
-      findMany: jest.fn().mockResolvedValue(posts),
+      findMany: jest.fn().mockImplementation(({ where }: any) => {
+        const publishDateRange = where.publishDate;
+        return Promise.resolve(
+          posts.filter((post) => {
+            const publishDate = new Date(post.publishDate);
+            return (
+              publishDate >= publishDateRange.gte &&
+              publishDate <= publishDateRange.lte
+            );
+          })
+        );
+      }),
     },
   };
 
@@ -158,6 +169,93 @@ describe('TikTokPublishGuard', () => {
       });
     });
 
+    it('does not count future QUEUE rows as recent posts', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'QUEUE',
+          publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(guard.check(guardInput())).resolves.toMatchObject({
+        postsInLast24Hours: 0,
+        remaining: 2,
+      });
+    });
+
+    it('does not count future PUBLISHED fixtures as recent posts', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'PUBLISHED',
+          publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(guard.check(guardInput())).resolves.toMatchObject({
+        postsInLast24Hours: 0,
+        remaining: 2,
+      });
+    });
+
+    it('continues to count a past QUEUE row', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'QUEUE',
+          publishDate: new Date(NOW.getTime() - 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(guard.check(guardInput())).resolves.toMatchObject({
+        postsInLast24Hours: 1,
+        remaining: 1,
+      });
+    });
+
+    it('counts a post published exactly at now', async () => {
+      const { guard } = setup(undefined, [
+        makePost({ state: 'QUEUE', publishDate: NOW }),
+      ]);
+
+      await expect(guard.check(guardInput())).resolves.toMatchObject({
+        postsInLast24Hours: 1,
+        remaining: 1,
+      });
+    });
+
+    it('counts a post exactly at the 24-hour boundary', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'QUEUE',
+          publishDate: new Date(NOW.getTime() - 24 * 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(guard.check(guardInput())).resolves.toMatchObject({
+        postsInLast24Hours: 1,
+        remaining: 1,
+      });
+    });
+
+    it('uses only past posts for limit usage and nextAllowedAt', async () => {
+      const pastDate = new Date(NOW.getTime() - 60 * 60 * 1000);
+      const { guard } = setup({ dailyPostLimit: 1 }, [
+        makePost({ id: 'past', publishDate: pastDate }),
+        makePost({
+          id: 'future',
+          state: 'QUEUE',
+          publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(guard.check(guardInput())).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_DAILY_LIMIT_REACHED',
+          used: 1,
+          nextAllowedAt: new Date(pastDate.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+    });
+
     it('counts QUEUE and PUBLISHED rows regardless of API or WEB creation method', async () => {
       const { guard } = setup(undefined, [
         makePost({ id: 'queue-api', state: 'QUEUE', creationMethod: 'API' }),
@@ -251,7 +349,10 @@ describe('TikTokPublishGuard', () => {
             integrationId: INTEGRATION_ID,
             deletedAt: null,
             state: { in: ['QUEUE', 'PUBLISHED'] },
-            publishDate: { gte: new Date(NOW.getTime() - 24 * 60 * 60 * 1000) },
+            publishDate: {
+              gte: new Date(NOW.getTime() - 24 * 60 * 60 * 1000),
+              lte: NOW,
+            },
           }),
         })
       );
@@ -386,6 +487,78 @@ describe('TikTokPublishGuard', () => {
           nextAllowedAt: new Date(previous.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         },
       });
+    });
+
+    it('does not treat a future QUEUE duplicate as historical', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'QUEUE',
+          publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(
+        guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+      ).resolves.toMatchObject({ duplicateDetected: false });
+    });
+
+    it('does not treat a future PUBLISHED duplicate fixture as historical', async () => {
+      const { guard } = setup(undefined, [
+        makePost({
+          state: 'PUBLISHED',
+          publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+        }),
+      ]);
+
+      await expect(
+        guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+      ).resolves.toMatchObject({ duplicateDetected: false });
+    });
+
+    it('treats a duplicate published exactly at now as historical', async () => {
+      const { guard } = setup(undefined, [makePost({ publishDate: NOW })]);
+
+      await expect(
+        guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_DUPLICATE_MEDIA', matchedPostId: 'post_1' },
+      });
+    });
+
+    it('includes a duplicate exactly at the cooldown lower boundary', async () => {
+      const boundaryDate = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const { guard } = setup(undefined, [makePost({ publishDate: boundaryDate })]);
+
+      await expect(
+        guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_DUPLICATE_MEDIA',
+          previousPublishDate: boundaryDate.toISOString(),
+        },
+      });
+    });
+
+    it('queries duplicates between the cooldown boundary and the same now value', async () => {
+      const { guard, prisma } = setup(
+        { duplicateWindowDays: 30 },
+        [makePost({ publishDate: new Date(NOW.getTime() - 10 * 24 * 60 * 60 * 1000) })]
+      );
+
+      await guard.check(
+        guardInput({ media: [{ id: 'new-media', path: '/uploads/new-video.mp4' }] })
+      );
+
+      expect(prisma.post.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            publishDate: {
+              gte: new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
+              lte: NOW,
+            },
+          }),
+        })
+      );
     });
 
     it('returns HTTP 409 for duplicate media', async () => {
