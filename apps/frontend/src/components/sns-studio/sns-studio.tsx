@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { useVariables } from '@gitroom/react/helpers/variable.context';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
@@ -10,6 +11,8 @@ type UrlItem = { id: string; name: string; url: string; note?: string | null; ac
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
 type PublishRecord = { id: string; publishType: string; status: string; postUrl?: string | null; mediaId?: string | null; publishedAt?: string | null; errorCode?: string | null; account: { username: string }; snapshots?: Array<{ metrics?: Record<string, unknown> | null }> };
+type ReelPreflightProbe = { kind?: string; sizeBytes?: number; durationSeconds?: number; video?: { codec?: string; width?: number; height?: number }; hasAudio?: boolean };
+type ReelPreflightResult = { ready: boolean; errors: string[]; warnings: string[]; account: { id: string; username: string; status: string }; media: ReelPreflightProbe | null; thumbnail?: ReelPreflightProbe | null; trialEligible: boolean | null };
 
 const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
@@ -25,6 +28,7 @@ const explainError = (payload: any) => {
 
 export const SnsStudio = () => {
   const fetch = useFetch();
+  const { backendUrl } = useVariables();
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,6 +36,7 @@ export const SnsStudio = () => {
   const [loginOpenFor, setLoginOpenFor] = useState<string | null>(null);
   const [loginDrafts, setLoginDrafts] = useState<Record<string, { password: string; proxy: string; verificationCode: string }>>({});
   const [reelForm, setReelForm] = useState({ accountId: '', videoPath: '', caption: '', thumbnailPath: '', trialReel: false, pipelineRunId: '' });
+  const [reelPreflight, setReelPreflight] = useState<{ inputKey: string; result: ReelPreflightResult } | null>(null);
   const [storyForm, setStoryForm] = useState({ accountId: '', mediaPath: '', mediaType: 'image', linkUrl: '', x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0, pipelineRunId: '' });
   const [poolForm, setPoolForm] = useState({ name: '', description: '' });
   const [poolItemForm, setPoolItemForm] = useState({ poolId: '', mediaPath: '', mediaType: 'image', urlLibraryId: '' });
@@ -201,6 +206,15 @@ export const SnsStudio = () => {
   };
 
   const defaultAccount = useMemo(() => accounts[0]?.id || '', [accounts]);
+  const reelPreflightBody = useMemo(() => ({
+    accountId: reelForm.accountId || defaultAccount,
+    mediaPath: reelForm.videoPath,
+    caption: reelForm.caption,
+    thumbnailPath: reelForm.thumbnailPath || undefined,
+    trialReel: reelForm.trialReel,
+  }), [reelForm.accountId, reelForm.videoPath, reelForm.caption, reelForm.thumbnailPath, reelForm.trialReel, defaultAccount]);
+  const reelPreflightInputKey = JSON.stringify(reelPreflightBody);
+  const reelPreflightReady = reelPreflight?.inputKey === reelPreflightInputKey && reelPreflight.result.ready;
 
   useEffect(() => {
     const account = accounts.find((candidate) => candidate.id === (storyForm.accountId || defaultAccount));
@@ -234,6 +248,19 @@ export const SnsStudio = () => {
     if (body.pipelineRunId) setReelForm((current) => ({ ...current, pipelineRunId: '' }));
     if (response.preflightWarnings?.length) setMessage(`投稿完了。確認事項: ${response.preflightWarnings.join(', ')}`);
     return response;
+  };
+
+  const preflightReel = async () => {
+    if (!reelPreflightBody.accountId) throw new Error('Instagramアカウントを選択してください。');
+    if (!reelPreflightBody.mediaPath.trim()) throw new Error('動画パスを入力してください。');
+    setReelPreflight(null);
+    const result = await request('/sns-studio/media/preflight/reel', {
+      method: 'POST',
+      body: JSON.stringify(reelPreflightBody),
+    }) as ReelPreflightResult;
+    setReelPreflight({ inputKey: reelPreflightInputKey, result });
+    if (!result.ready) throw new Error(`Preflightで停止しました: ${result.errors.join(', ') || '確認が必要です。'}`);
+    return result;
   };
 
   const publishStory = async () => {
@@ -298,7 +325,7 @@ export const SnsStudio = () => {
     setActiveTab('Create');
   };
 
-  const previewUrl = (path: string) => `/sns-studio/media/preview?path=${encodeURIComponent(path)}`;
+  const previewUrl = (path: string) => `${backendUrl.replace(/\/$/, '')}/sns-studio/media/preview?path=${encodeURIComponent(path)}`;
 
   const prepareRandomStory = async () => {
     const accountId = storyForm.accountId || defaultAccount;
@@ -400,7 +427,18 @@ export const SnsStudio = () => {
             <Field label="AI Caption用の素材メモ"><textarea className={`${field} min-h-16`} maxLength={12000} value={captionPrompt} onChange={(e) => setCaptionPrompt(e.target.value)} placeholder="動画の内容、伝えたい要点など" /></Field><button type="button" className={secondaryButton} disabled={busy || !captionPrompt.trim() || !accounts.find((account) => account.id === (reelForm.accountId || defaultAccount))?.captionAIEnabled} onClick={() => void run(generateCaption, 'AI Captionを作成しました。内容を確認して編集してください。')}>AI Captionを生成</button>
             <Field label="Thumbnail path (optional)"><input className={field} value={reelForm.thumbnailPath} onChange={(e) => setReelForm({ ...reelForm, thumbnailPath: e.target.value })} placeholder="/uploads/cover.jpg" /></Field>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reelForm.trialReel} onChange={(e) => setReelForm({ ...reelForm, trialReel: e.target.checked })} /> Trial Reel</label>
-            <button className={primaryButton} disabled={busy || !accounts.length}>Preflight and publish now</button>
+            <button type="button" className={secondaryButton} disabled={busy || !accounts.length || !reelForm.videoPath.trim()} onClick={() => void run(preflightReel, 'Preflight PASS。投稿リクエストは送信していません。')}>投稿せずにPreflight</button>
+            {reelPreflight && <div className="rounded-lg border border-blockSeparator p-4" aria-live="polite">
+              <h3 className="font-semibold">Preflight結果{reelPreflight.inputKey === reelPreflightInputKey ? (reelPreflight.result.ready ? ' · PASS' : ' · STOP') : ' · 入力変更あり'}</h3>
+              {reelPreflight.inputKey !== reelPreflightInputKey ? <p className="mt-2 text-sm text-textItemBlur">対象アカウントまたは投稿内容が変わりました。投稿前にPreflightを再実行してください。</p> : <>
+                <p className="mt-2 text-sm">Account: @{reelPreflight.result.account.username} · Session/Health: {reelPreflight.result.account.status}</p>
+                {reelPreflight.result.media && <p className="mt-1 text-sm">Video: {reelPreflight.result.media.kind || 'unknown'} · {reelPreflight.result.media.durationSeconds?.toFixed(2) ?? '—'}s · {reelPreflight.result.media.video?.width ?? '—'}×{reelPreflight.result.media.video?.height ?? '—'} · {reelPreflight.result.media.video?.codec || 'codec unknown'} · {reelPreflight.result.media.sizeBytes ? `${(reelPreflight.result.media.sizeBytes / 1024 / 1024).toFixed(2)} MB` : 'size unknown'} · Audio: {reelPreflight.result.media.hasAudio ? 'あり' : 'なし'}</p>}
+                <p className="mt-1 text-sm">Trial Reel: {reelForm.trialReel ? 'ON' : 'OFF'}</p>
+                {!!reelPreflight.result.errors.length && <p className="mt-2 text-sm text-red-400">停止理由: {reelPreflight.result.errors.join(', ')}</p>}
+                {!!reelPreflight.result.warnings.length && <p className="mt-2 text-sm text-amber-300">確認事項: {reelPreflight.result.warnings.join(', ')}</p>}
+              </>}
+            </div>}
+            <button className={primaryButton} disabled={busy || !accounts.length || !reelPreflightReady} title={reelPreflightReady ? 'InstagramへReelを1件投稿します。' : '現在の入力内容でPreflight PASS後に有効になります。'}>InstagramへReelを1件投稿</button>
           </div>
         </form>
         <form className={card} onSubmit={submit(publishStory, 'Story投稿が完了しました。リンクスタンプはInstagram上でも表示を確認してください。')}>
