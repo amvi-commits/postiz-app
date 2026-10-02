@@ -192,7 +192,7 @@ export class TikTokPublishGuard {
     const duplicateWindowStart = new Date(
       now.getTime() - policy.duplicateWindowDays * DAY_MS
     );
-    const posts = await this.findEligiblePosts(input, dailyWindowStart);
+    const posts = await this.findEligiblePosts(input, dailyWindowStart, now);
 
     const eligiblePosts = posts.filter((post) =>
       isEligiblePost(post, input.organizationId, input.integrationId)
@@ -236,7 +236,8 @@ export class TikTokPublishGuard {
     if (policy.duplicateWindowDays > 0 && (input.media || []).length > 0) {
       const duplicatePosts = await this.findEligiblePosts(
         input,
-        duplicateWindowStart
+        duplicateWindowStart,
+        now
       );
       const duplicate = duplicatePosts
         .filter((post) =>
@@ -279,7 +280,8 @@ export class TikTokPublishGuard {
 
   private async findEligiblePosts(
     input: TikTokPublishGuardInput,
-    publishDateStart: Date
+    publishDateStart: Date,
+    publishDateEnd: Date
   ): Promise<StoredPost[]> {
     return (await this.prisma.post.findMany({
       where: {
@@ -287,7 +289,10 @@ export class TikTokPublishGuard {
         integrationId: input.integrationId,
         deletedAt: null,
         state: { in: [State.QUEUE, State.PUBLISHED] },
-        publishDate: { gte: publishDateStart },
+        publishDate: {
+          gte: publishDateStart,
+          lte: publishDateEnd,
+        },
       },
       select: {
         id: true,
