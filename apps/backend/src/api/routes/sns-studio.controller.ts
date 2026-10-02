@@ -31,6 +31,7 @@ import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studi
 import type { CaptionProvider } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import { normalizeInstagramMetrics } from '@gitroom/backend/services/sns-studio/instagram-metrics';
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
+import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -203,6 +204,7 @@ export class SnsStudioController {
     private readonly generationProvider: GoogleDriveGenerationProvider,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
     private readonly tiktokPublishAdapter: TikTokPublishAdapter,
+    private readonly tiktokAnalyticsAdapter: TikTokAnalyticsAdapter,
   ) {}
 
   private async worker<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
@@ -694,6 +696,24 @@ export class SnsStudioController {
     @Body() body: TikTokPublishDto
   ) {
     return this.tiktokPublishAdapter.publish(org.id, body as any);
+  }
+
+  @Get('/tiktok/analytics/account/:integrationId')
+  tiktokAccountAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Param('integrationId') integrationId: string,
+    @Query('date') date?: string
+  ) {
+    return this.tiktokAnalyticsAdapter.getAccountAnalytics(org, integrationId, date);
+  }
+
+  @Get('/tiktok/analytics/post/:postId')
+  tiktokPostAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Param('postId') postId: string,
+    @Query('date') date?: string
+  ) {
+    return this.tiktokAnalyticsAdapter.getPostAnalytics(org, postId, date);
   }
 
   // ---------------------------------------------------------------------------

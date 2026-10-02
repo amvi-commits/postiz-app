@@ -57,6 +57,10 @@ describe('SNS Studio TikTok Phase 1', () => {
         preflight: jest.fn(),
         publish: jest.fn(),
       };
+      const mockTikTokAnalyticsAdapter = {
+        getAccountAnalytics: jest.fn(),
+        getPostAnalytics: jest.fn(),
+      };
 
       // Instantiate controller with mock Prisma and dummy services
       controller = new SnsStudioController(
@@ -64,7 +68,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         {} as any,
         {} as any,
         {} as any,
-        mockTikTokPublishAdapter as any
+        mockTikTokPublishAdapter as any,
+        mockTikTokAnalyticsAdapter as any
       );
     });
 
@@ -417,6 +422,63 @@ describe('SNS Studio TikTok Phase 1', () => {
       expect(controllerContent).toContain("@Post('/tiktok/publish')");
       expect(controllerContent).toContain('this.tiktokPublishAdapter.preflight');
       expect(controllerContent).toContain('this.tiktokPublishAdapter.publish');
+    });
+  });
+
+  describe('Phase 4: TikTok analytics controller routes', () => {
+    let analyticsController: SnsStudioController;
+    let analyticsAdapter: any;
+    const analyticsOrg = { id: 'org_analytics', name: 'Analytics Org' } as any;
+
+    beforeEach(() => {
+      analyticsAdapter = {
+        getAccountAnalytics: jest.fn(),
+        getPostAnalytics: jest.fn(),
+      };
+      analyticsController = new SnsStudioController(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        analyticsAdapter
+      );
+    });
+
+    it('delegates account analytics requests to TikTokAnalyticsAdapter', async () => {
+      analyticsAdapter.getAccountAnalytics.mockResolvedValue({ status: 'available' });
+
+      await expect(
+        analyticsController.tiktokAccountAnalytics(analyticsOrg, 'integration_1', '1700000000000')
+      ).resolves.toEqual({ status: 'available' });
+      expect(analyticsAdapter.getAccountAnalytics).toHaveBeenCalledWith(
+        analyticsOrg,
+        'integration_1',
+        '1700000000000'
+      );
+    });
+
+    it('delegates post analytics requests to TikTokAnalyticsAdapter', async () => {
+      analyticsAdapter.getPostAnalytics.mockResolvedValue({ status: 'pending' });
+
+      await expect(
+        analyticsController.tiktokPostAnalytics(analyticsOrg, 'post_1', undefined)
+      ).resolves.toEqual({ status: 'pending' });
+      expect(analyticsAdapter.getPostAnalytics).toHaveBeenCalledWith(
+        analyticsOrg,
+        'post_1',
+        undefined
+      );
+    });
+
+    it('exposes both TikTok analytics GET endpoints without adding analytics logic to the controller', () => {
+      const controllerPath = path.resolve(__dirname, './sns-studio.controller.ts');
+      const source = fs.readFileSync(controllerPath, 'utf8');
+
+      expect(source).toContain("@Get('/tiktok/analytics/account/:integrationId')");
+      expect(source).toContain("@Get('/tiktok/analytics/post/:postId')");
+      expect(source).toContain('this.tiktokAnalyticsAdapter.getAccountAnalytics');
+      expect(source).toContain('this.tiktokAnalyticsAdapter.getPostAnalytics');
     });
   });
 });
