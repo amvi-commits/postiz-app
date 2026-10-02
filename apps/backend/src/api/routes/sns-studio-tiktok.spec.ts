@@ -69,7 +69,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         {} as any,
         {} as any,
         mockTikTokPublishAdapter as any,
-        mockTikTokAnalyticsAdapter as any
+        mockTikTokAnalyticsAdapter as any,
+        {} as any
       );
     });
 
@@ -441,7 +442,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         {} as any,
         {} as any,
         {} as any,
-        analyticsAdapter
+        analyticsAdapter,
+        {} as any
       );
     });
 
@@ -479,6 +481,42 @@ describe('SNS Studio TikTok Phase 1', () => {
       expect(source).toContain("@Get('/tiktok/analytics/post/:postId')");
       expect(source).toContain('this.tiktokAnalyticsAdapter.getAccountAnalytics');
       expect(source).toContain('this.tiktokAnalyticsAdapter.getPostAnalytics');
+    });
+  });
+
+  describe('Phase 5: TikTok status controller route', () => {
+    let statusController: SnsStudioController;
+    let statusAdapter: any;
+    const statusOrg = { id: 'org_status', name: 'Status Org' } as any;
+
+    beforeEach(() => {
+      statusAdapter = { getPostStatus: jest.fn() };
+      statusController = new SnsStudioController(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        statusAdapter
+      );
+    });
+
+    it('delegates status retrieval with only organization and Post IDs', async () => {
+      statusAdapter.getPostStatus.mockResolvedValue({ status: 'published' });
+
+      await expect(statusController.tiktokPostStatus(statusOrg, 'post_1')).resolves.toEqual({
+        status: 'published',
+      });
+      expect(statusAdapter.getPostStatus).toHaveBeenCalledWith('org_status', 'post_1');
+    });
+
+    it('exposes the status GET route without adding status logic to the controller', () => {
+      const controllerPath = path.resolve(__dirname, './sns-studio.controller.ts');
+      const source = fs.readFileSync(controllerPath, 'utf8');
+
+      expect(source).toContain("@Get('/tiktok/posts/:postId/status')");
+      expect(source).toContain('this.tiktokStatusAdapter.getPostStatus(org.id, postId)');
     });
   });
 });
