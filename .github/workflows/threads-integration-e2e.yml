@@ -1,0 +1,468 @@
+name: Threads Integration isolated E2E
+
+on:
+  pull_request:
+    branches:
+      - feature/sns-studio-integration
+  push:
+    branches:
+      - test/sns-studio-threads-integration-e2e
+
+permissions:
+  contents: read
+
+concurrency:
+  group: threads-integration-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  threads-integration-e2e:
+    name: Current Integration DB, API, and Browser gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: threads_integration_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d threads_integration_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/threads_integration_ci?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/threads_integration_ci?schema=public
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_SECRET: threads-ci-only-fixed-test-signing-key-not-for-production
+      FRONTEND_URL: http://127.0.0.1:4200
+      NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:3000
+      BACKEND_INTERNAL_URL: http://127.0.0.1:3000
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: ./uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: ./uploads
+      NOT_SECURED: '1'
+      OTEL_ENABLED: 'false'
+      NODE_ENV: test
+      NEXT_TELEMETRY_DISABLED: '1'
+      V1_BASE_SHA: 424c3a1c3c79c113518d52f6f9154ced2dfec53a
+    steps:
+      - name: Checkout the PR merge result and full Git history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 22.12.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.6.1
+          run_install: false
+
+      - name: Record Integration base and enforce CI-only diff
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/sns-studio-integration --no-tags
+          integration_sha="$(git rev-parse origin/feature/sns-studio-integration)"
+          head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
+          base_sha="${PR_BASE_SHA:-$integration_sha}"
+          echo "Integration base SHA: $integration_sha"
+          echo "Event base SHA: $base_sha"
+          echo "Tested source SHA: $head_sha"
+          echo "Node: $(node --version)"
+          echo "pnpm: $(pnpm --version)"
+          test "$(node --version)" = "v22.12.0"
+          test "$(pnpm --version)" = "10.6.1"
+
+          git diff --name-only "$base_sha...$head_sha" > "$RUNNER_TEMP/threads-ci-changed-files.txt"
+          cat "$RUNNER_TEMP/threads-ci-changed-files.txt"
+          while IFS= read -r changed; do
+            case "$changed" in
+              .github/workflows/threads-integration-e2e.yml|.github/scripts/threads-integration-live-smoke.cjs|.github/scripts/threads-integration-ci-egress.cjs) ;;
+              *) echo "Unexpected non-CI file in validation PR: $changed" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/threads-ci-changed-files.txt"
+
+      - name: Confirm PostgreSQL and Redis services
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_isready -h 127.0.0.1 -p 5432 -U postgres -d threads_integration_ci
+          redis-cli -h 127.0.0.1 -p 6379 ping | grep -qx PONG
+          node <<'NODE'
+          const url = new URL(process.env.DATABASE_URL);
+          if (url.protocol !== 'postgresql:' || url.hostname !== '127.0.0.1' ||
+              url.port !== '5432' || url.pathname !== '/threads_integration_ci' ||
+              decodeURIComponent(url.username) !== 'postgres') {
+            throw new Error('Refusing a non-disposable database target.');
+          }
+          if (process.env.REDIS_URL !== 'redis://127.0.0.1:6379') {
+            throw new Error('Refusing an unexpected Redis target.');
+          }
+          console.log('Disposable PostgreSQL and job-local Redis targets verified.');
+          NODE
+
+      - name: Install repository dependencies
+        id: dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install repository-locked Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Record Playwright and Chromium versions
+        run: |
+          pnpm exec playwright --version
+          pnpm exec playwright install --list
+
+      - name: Create runner-only safe .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cat > .env <<EOF
+          DATABASE_URL=$DATABASE_URL
+          REDIS_URL=$REDIS_URL
+          JWT_SECRET=$JWT_SECRET
+          FRONTEND_URL=$FRONTEND_URL
+          NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+          BACKEND_INTERNAL_URL=$BACKEND_INTERNAL_URL
+          STORAGE_PROVIDER=$STORAGE_PROVIDER
+          UPLOAD_DIRECTORY=$UPLOAD_DIRECTORY
+          NEXT_PUBLIC_UPLOAD_DIRECTORY=$NEXT_PUBLIC_UPLOAD_DIRECTORY
+          NOT_SECURED=$NOT_SECURED
+          OTEL_ENABLED=$OTEL_ENABLED
+          NODE_ENV=$NODE_ENV
+          NEXT_TELEMETRY_DISABLED=$NEXT_TELEMETRY_DISABLED
+          EOF
+          chmod 600 .env
+          echo 'Generated runner-only .env with CI test values; no Meta credentials are configured.'
+
+      - name: Validate and generate the Current Integration Prisma client
+        run: |
+          pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
+          pnpm exec prisma generate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
+
+      - name: Rebuild and deploy the isolated V1-to-Integration migration chain
+        id: migrate
+        shell: bash
+        run: |
+          set -euo pipefail
+          schema_path=libraries/nestjs-libraries/src/database/prisma/schema.prisma
+          migration_path=libraries/nestjs-libraries/src/database/prisma/migrations
+          temp_prisma="$RUNNER_TEMP/threads-prisma-chain"
+          base_schema="$RUNNER_TEMP/base-v1-schema.prisma"
+          mkdir -p "$temp_prisma/migrations/20260929180000_v1_baseline"
+
+          if ! git cat-file -e "$V1_BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch origin "$V1_BASE_SHA" --no-tags
+          fi
+          git show "$V1_BASE_SHA:$schema_path" > "$base_schema"
+          echo "V1 base commit: $V1_BASE_SHA"
+          echo "V1 schema blob: $(git rev-parse "$V1_BASE_SHA:$schema_path")"
+
+          pnpm dlx prisma@6.5.0 migrate diff \
+            --from-empty \
+            --to-schema-datamodel "$base_schema" \
+            --script > "$temp_prisma/migrations/20260929180000_v1_baseline/migration.sql"
+
+          cp "$schema_path" "$temp_prisma/schema.prisma"
+          cp "$migration_path/migration_lock.toml" "$temp_prisma/migrations/migration_lock.toml"
+          cp -R "$migration_path/20260929190000_sns_studio_phase3" "$temp_prisma/migrations/"
+          cp -R "$migration_path/20260929193000_account_protection" "$temp_prisma/migrations/"
+          cp -R "$migration_path/20260929200000_add_threads_models" "$temp_prisma/migrations/"
+
+          for migration_dir in \
+            "$migration_path/20260929190000_sns_studio_phase3" \
+            "$migration_path/20260929193000_account_protection" \
+            "$migration_path/20260929200000_add_threads_models"; do
+            if grep -Eiq '(^|[^[:alnum:]_])(DROP[[:space:]]+(TABLE|COLUMN|TYPE|SCHEMA|DATABASE|INDEX)|TRUNCATE([[:space:]]|;)|DELETE[[:space:]]+FROM)([[:space:]]|;)' "$migration_dir"/*.sql; then
+              echo "Unexpected destructive SQL found in $migration_dir." >&2
+              grep -Ein '(^|[^[:alnum:]_])(DROP[[:space:]]+(TABLE|COLUMN|TYPE|SCHEMA|DATABASE|INDEX)|TRUNCATE([[:space:]]|;)|DELETE[[:space:]]+FROM)([[:space:]]|;)' "$migration_dir"/*.sql >&2 || true
+              exit 1
+            fi
+          done
+          echo 'No destructive DROP/TRUNCATE/DELETE statements found in the three production migration folders.'
+
+          echo 'Applying only the disposable runner migration chain: V1 generated baseline -> Common Publishing -> Account Protection -> Threads.'
+          pnpm exec prisma migrate deploy --schema "$temp_prisma/schema.prisma"
+          pnpm exec prisma migrate status --schema "$temp_prisma/schema.prisma"
+
+          set +e
+          pnpm exec prisma migrate diff \
+            --from-schema-datamodel "$schema_path" \
+            --to-schema-datasource "$schema_path" \
+            --script --exit-code > "$RUNNER_TEMP/threads-schema-drift.txt" 2>&1
+          drift_status=$?
+          set -e
+          cat "$RUNNER_TEMP/threads-schema-drift.txt"
+          if [ "$drift_status" -ne 0 ]; then
+            echo "Current schema to disposable database diff returned $drift_status." >&2
+            exit "$drift_status"
+          fi
+
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          (async () => {
+            const prisma = new PrismaClient();
+            const modelCounts = {
+              SnsThreadsPostMetadata: await prisma.snsThreadsPostMetadata.count(),
+              SnsThreadsInboxItem: await prisma.snsThreadsInboxItem.count(),
+              SnsThreadsReferencePost: await prisma.snsThreadsReferencePost.count(),
+              SnsThreadsAccountSetting: await prisma.snsThreadsAccountSetting.count(),
+              SnsThreadsAutomationRule: await prisma.snsThreadsAutomationRule.count(),
+              AccountSecurityProfile: await prisma.accountSecurityProfile.count(),
+              AccountBrowserProfile: await prisma.accountBrowserProfile.count(),
+              SnsContent: await prisma.snsContent.count(),
+              SnsContentVariant: await prisma.snsContentVariant.count(),
+              SnsContentPlatformOverride: await prisma.snsContentPlatformOverride.count(),
+              SnsDelivery: await prisma.snsDelivery.count(),
+            };
+            try {
+              if (Object.values(modelCounts).some((count) => count !== 0)) {
+                throw new Error('Disposable database was not empty after migration.');
+              }
+              const columns = await prisma.$queryRaw`SELECT "table_name", "column_name" FROM information_schema.columns WHERE "table_schema" = 'public' AND (("table_name" = 'SnsDelivery' AND "column_name" IN ('settingsOverride', 'providerSettingsSnapshot')) OR ("table_name" = 'SnsContentPlatformOverride' AND "column_name" = 'settingsOverride'))`;
+              const keys = columns.map((column) => column.table_name + '.' + column.column_name);
+              for (const required of ['SnsDelivery.settingsOverride', 'SnsDelivery.providerSettingsSnapshot', 'SnsContentPlatformOverride.settingsOverride']) {
+                if (!keys.includes(required)) throw new Error('Missing Common Publishing invariant column: ' + required);
+              }
+              console.log('V1 baseline migration chain and empty model counts verified: ' + JSON.stringify(modelCounts));
+              console.log('Common Publishing settingsOverride/providerSettingsSnapshot columns remain separate.');
+            } finally {
+              await prisma.$disconnect();
+            }
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+          NODE
+
+      - name: Run isolated Threads DB E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec jest --runInBand --runTestsByPath \
+            apps/backend/src/services/sns-studio/threads-studio-e2e.spec.ts \
+            2>&1 | tee "$RUNNER_TEMP/threads-db-e2e.log"
+
+      - name: Run Threads capabilities contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec jest --runInBand --runTestsByPath \
+            libraries/nestjs-libraries/src/integrations/social/threads.capabilities.spec.ts \
+            2>&1 | tee "$RUNNER_TEMP/threads-capabilities.log"
+
+      - name: Run repository Jest suite with the disposable Threads database
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          pnpm exec jest --runInBand --json --outputFile "$RUNNER_TEMP/threads-jest-results.json" \
+            > "$RUNNER_TEMP/threads-full-jest.log" 2>&1
+          jest_status=$?
+          set -e
+          cat "$RUNNER_TEMP/threads-full-jest.log"
+          if [ -f "$RUNNER_TEMP/threads-jest-results.json" ]; then
+            node - "$RUNNER_TEMP/threads-jest-results.json" <<'NODE'
+          const result = require(process.argv[2]);
+          console.log(JSON.stringify({
+            suites: result.numTotalTestSuites,
+            passedSuites: result.numPassedTestSuites,
+            failedSuites: result.numFailedTestSuites,
+            skippedSuites: result.numPendingTestSuites,
+            tests: result.numTotalTests,
+            passed: result.numPassedTests,
+            failed: result.numFailedTests,
+            skipped: result.numPendingTests,
+          }, null, 2));
+          NODE
+          else
+            echo 'Jest did not produce its JSON summary.' >&2
+            exit 1
+          fi
+          exit "$jest_status"
+
+      - name: Clean the isolated Jest fixtures
+        if: ${{ always() && steps.migrate.outcome == 'success' && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: node .github/scripts/threads-integration-live-smoke.cjs --cleanup-only
+
+      - name: Record full Jest cleanup and fixture audit
+        if: ${{ always() && steps.migrate.outcome == 'success' && steps.dependencies.outcome == 'success' }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          (async () => {
+            const prisma = new PrismaClient();
+            try {
+              const empty = {
+                Organization: await prisma.organization.count(),
+                User: await prisma.user.count(),
+                UserOrganization: await prisma.userOrganization.count(),
+                Integration: await prisma.integration.count(),
+                Post: await prisma.post.count(),
+                ThreadsMetadata: await prisma.snsThreadsPostMetadata.count(),
+                ThreadsInbox: await prisma.snsThreadsInboxItem.count(),
+                ThreadsReferencePost: await prisma.snsThreadsReferencePost.count(),
+                ThreadsSettings: await prisma.snsThreadsAccountSetting.count(),
+                ThreadsAutomationRule: await prisma.snsThreadsAutomationRule.count(),
+                SnsContent: await prisma.snsContent.count(),
+                SnsDelivery: await prisma.snsDelivery.count(),
+              };
+              console.log(JSON.stringify(empty, null, 2));
+              if (Object.values(empty).some((count) => count !== 0)) {
+                throw new Error('Disposable database contains data after Jest fixture cleanup.');
+              }
+            } finally {
+              await prisma.$disconnect();
+            }
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+          NODE
+
+      - name: Production backend and frontend typecheck/build
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec tsc --noEmit --project apps/backend/tsconfig.json
+          pnpm --filter ./apps/backend run build
+          pnpm exec tsc --noEmit --project apps/frontend/tsconfig.json
+          NODE_ENV=production pnpm --filter ./apps/frontend run build
+
+      - name: Start Current Integration backend and frontend
+        id: servers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/threads-ci"
+          : > "$RUNNER_TEMP/threads-ci-egress.jsonl"
+          redis_connections_before="$(redis-cli --raw info stats | awk -F: '$1 == "total_connections_received" { print $2 }' | tr -d '\r')"
+          test -n "$redis_connections_before"
+          echo "THREADS_REDIS_CONNECTIONS_BEFORE_BACKEND=$redis_connections_before" >> "$GITHUB_ENV"
+          export THREADS_CI_EGRESS_LOG="$RUNNER_TEMP/threads-ci-egress.jsonl"
+          export THREADS_CI_ARTIFACT_DIR="$RUNNER_TEMP/threads-ci"
+          export NODE_OPTIONS="--require=$GITHUB_WORKSPACE/.github/scripts/threads-integration-ci-egress.cjs"
+          export NODE_ENV=production
+
+          pnpm --filter ./apps/backend run start > "$RUNNER_TEMP/threads-ci/backend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/threads-ci/backend.pid"
+          pnpm --filter ./apps/frontend run start > "$RUNNER_TEMP/threads-ci/frontend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/threads-ci/frontend.pid"
+
+          for attempt in $(seq 1 60); do
+            code="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3000/threads-studio/capabilities || true)"
+            if [[ "$code" == 200 || "$code" == 401 || "$code" == 403 ]]; then
+              echo "Backend responded on port 3000 (HTTP $code)."
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              tail -n 120 "$RUNNER_TEMP/threads-ci/backend.log"
+              exit 1
+            fi
+            sleep 3
+          done
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4200/auth/login >/dev/null; then
+              echo 'Frontend returned HTTP 200 on port 4200.'
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              tail -n 120 "$RUNNER_TEMP/threads-ci/frontend.log"
+              exit 1
+            fi
+            sleep 3
+          done
+
+          redis_connections_after="$(redis-cli --raw info stats | awk -F: '$1 == "total_connections_received" { print $2 }' | tr -d '\r')"
+          if [ "$redis_connections_after" -le "$redis_connections_before" ]; then
+            tail -n 120 "$RUNNER_TEMP/threads-ci/backend.log"
+            echo 'Backend did not establish a connection to the job-local Redis service.' >&2
+            exit 1
+          fi
+          echo "Backend-to-Redis connection verified: $redis_connections_before -> $redis_connections_after connections."
+
+      - name: Run authenticated live Browser Smoke
+        id: browser
+        env:
+          THREADS_CI_EGRESS_LOG: ${{ runner.temp }}/threads-ci-egress.jsonl
+          THREADS_CI_ARTIFACT_DIR: ${{ runner.temp }}/threads-ci
+        run: node .github/scripts/threads-integration-live-smoke.cjs
+
+      - name: Check backend/frontend external egress was blocked before network
+        if: ${{ always() && steps.servers.outcome == 'success' }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = process.env.RUNNER_TEMP + '/threads-ci-egress.jsonl';
+          const records = fs.existsSync(file)
+            ? fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+            : [];
+          const blocked = records.filter((record) => record.kind === 'blocked_node_egress');
+          const providerStubs = records.filter((record) => record.kind === 'provider_stub');
+          console.log(JSON.stringify({
+            externalNetworkRequests: 0,
+            blockedBeforeNetwork: blocked.length,
+            localProviderStubs: providerStubs.length,
+            providerPaths: providerStubs.map((record) => record.path),
+          }, null, 2));
+          if (blocked.length) throw new Error('A server-side external egress attempt was blocked: ' + JSON.stringify(blocked));
+          if (!providerStubs.length) throw new Error('Expected the Threads quota UI to use the local-only provider stub.');
+          NODE
+
+      - name: Audit Current Integration schema and shared-model changes
+        if: ${{ always() }}
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+        run: |
+          set -euo pipefail
+          git fetch origin feature/sns-studio-integration --no-tags
+          base_sha="${PR_BASE_SHA:-$(git rev-parse origin/feature/sns-studio-integration)}"
+          head_sha="${PR_HEAD_SHA:-$GITHUB_SHA}"
+          files="$(git diff --name-only "$base_sha...$head_sha")"
+          printf '%s\n' "$files"
+          if printf '%s\n' "$files" | grep -E '(^|/)(schema\.prisma|migrations/)|SnsContent|SnsDelivery|PostMetadata'; then
+            echo 'A Prisma schema, production migration, or Common Publishing model changed.' >&2
+            exit 1
+          fi
+
+      - name: Upload failure-only CI diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: threads-integration-e2e-failure-diagnostics
+          if-no-files-found: ignore
+          retention-days: 5
+          path: |
+            ${{ runner.temp }}/threads-ci/threads-browser-failure.png
+            ${{ runner.temp }}/threads-ci/threads-browser-summary.json
+            ${{ runner.temp }}/threads-ci/threads-cleanup-summary.json
+            ${{ runner.temp }}/threads-ci-egress.jsonl
+            ${{ runner.temp }}/threads-ci/backend.log
+            ${{ runner.temp }}/threads-ci/frontend.log
+            ${{ runner.temp }}/threads-full-jest.log
+            ${{ runner.temp }}/threads-db-e2e.log
+            ${{ runner.temp }}/threads-capabilities.log
+            ${{ runner.temp }}/threads-schema-drift.txt
