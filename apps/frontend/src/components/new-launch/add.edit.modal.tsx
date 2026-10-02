@@ -41,6 +41,8 @@ export interface AddEditModalProps {
   }>>;
   selectedChannelSettings?: Record<string, any>;
   scheduledAtByIntegration?: Record<string, string>;
+  commonContentPlanId?: string;
+  onBeforePost?: (type: 'draft' | 'now' | 'schedule') => void | Promise<void>;
   onPosted?: (result: {
     type: 'draft' | 'now' | 'schedule' | 'update';
     items: Array<{

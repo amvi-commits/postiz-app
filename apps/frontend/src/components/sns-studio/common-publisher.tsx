@@ -9,6 +9,7 @@ import type { Integrations } from '@gitroom/frontend/components/launches/calenda
 import { NewPost } from '@gitroom/frontend/components/launches/new.post';
 import { LoadingComponent } from '@gitroom/frontend/components/layout/loading';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { CommonAccountPolicyPanel } from '@gitroom/frontend/components/sns-studio/common-account-policy';
 
 const card =
   'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
@@ -592,6 +593,40 @@ export const SnsStudioCommonPublisher = ({
     );
   };
 
+  const beforePost = async (type: 'draft' | 'now' | 'schedule') => {
+    if (!planId) {
+      throw new Error('先に配信計画を保存してください。');
+    }
+    if (type === 'draft') return;
+    const response = await fetch(
+      `/sns-studio/common/content-plans/${planId}/preflight`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          type,
+          integrationIds: selectedDestinations.map(({ id }) => id),
+        }),
+      }
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const reasonText = Array.isArray(result?.blockedDeliveries)
+        ? result.blockedDeliveries
+            .flatMap((delivery: any) =>
+              (delivery.reasons || []).map((reason: any) => reason.message)
+            )
+            .filter(Boolean)
+            .join(' ')
+        : '';
+      throw new Error(
+        (typeof result?.message === 'string' && result.message) ||
+          reasonText ||
+          result?.code ||
+          '投稿Policyの確認に失敗しました。'
+      );
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex min-h-[240px] items-center justify-center">
@@ -616,6 +651,16 @@ export const SnsStudioCommonPublisher = ({
           {message && <div className="text-sm">{message}</div>}
         </div>
       </div>
+
+      <CommonAccountPolicyPanel
+        accounts={destinations.map((integration) => ({
+          id: integration.id,
+          name: integration.name,
+          identifier: integration.identifier,
+          disabled: integration.disabled,
+        }))}
+        contentPlanId={planId}
+      />
 
       <div className={card}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -905,6 +950,8 @@ export const SnsStudioCommonPublisher = ({
                       : undefined
                   }
                   onPosted={onPosted}
+                  commonContentPlanId={planId}
+                  onBeforePost={beforePost}
                 />
               </div>
             </CalendarWeekProvider>

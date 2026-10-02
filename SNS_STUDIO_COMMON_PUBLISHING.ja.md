@@ -240,14 +240,26 @@ account override
 
 共通のaccount policyとして実装し、SNS固有画面へ重複させない。
 
-TikTok初期値:
+保存先と既定値:
 
-- maxPostsPerDay: 2
-- configurable per account
-- autoPostEnabled: account override
-- sameContentCooldownDays: 30
+- 既存のorganization-scoped `SnsAppSetting`を利用し、`sns:common:account-policy:v1:<integrationId>`の専用namespaceへ保存する。
+- `Integration.additionalSettings`はSNS provider固有設定なので、Common Policyには使わない。
+- 共通既定値は`autoPostEnabled=true`、`approvalRequired=false`、`maxPostsPerDay=null`（上限なし）、`sameContentCooldownDays=0`（無効）。
+- `maxPostsPerDay`は直近24時間のPostiz `QUEUE` / `PUBLISHED`投稿数で評価する。
+- cooldownは同じ`SnsMediaAsset` IDを共有するコンテンツと配信先の既存Post履歴で評価する。元素材IDがない場合は選択variantのmediaAssetIdを使う。類似度推定はしない。
+- 承認時刻は`SnsDelivery.approvedAt`へ保存する。Phase 5 migrationはこのnullable列を追加するだけで、既存status、ユーザー指定settings、snapshotは変更しない。
+- TikTok側の既存初期値（maxPostsPerDay 2 / sameContentCooldownDays 30）と既存`SnsAppSetting`キーはprovider-specific guardに属する。Common branchへTikTok実装はmergeせず、将来adapterへ接続する際にCommon Policyを正本にし、provider guardにはAPI固有の最終検査だけを残す。
 
-他SNSにも同じpolicy frameworkを再利用できるようにする。
+判定と投稿接続:
+
+- `GET/PUT /sns-studio/common/account-policies`でorganization内IntegrationごとのPolicyをread/writeする。
+- `GET/POST /sns-studio/common/content-plans/:id/policy...`でDelivery単位に承認要否、上限、cooldownを判定する。
+- `approvalRequired=true`または`autoPostEnabled=false`の場合、draftは許可し、now/scheduleは`SnsDelivery.approvedAt`がないと拒否する。
+- Common Publish UIはPostiz投稿直前にpreflightし、`PostsController`もCommon plan ID付き投稿をserver-sideで再検査する。
+- 投稿上限/cooldownは承認で解除されない。
+- 決定は`allowed` / `approval_required` / `blocked`と理由コード・利用者向け説明を返す。
+
+他SNSにも同じpolicy frameworkを再利用する。SNS固有API限界やprovider-specific validationはprovider guardの責務とする。
 
 ### Phase 6 — 履歴 / Queue / Analytics統合
 
@@ -275,4 +287,4 @@ TikTok初期値:
 - 接続済み Instagram / TikTok / TikTok Business / YouTube / Threads / X の抽出
 - 既存Postiz共通投稿モーダルの再利用
 
-Phase 1〜4まで実装済み。次の実装対象はPhase 5の共通配信ポリシー（autoPost / approval / 投稿上限 / 再投稿禁止期間）。
+Phase 1〜4まで実装済み。Phase 5の共通配信ポリシーでは既存`SnsAppSetting`のCommon namespaceと`SnsDelivery.approvedAt`を利用し、SNS固有policyをCommon schemaへコピーしない。

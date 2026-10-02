@@ -412,6 +412,9 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
 
       const data = {
         type,
+        ...(props.commonContentPlanId
+          ? { snsStudioContentPlanId: props.commonContentPlanId }
+          : {}),
         ...(republish ? { republish } : {}),
         ...(repeater ? { inter: repeater } : {}),
         tags,
@@ -465,6 +468,24 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                   };
                 })
               : [data];
+
+          if (
+            (type === 'now' || type === 'schedule') &&
+            props.onBeforePost
+          ) {
+            try {
+              await props.onBeforePost(type);
+            } catch (policyError) {
+              toaster.show(
+                policyError instanceof Error
+                  ? policyError.message
+                  : '投稿Policyの確認に失敗しました。',
+                'warning'
+              );
+              setLoading(false);
+              return;
+            }
+          }
 
           const postedItems: Array<{
             postId: string;
