@@ -4,9 +4,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
+type OrganizationSummary = { id: string; name: string };
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
@@ -29,6 +31,7 @@ const explainError = (payload: any) => {
 export const SnsStudio = () => {
   const fetch = useFetch();
   const { backendUrl } = useVariables();
+  const user = useUser();
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -77,6 +80,13 @@ export const SnsStudio = () => {
   }, [fetch]);
 
   const load = useCallback(async (path: string) => request(path), [request]);
+  const { data: organizations = [] } = useSWR<OrganizationSummary[]>(
+    '/user/organizations',
+    load,
+  );
+  const currentOrganization = organizations.find(
+    (organization) => organization.id === user?.orgId,
+  );
   const { data: dashboard, mutate: refreshDashboard } = useSWR('/sns-studio/dashboard', load, { refreshInterval: 5000 });
   const { data: accounts = [], mutate: refreshAccounts } = useSWR<Account[]>('/sns-studio/accounts', load);
   const { data: urls = [], mutate: refreshUrls } = useSWR<UrlItem[]>('/sns-studio/urls', load);
@@ -348,7 +358,9 @@ export const SnsStudio = () => {
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-newBgColor p-5 text-newTextColor lg:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-textItemBlur">Local workspace</div>
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-textItemBlur">
+            Organization: {currentOrganization?.name || 'Unavailable'}
+          </div>
           <h1 className="mt-1 text-3xl font-bold">SNS Studio</h1>
           <p className="mt-2 max-w-3xl text-sm text-textItemBlur">素材を準備し、プレビューを確認してからInstagramへ今すぐ投稿します。</p>
         </div>

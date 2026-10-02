@@ -59,3 +59,67 @@ describe('SnsStudioController.publishReel failure handling', () => {
     });
   });
 });
+
+describe('SnsStudioController.listAccounts organization scope', () => {
+  const accounts: Array<{
+    id: string;
+    username: string;
+    organizationId: string;
+    archivedAt: null;
+  }> = [
+    { id: 'local-account-1', username: 'mock_sns_studio_demo', organizationId: 'local-test', archivedAt: null },
+    { id: 'local-account-2', username: 'mock_sns_studio_secondary', organizationId: 'local-test', archivedAt: null },
+    { id: 'group-account-1', username: 'lovenight_8r', organizationId: 'group', archivedAt: null },
+  ];
+
+  const createController = () => {
+    const prisma = {
+      snsInstagramAccount: {
+        findMany: jest.fn(({ where }: any) =>
+          Promise.resolve(
+            accounts.filter(
+              (account) =>
+                account.organizationId === where.organizationId &&
+                account.archivedAt === where.archivedAt,
+            ),
+          ),
+        ),
+      },
+    };
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const worker = jest.fn().mockResolvedValue({ status: 'GREEN', session: 'VALID' });
+    (controller as any).worker = worker;
+    return { controller, prisma, worker };
+  };
+
+  it('returns only the two mock accounts for SNS Studio Local Test', async () => {
+    const { controller, prisma, worker } = createController();
+
+    const result = await controller.listAccounts({ id: 'local-test' } as any);
+
+    expect(prisma.snsInstagramAccount.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: 'local-test', archivedAt: null },
+      }),
+    );
+    expect(result.map((account: any) => account.username)).toEqual([
+      'mock_sns_studio_demo',
+      'mock_sns_studio_secondary',
+    ]);
+    expect(worker.mock.calls.map(([path]) => path)).toEqual([
+      '/accounts/local-account-1/health',
+      '/accounts/local-account-2/health',
+    ]);
+  });
+
+  it('returns only @lovenight_8r for group without mixing Organizations', async () => {
+    const { controller, worker } = createController();
+
+    const result = await controller.listAccounts({ id: 'group' } as any);
+
+    expect(result.map((account: any) => account.username)).toEqual(['lovenight_8r']);
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(worker).toHaveBeenCalledWith('/accounts/group-account-1/health');
+    expect(worker.mock.calls.some(([path]) => /\/accounts\/login|\/publish\/reel/.test(path))).toBe(false);
+  });
+});

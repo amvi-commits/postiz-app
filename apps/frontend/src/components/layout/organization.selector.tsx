@@ -2,6 +2,7 @@
 
 import React, { FC, useCallback, useMemo } from 'react';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { changeOrganizationAndReload } from '@gitroom/helpers/utils/organization.switch';
 import useSWR from 'swr';
 import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import clsx from 'clsx';
@@ -13,7 +14,7 @@ export const OrganizationSelector: FC<{ asOpenSelect?: boolean }> = ({
   const load = useCallback(async () => {
     return await (await fetch('/user/organizations')).json();
   }, []);
-  const { isLoading, data } = useSWR('organizations', load, {
+  const { isLoading, data } = useSWR('/user/organizations', load, {
     revalidateIfStale: false,
     revalidateOnFocus: false,
     refreshWhenOffline: false,
@@ -22,23 +23,19 @@ export const OrganizationSelector: FC<{ asOpenSelect?: boolean }> = ({
   });
   const current = useMemo(() => {
     return data?.find((d: any) => d.id === user?.orgId);
-  }, [data]);
+  }, [data, user?.orgId]);
   const withoutCurrent = useMemo(() => {
     return data?.filter((d: any) => d.id !== user?.orgId);
   }, [current, data]);
   const changeOrg = useCallback(
     (org: { name: string; id: string }) => async () => {
-      await fetch('/user/change-org', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: org.id,
-        }),
-      });
-      window.location.reload();
+      await changeOrganizationAndReload(fetch, org.id, () =>
+        window.location.reload(),
+      );
     },
-    []
+    [fetch]
   );
-  if (isLoading || (!isLoading && data?.length === 1)) {
+  if (isLoading || !current) {
     return null;
   }
   return (
