@@ -4,6 +4,8 @@
     "module": "CommonJS",
     "moduleResolution": "node",
     "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "types": ["jest", "node"]

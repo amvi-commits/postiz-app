@@ -7,7 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# instagrapi's Pillow range conflicts with MoviePy 2.2.1 metadata; its video helper documents this no-deps install.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --no-deps "moviepy==2.2.1"
 COPY app ./app
 COPY tests ./tests
 

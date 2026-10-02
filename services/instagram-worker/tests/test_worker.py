@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.crypto_store import CredentialStore
-from app.main import create_app
+from app.main import _error_code, create_app
 
 
 class FakeMedia:
@@ -50,10 +50,29 @@ class FakeClient:
         return {"pk": media_id, "metrics": {"views": 20}}
 
 
+def test_missing_video_thumbnail_dependency_has_specific_error_code():
+    error = RuntimeError(
+        "Could not generate video thumbnail. Pass thumbnail=... or install MoviePy 2.2.1."
+    )
+    assert _error_code(error) == (
+        "IG_MEDIA_PROCESSING_FAILED",
+        "The Reel video could not be prepared for upload.",
+        422,
+    )
+
+
 def make_client(tmp_path: Path):
     store = CredentialStore(tmp_path / "secure")
+    def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
+        thumbnail_path.write_bytes(b"test-thumbnail")
+
     # Use a separate store instance to exercise on-disk encryption and reload.
-    app = create_app(store=store, client_factory=FakeClient, media_root=tmp_path / "uploads")
+    app = create_app(
+        store=store,
+        client_factory=FakeClient,
+        media_root=tmp_path / "uploads",
+        thumbnail_generator=write_test_thumbnail,
+    )
     (tmp_path / "uploads").mkdir(exist_ok=True)
     (tmp_path / "uploads" / "reel.mp4").write_bytes(b"mock video")
     headers = {"Authorization": f"Bearer {app.state.token}"} if app.state.token else {}
@@ -236,6 +255,123 @@ def test_trial_eligibility_and_reel_publish(tmp_path):
     assert response.json()["mediaType"] == "TRIAL_REEL"
 
 
+def test_reel_publish_uses_temporary_thumbnail_and_calls_clip_upload_once(tmp_path):
+    calls = []
+
+    class TrackingClient(FakeClient):
+        def clip_upload(self, path, caption, **kwargs):
+            calls.append((path, caption, kwargs))
+            assert kwargs["thumbnail"].is_file()
+            assert kwargs["thumbnail"].parent != path.parent
+            return FakeMedia()
+
+    def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
+        thumbnail_path.write_bytes(b"test-thumbnail")
+
+    store = CredentialStore(tmp_path / "secure")
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    video = upload_root / "reel.mp4"
+    video.write_bytes(b"mock video")
+    app = create_app(
+        store=store,
+        client_factory=TrackingClient,
+        media_root=upload_root,
+        thumbnail_generator=write_test_thumbnail,
+    )
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    assert client.post("/accounts/login", json={"accountId": "reel-a", "username": "u", "password": "p"}).status_code == 200
+
+    response = client.post(
+        "/publish/reel",
+        json={"accountId": "reel-a", "videoPath": str(video), "caption": "Local test", "trialReel": False},
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    uploaded_path, caption, options = calls[0]
+    assert uploaded_path == video.resolve()
+    assert caption == "Local test"
+    assert options["trial"] is False
+    assert not options["thumbnail"].exists()
+    assert not (upload_root / "reel.mp4.jpg").exists()
+
+
+def test_reel_publish_logs_safe_exception_diagnostics_without_retry_or_secret_leak(tmp_path, caplog):
+    calls = []
+
+    class ClipUploadError(Exception):
+        status_code = 413
+        error_type = "MediaRejected"
+        code = "UPLOAD_REJECTED"
+
+    class FailingClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            self.logged_in = True
+            self.settings = {"username": username, "cookies": {"sessionid": "private-session-cookie", "csrftoken": "private-csrf"}}
+
+        def clip_upload(self, path, caption, **kwargs):
+            calls.append((path, caption, kwargs))
+            raise ClipUploadError(
+                "Upload rejected username=private-user password=private-password sessionid=private-session-cookie "
+                "Cookie: private-cookie csrf=private-csrf "
+                "proxy=http://proxy-user:proxy-password@proxy.example:8080"
+            )
+
+    def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
+        thumbnail_path.write_bytes(b"test-thumbnail")
+
+    caplog.set_level(logging.ERROR, logger="sns-instagram-worker")
+    store = CredentialStore(tmp_path / "secure")
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    video = upload_root / "reel.mp4"
+    video.write_bytes(b"mock video")
+    app = create_app(
+        store=store,
+        client_factory=FailingClient,
+        media_root=upload_root,
+        thumbnail_generator=write_test_thumbnail,
+    )
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    login = client.post(
+        "/accounts/login",
+        json={
+            "accountId": "reel-failed",
+            "username": "private-user",
+            "password": "private-password",
+            "proxy": "http://proxy-user:proxy-password@proxy.example:8080",
+        },
+    )
+    assert login.status_code == 200
+
+    response = client.post(
+        "/publish/reel",
+        json={"accountId": "reel-failed", "videoPath": str(video), "caption": "Local test", "trialReel": False},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "IG_UPLOAD_FAILED"
+    assert len(calls) == 1
+    assert "exceptionClass=ClipUploadError" in caplog.text
+    assert "exceptionModule=test_worker" in caplog.text
+    assert "statusCode=413" in caplog.text
+    assert "errorType=MediaRejected" in caplog.text
+    assert "remoteCode=UPLOAD_REJECTED" in caplog.text
+    assert "message=Upload rejected" in caplog.text
+    for secret in (
+        "private-password",
+        "private-session-cookie",
+        "private-csrf",
+        "private-cookie",
+        "proxy-user",
+        "proxy-password",
+        "private-user",
+    ):
+        assert secret not in caplog.text
+        assert secret not in response.text
+
+
 def test_media_paths_cannot_escape_shared_upload_root(tmp_path):
     client, _, _ = make_client(tmp_path)
     client.post("/accounts/login", json={"accountId": "account-1", "username": "u", "password": "p"})
@@ -288,7 +424,10 @@ def test_local_mock_reel_story_health_and_insights_are_credential_free(tmp_path,
     upload_root.mkdir(exist_ok=True)
     media = upload_root / "reel.mp4"
     media.write_bytes(b"local mock video")
-    app = create_app(store=store, media_root=upload_root)
+    def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
+        thumbnail_path.write_bytes(b"test-thumbnail")
+
+    app = create_app(store=store, media_root=upload_root, thumbnail_generator=write_test_thumbnail)
     headers = {"Authorization": f"Bearer {app.state.token}"} if app.state.token else {}
     client = TestClient(app, headers=headers)
 

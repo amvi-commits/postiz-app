@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import logging
+import re
 import secrets
+import tempfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -22,8 +25,20 @@ from .schemas import (
 )
 
 ClientFactory = Callable[[], Any]
+ThumbnailGenerator = Callable[[Path, Path], None]
 logger = logging.getLogger("sns-instagram-worker")
 ACTION_REQUIRED_CODES = {"IG_LOGIN_REQUIRED", "IG_2FA_REQUIRED", "IG_CHALLENGE_REQUIRED"}
+_SAFE_DIAGNOSTIC_VALUE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_SENSITIVE_KEY = re.compile(r"username|password|passwd|session|cookie|csrf|auth|token|secret|proxy|device", re.I)
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(\b(?:username|password|passwd|sessionid|cookie|set-cookie|csrf(?:token)?|authorization|proxy-authorization|token|secret|api[_-]?key)\b\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
+)
+_URL = re.compile(r"https?://[^\s\]\[{}<>\"']+", re.I)
+_BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+_SAFE_ERROR_TYPE = re.compile(r"^[A-Z][A-Za-z0-9_.-]{0,79}$")
+_SAFE_REMOTE_CODE = re.compile(r"^[A-Z0-9][A-Z0-9_.-]{0,79}$")
+_SAFE_ACCOUNT_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
 
 class _MockMedia:
@@ -81,6 +96,161 @@ def _default_client_factory() -> Any:
     return Client()
 
 
+def _generate_video_thumbnail(video_path: Path, thumbnail_path: Path) -> None:
+    """Generate an instagrapi-compatible thumbnail without writing beside shared media."""
+    from instagrapi.mixins.clip import crop_thumbnail
+    from instagrapi.utils.video import generate_video_thumbnail, read_video_metadata_with_fallback
+
+    metadata = read_video_metadata_with_fallback(video_path)
+    generate_video_thumbnail(
+        video_path,
+        thumbnail_path,
+        duration=metadata.duration,
+        crop_thumbnail=crop_thumbnail,
+    )
+
+
+def _collect_sensitive_values(value: Any, *, sensitive_parent: bool = False) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            values.extend(
+                _collect_sensitive_values(
+                    nested,
+                    sensitive_parent=sensitive_parent or bool(_SENSITIVE_KEY.search(str(key))),
+                )
+            )
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            values.extend(_collect_sensitive_values(nested, sensitive_parent=sensitive_parent))
+    elif sensitive_parent and isinstance(value, (str, int, float)) and str(value):
+        values.append(str(value))
+    return values
+
+
+def _redact_structured_payloads(message: str) -> str:
+    """Remove dict/list payloads wholesale so arbitrary session JSON cannot enter logs."""
+    result: list[str] = []
+    index = 0
+    while index < len(message):
+        opening = message[index]
+        if opening not in "[{":
+            result.append(opening)
+            index += 1
+            continue
+
+        stack = ["}" if opening == "{" else "]"]
+        quote: str | None = None
+        escaped = False
+        end = index + 1
+        while end < len(message) and stack:
+            char = message[end]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            elif char in "\"'":
+                quote = char
+            elif char == "{":
+                stack.append("}")
+            elif char == "[":
+                stack.append("]")
+            elif char == stack[-1]:
+                stack.pop()
+            end += 1
+
+        if stack:
+            result.append("[structured data redacted]")
+            break
+        result.append("[structured data redacted]")
+        index = end
+    return "".join(result)
+
+
+def _safe_exception_message(exc: Exception, sensitive_values: list[str]) -> str:
+    try:
+        message = str(exc)
+    except Exception:
+        return "[exception message unavailable]"
+
+    for secret in sorted(set(sensitive_values), key=len, reverse=True):
+        if secret:
+            message = message.replace(secret, "[REDACTED]")
+    message = _redact_structured_payloads(message)
+    message = _URL.sub("[URL redacted]", message)
+    message = _BEARER.sub("Bearer [REDACTED]", message)
+    message = _JWT.sub("[TOKEN redacted]", message)
+    message = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", message)
+    message = re.sub(r"\s+", " ", message).strip()
+    return message[:400] or "[empty exception message]"
+
+
+def _safe_exception_attribute(exc: Exception, name: str) -> str | None:
+    try:
+        value = getattr(exc, name, None)
+    except Exception:
+        return None
+    if isinstance(value, (str, int)) and not isinstance(value, bool):
+        result = str(value)
+        if name in {"error_type", "errorType"} and _SAFE_ERROR_TYPE.fullmatch(result):
+            return result
+        if name in {"error_code", "code"} and _SAFE_REMOTE_CODE.fullmatch(result):
+            return result
+        if name not in {"error_type", "errorType", "error_code", "code"} and _SAFE_DIAGNOSTIC_VALUE.fullmatch(result):
+            return result
+    return None
+
+
+def _exception_status_code(exc: Exception) -> int | None:
+    candidates = [exc]
+    try:
+        response = getattr(exc, "response", None)
+    except Exception:
+        response = None
+    if response is not None:
+        candidates.append(response)
+    for candidate in candidates:
+        try:
+            status = getattr(candidate, "status_code", None)
+        except Exception:
+            continue
+        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+            return status
+    return None
+
+
+def _log_publish_exception(
+    exc: Exception,
+    *,
+    account_id: str,
+    stage: str,
+    error_code: str,
+    credential_record: dict[str, Any],
+) -> None:
+    exception_type = type(exc)
+    exception_class = exception_type.__name__
+    exception_module = exception_type.__module__
+    safe_class = exception_class if _SAFE_DIAGNOSTIC_VALUE.fullmatch(exception_class) else "UnknownException"
+    safe_module = exception_module if _SAFE_DIAGNOSTIC_VALUE.fullmatch(exception_module) else "unknown"
+    safe_account_id = account_id if _SAFE_ACCOUNT_ID.fullmatch(account_id) else "invalid"
+    logger.error(
+        "PUBLISH_FAILURE accountId=%s stage=%s errorCode=%s exceptionClass=%s exceptionModule=%s "
+        "statusCode=%s errorType=%s remoteCode=%s message=%s",
+        safe_account_id,
+        stage,
+        error_code,
+        safe_class,
+        safe_module,
+        _exception_status_code(exc),
+        _safe_exception_attribute(exc, "error_type") or _safe_exception_attribute(exc, "errorType") or "",
+        _safe_exception_attribute(exc, "error_code") or _safe_exception_attribute(exc, "code") or "",
+        _safe_exception_message(exc, _collect_sensitive_values(credential_record)),
+    )
+
+
 def _public_model(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         data = value.model_dump(mode="json")
@@ -101,16 +271,27 @@ def _public_model(value: Any) -> dict[str, Any]:
 
 def _error_code(exc: Exception) -> tuple[str, str, int]:
     name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
     if "badpassword" in name or "badcredentials" in name or "invalidpassword" in name:
         return "IG_BAD_PASSWORD", "Instagram rejected the username or password.", 401
     if "twofactor" in name or "2fa" in name:
         return "IG_2FA_REQUIRED", "Enter the current Instagram verification code.", 409
     if "challenge" in name or "checkpoint" in name or "consentrequired" in name:
         return "IG_CHALLENGE_REQUIRED", "Instagram requires an account confirmation step.", 409
-    if "loginrequired" in name or "loginrequired" in str(exc).lower():
+    if "feedbackrequired" in name:
+        return "IG_FEEDBACK_REQUIRED", "Instagram requires an account confirmation step.", 409
+    if "loginrequired" in name or "loginrequired" in message:
         return "IG_LOGIN_REQUIRED", "The Instagram session needs a new login.", 401
-    if "pleasewait" in name or "ratelimit" in name:
+    if "pleasewait" in name or "ratelimit" in name or "too many requests" in message or "rate limit" in message:
         return "IG_RATE_LIMITED", "Instagram temporarily limited this action. Try again later.", 429
+    if any(token in name for token in ("connectionerror", "connecttimeout", "readtimeout", "proxyerror", "networkerror", "sslerror")):
+        return "IG_NETWORK_ERROR", "A network error interrupted the Instagram request.", 502
+    if any(token in name for token in ("badrequest", "mediarejected")):
+        return "IG_MEDIA_REJECTED", "Instagram rejected the Reel media or request.", 422
+    if any(token in name for token in ("upload", "clipconfigure", "videoconfigure")):
+        return "IG_UPLOAD_FAILED", "The Instagram Reel upload did not complete.", 502
+    if "runtimeerror" in name and any(token in message for token in ("thumbnail", "moviepy", "ffmpeg", "video")):
+        return "IG_MEDIA_PROCESSING_FAILED", "The Reel video could not be prepared for upload.", 422
     return "IG_REQUEST_FAILED", "Instagram could not complete the request.", 502
 
 
@@ -138,10 +319,12 @@ def create_app(
     store: CredentialStore | None = None,
     client_factory: ClientFactory = _default_client_factory,
     media_root: Path | None = None,
+    thumbnail_generator: ThumbnailGenerator = _generate_video_thumbnail,
 ) -> FastAPI:
     app = FastAPI(title="SNS Studio Instagram Worker", version="1.0.0")
     app.state.store = store or CredentialStore(Path(os.getenv("IG_DATA_DIR", "./data")))
     app.state.client_factory = client_factory
+    app.state.thumbnail_generator = thumbnail_generator
     app.state.media_root = (
         media_root or Path(os.getenv("IG_MEDIA_ROOT", "./uploads"))
     ).resolve()
@@ -412,7 +595,7 @@ def create_app(
 
     @app.post("/publish/reel", response_model=PublishResponse)
     def publish_reel(body: PublishReelRequest):
-        client, _ = client_for(body.accountId)
+        client, credential_record = client_for(body.accountId)
         video = media_path(body.videoPath)
         thumbnail = media_path(body.thumbnailPath) if body.thumbnailPath else None
         if body.trialReel:
@@ -424,10 +607,26 @@ def create_app(
             except Exception as exc:
                 code, message, status = _error_code(exc)
                 raise HTTPException(status_code=status, detail={"code": code, "message": message}) from None
+        stage = "thumbnail_generation"
         try:
-            media = client.clip_upload(video, body.caption, thumbnail=thumbnail, trial=body.trialReel)
+            if thumbnail is None:
+                with tempfile.TemporaryDirectory(prefix="sns-instagram-reel-") as thumbnail_directory:
+                    thumbnail = Path(thumbnail_directory) / "thumbnail.jpg"
+                    app.state.thumbnail_generator(video, thumbnail)
+                    stage = "clip_upload"
+                    media = client.clip_upload(video, body.caption, thumbnail=thumbnail, trial=body.trialReel)
+            else:
+                stage = "clip_upload"
+                media = client.clip_upload(video, body.caption, thumbnail=thumbnail, trial=body.trialReel)
         except Exception as exc:
             code, message, status = _error_code(exc)
+            _log_publish_exception(
+                exc,
+                account_id=body.accountId,
+                stage=stage,
+                error_code=code,
+                credential_record=credential_record,
+            )
             raise HTTPException(status_code=status, detail={"code": code, "message": message}) from None
         media_id = str(getattr(media, "pk", ""))
         shortcode = getattr(media, "code", None)
