@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           pg_isready -h 127.0.0.1 -p 5432 -U postgres -d threads_integration_ci
-          redis-cli -h 127.0.0.1 -p 6379 ping | grep -qx PONG
+          test "$(node .github/scripts/threads-integration-redis-probe.cjs ping)" = PONG
           node <<'NODE'
           const url = new URL(process.env.DATABASE_URL);
           if (url.protocol !== 'postgresql:' || url.hostname !== '127.0.0.1' ||
@@ -355,9 +355,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/threads-ci"
           : > "$RUNNER_TEMP/threads-ci-egress.jsonl"
-          redis_connections_before="$(redis-cli --raw info stats | awk -F: '$1 == "total_connections_received" { print $2 }' | tr -d '\r')"
-          test -n "$redis_connections_before"
-          echo "THREADS_REDIS_CONNECTIONS_BEFORE_BACKEND=$redis_connections_before" >> "$GITHUB_ENV"
+          redis_clients_before="$(node .github/scripts/threads-integration-redis-probe.cjs clients)"
+          test -n "$redis_clients_before"
           export THREADS_CI_EGRESS_LOG="$RUNNER_TEMP/threads-ci-egress.jsonl"
           export THREADS_CI_ARTIFACT_DIR="$RUNNER_TEMP/threads-ci"
           export NODE_OPTIONS="--require=$GITHUB_WORKSPACE/.github/scripts/threads-integration-ci-egress.cjs"
@@ -393,13 +392,13 @@ jobs:
             sleep 3
           done
 
-          redis_connections_after="$(redis-cli --raw info stats | awk -F: '$1 == "total_connections_received" { print $2 }' | tr -d '\r')"
-          if [ "$redis_connections_after" -le "$redis_connections_before" ]; then
+          redis_clients_after="$(node .github/scripts/threads-integration-redis-probe.cjs clients)"
+          if [ "$redis_clients_after" -le "$redis_clients_before" ]; then
             tail -n 120 "$RUNNER_TEMP/threads-ci/backend.log"
             echo 'Backend did not establish a connection to the job-local Redis service.' >&2
             exit 1
           fi
-          echo "Backend-to-Redis connection verified: $redis_connections_before -> $redis_connections_after connections."
+          echo "Backend-to-Redis active client verified: $redis_clients_before -> $redis_clients_after."
 
       - name: Run authenticated live Browser Smoke
         id: browser
