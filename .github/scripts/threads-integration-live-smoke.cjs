@@ -446,7 +446,7 @@ async function runBrowserSmoke(database, testFixture) {
   assert(Array.isArray(calendarBody), 'Live calendar response did not use the expected array contract.');
   summary.calendarArrayResponse = true;
   summary.calendarResponses = networkRecords.filter((item) => item.path === calendarPath).length - calendarBefore;
-  await page.getByText('GHOST POST').waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText('👻 GHOST POST', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByText('REGULAR', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByText('#threads-ci-e2e-topic', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   summary.calendarGhostVisible = true;
