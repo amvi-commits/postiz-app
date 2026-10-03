@@ -5,6 +5,13 @@ import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
 import { useUser } from '@gitroom/frontend/components/layout/user.context';
+import {
+  createStoryPreflightPayload,
+  getStoryPreflightVerdict,
+  requestStoryPreflight,
+  StoryPreflightInputError,
+  type StoryPreflightResult,
+} from '@gitroom/helpers/utils/sns-studio-story-preflight';
 
 type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
@@ -15,6 +22,7 @@ type Recipe = { id: string; name: string; inputType: string; config: Record<stri
 type PublishRecord = { id: string; publishType: string; status: string; postUrl?: string | null; mediaId?: string | null; publishedAt?: string | null; errorCode?: string | null; account: { username: string }; snapshots?: Array<{ metrics?: Record<string, unknown> | null }> };
 type ReelPreflightProbe = { kind?: string; sizeBytes?: number; durationSeconds?: number; video?: { codec?: string; width?: number; height?: number }; hasAudio?: boolean };
 type ReelPreflightResult = { ready: boolean; errors: string[]; warnings: string[]; account: { id: string; username: string; status: string }; media: ReelPreflightProbe | null; thumbnail?: ReelPreflightProbe | null; trialEligible: boolean | null };
+type StoryPreflightState = { inputKey: string; result: StoryPreflightResult };
 
 const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
@@ -41,6 +49,7 @@ export const SnsStudio = () => {
   const [reelForm, setReelForm] = useState({ accountId: '', videoPath: '', caption: '', thumbnailPath: '', trialReel: false, pipelineRunId: '' });
   const [reelPreflight, setReelPreflight] = useState<{ inputKey: string; result: ReelPreflightResult } | null>(null);
   const [storyForm, setStoryForm] = useState({ accountId: '', mediaPath: '', mediaType: 'image', linkUrl: '', x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0, pipelineRunId: '' });
+  const [storyPreflight, setStoryPreflight] = useState<StoryPreflightState | null>(null);
   const [poolForm, setPoolForm] = useState({ name: '', description: '' });
   const [poolItemForm, setPoolItemForm] = useState({ poolId: '', mediaPath: '', mediaType: 'image', urlLibraryId: '' });
   const [urlForm, setUrlForm] = useState({ name: '', url: '', note: '' });
@@ -225,6 +234,11 @@ export const SnsStudio = () => {
   }), [reelForm.accountId, reelForm.videoPath, reelForm.caption, reelForm.thumbnailPath, reelForm.trialReel, defaultAccount]);
   const reelPreflightInputKey = JSON.stringify(reelPreflightBody);
   const reelPreflightReady = reelPreflight?.inputKey === reelPreflightInputKey && reelPreflight.result.ready;
+  const storyPreflightPayload = useMemo(
+    () => createStoryPreflightPayload(storyForm, defaultAccount),
+    [storyForm.accountId, storyForm.mediaPath, storyForm.mediaType, storyForm.linkUrl, storyForm.x, storyForm.y, storyForm.width, storyForm.height, storyForm.rotation, defaultAccount],
+  );
+  const storyPreflightInputKey = JSON.stringify(storyPreflightPayload);
 
   useEffect(() => {
     const account = accounts.find((candidate) => candidate.id === (storyForm.accountId || defaultAccount));
@@ -271,6 +285,28 @@ export const SnsStudio = () => {
     setReelPreflight({ inputKey: reelPreflightInputKey, result });
     if (!result.ready) throw new Error(`Preflightで停止しました: ${result.errors.join(', ') || '確認が必要です。'}`);
     return result;
+  };
+
+  const preflightStoryOnly = async () => {
+    const inputKey = storyPreflightInputKey;
+    setStoryPreflight(null);
+    setMessage('');
+    setBusy(true);
+    try {
+      const result = await requestStoryPreflight(request, storyPreflightPayload);
+      setStoryPreflight({ inputKey, result });
+    } catch (error) {
+      if (error instanceof StoryPreflightInputError) {
+        setStoryPreflight({
+          inputKey,
+          result: { ready: false, errors: error.errors, warnings: [] },
+        });
+      } else {
+        setMessage(error instanceof Error ? error.message : 'Story Preflightに失敗しました。');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const publishStory = async () => {
@@ -464,6 +500,30 @@ export const SnsStudio = () => {
             {storyForm.pipelineRunId && <div className="text-xs text-textItemBlur">承認済みPipeline: {storyForm.pipelineRunId}</div>}
             <Field label="Link URL"><input className={field} type="url" value={storyForm.linkUrl} onChange={(e) => setStoryForm({ ...storyForm, linkUrl: e.target.value })} placeholder="https://example.com" required /></Field>
             <StickerFields values={storyForm} onChange={(key, value) => setStoryForm({ ...storyForm, [key]: value })} />
+            <button type="button" className={secondaryButton} disabled={busy} title="Story専用の事前チェックだけを実行します。投稿リクエストは送信しません。" onClick={() => void preflightStoryOnly()}>Preflight only（投稿しません）</button>
+            {storyPreflight && <div className="rounded-lg border border-blockSeparator p-4" aria-live="polite" role="status">
+              {storyPreflight.inputKey !== storyPreflightInputKey ? <>
+                <h3 className="font-semibold text-amber-300">Story Preflight · 入力変更あり</h3>
+                <p className="mt-2 text-sm text-textItemBlur">Account、素材、URL、Sticker値が変わりました。最新の内容で事前チェックを再実行してください。</p>
+              </> : <>
+                {(() => {
+                  const verdict = getStoryPreflightVerdict(storyPreflight.result);
+                  const selectedAccount = accounts.find((account) => account.id === storyPreflightPayload.accountId);
+                  const statusClass = verdict === 'HARD_ERROR' ? 'text-red-300' : verdict === 'PASS_WITH_WARNINGS' ? 'text-amber-300' : 'text-green-400';
+                  const verdictLabel = verdict === 'HARD_ERROR' ? 'HARD ERROR · 投稿不可' : verdict === 'PASS_WITH_WARNINGS' ? 'PASS · 警告あり' : 'PASS';
+                  const media = storyPreflight.result.media;
+                  return <>
+                    <h3 className={`font-semibold ${statusClass}`}>Story Preflight · {verdictLabel}</h3>
+                    <p className="mt-2 text-sm">Account: @{storyPreflight.result.account?.username || selectedAccount?.username || '未選択'} · Account: {selectedAccount?.status || '—'} · Session: {selectedAccount?.health?.session || selectedAccount?.health?.sessionStatus || '未確認'} · Health: {storyPreflight.result.account?.status || selectedAccount?.healthStatus || '未確認'}</p>
+                    <p className="mt-1 text-sm">Media: {storyPreflightPayload.mediaPath || '未指定'} · {media?.kind || '未確認'}{media?.durationSeconds !== undefined ? ` · ${media.durationSeconds.toFixed(2)}秒` : ''}{media?.video?.width && media.video?.height ? ` · ${media.video.width}×${media.video.height}` : ''}{media?.video?.codec ? ` · ${media.video.codec}` : ''}{media?.sizeBytes ? ` · ${(media.sizeBytes / 1024 / 1024).toFixed(2)} MB` : ''}</p>
+                    <p className="mt-1 text-sm">Link URL: {storyPreflightPayload.linkUrl || '未指定'}</p>
+                    <p className="mt-1 text-sm">Sticker: x={storyPreflightPayload.sticker.x}, y={storyPreflightPayload.sticker.y}, width={storyPreflightPayload.sticker.width}, height={storyPreflightPayload.sticker.height}, rotation={storyPreflightPayload.sticker.rotation}</p>
+                    {!!storyPreflight.result.errors.length && <ul className="mt-2 list-disc pl-5 text-sm text-red-300">{storyPreflight.result.errors.map((error) => <li key={error}>停止理由: {error}</li>)}</ul>}
+                    {!!storyPreflight.result.warnings.length && <ul className="mt-2 list-disc pl-5 text-sm text-amber-300">{storyPreflight.result.warnings.map((warning) => <li key={warning}>警告: {warning}</li>)}</ul>}
+                  </>;
+                })()}
+              </>}
+            </div>}
             <button className={primaryButton} disabled={busy || !accounts.length}>Preflight and publish now</button>
           </div>
         </form>

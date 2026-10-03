@@ -123,3 +123,60 @@ describe('SnsStudioController.listAccounts organization scope', () => {
     expect(worker.mock.calls.some(([path]) => /\/accounts\/login|\/publish\/reel/.test(path))).toBe(false);
   });
 });
+
+describe('SnsStudioController.preflightStory read-only behavior', () => {
+  const body = {
+    accountId: 'account-1',
+    mediaPath: '/uploads/story.mp4',
+    mediaType: 'video',
+    linkUrl: 'https://example.com/',
+    sticker: { x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0 },
+  };
+
+  const createController = (healthStatus = 'GREEN') => {
+    const prisma = {
+      snsInstagramAccount: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'account-1', username: 'lovenight_8r', status: 'ACTIVE' }),
+        update: jest.fn(),
+      },
+      snsPublishRecord: { create: jest.fn(), update: jest.fn() },
+    };
+    const mediaWorker = jest.fn().mockResolvedValue({
+      kind: 'video', sizeBytes: 123381, durationSeconds: 3.675,
+      video: { width: 1080, height: 1920, codec: 'h264' }, hasAudio: true,
+    });
+    const worker = jest.fn().mockResolvedValue({ status: healthStatus, session: 'VALID' });
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    (controller as any).mediaWorker = mediaWorker;
+    (controller as any).worker = worker;
+    return { controller, prisma, mediaWorker, worker };
+  };
+
+  it('probes the media and session without creating a publish record or calling Worker publish', async () => {
+    const { controller, prisma, mediaWorker, worker } = createController();
+
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+
+    expect(result.ready).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.account).toEqual({ id: 'account-1', username: 'lovenight_8r', status: 'GREEN' });
+    expect(mediaWorker).toHaveBeenCalledWith('/probe', 'POST', { path: body.mediaPath });
+    expect(worker).toHaveBeenCalledWith('/accounts/account-1/health');
+    expect(worker.mock.calls.map(([path]) => path)).not.toContain('/publish/story');
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(prisma.snsPublishRecord.update).not.toHaveBeenCalled();
+    expect(prisma.snsInstagramAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('returns a hard error for unhealthy session and still creates no publish record', async () => {
+    const { controller, prisma, worker } = createController('YELLOW');
+
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+
+    expect(result.ready).toBe(false);
+    expect(result.errors).toContain('INSTAGRAM_SESSION_NOT_HEALTHY');
+    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/accounts/account-1/health']);
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(prisma.snsInstagramAccount.update).not.toHaveBeenCalled();
+  });
+});
