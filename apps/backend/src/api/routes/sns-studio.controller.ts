@@ -42,6 +42,10 @@ class InstagramLoginDto {
   @IsOptional() @IsString() @MaxLength(32) verificationCode?: string;
 }
 
+class InstagramLoginCodeDto {
+  @IsString() @MinLength(1) @MaxLength(32) verificationCode!: string;
+}
+
 class StoryPoolDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string;
@@ -562,6 +566,15 @@ export class SnsStudioController {
     return this.contentPlan(organizationId, savedId);
   }
 
+  private async updateInstagramLoginStatus(accountId: string, error: unknown) {
+    const detail = error instanceof HttpException ? error.getResponse() : { code: 'IG_REQUEST_FAILED' };
+    const code = typeof detail === 'object' && detail ? ((detail as any).errorCode || (detail as any).code) : undefined;
+    await this.prisma.snsInstagramAccount.update({
+      where: { id: accountId },
+      data: { status: ['IG_LOGIN_REQUIRED', 'IG_2FA_REQUIRED', 'IG_CHALLENGE_REQUIRED'].includes(code) ? 'NEEDS_USER_ACTION' : 'ERROR' },
+    });
+  }
+
   private async retentionDays(organizationId: string) {
     const setting = await this.prisma.snsAppSetting.findUnique({ where: { organizationId_key: { organizationId, key: 'sns:retention-days' } } });
     return typeof setting?.value === 'number' ? setting.value : 7;
@@ -836,11 +849,37 @@ export class SnsStudioController {
     } catch (error) {
       const status = error instanceof HttpException ? error.getStatus() : 502;
       const detail = error instanceof HttpException ? error.getResponse() : { code: 'IG_REQUEST_FAILED' };
-      const code = typeof detail === 'object' ? (detail as any)?.code : undefined;
-      await this.prisma.snsInstagramAccount.update({
-        where: { id: account.id },
-        data: { status: code === 'IG_2FA_REQUIRED' || code === 'IG_CHALLENGE_REQUIRED' ? 'NEEDS_USER_ACTION' : 'ERROR' },
-      });
+      await this.updateInstagramLoginStatus(account.id, error);
+      throw new HttpException(detail, status);
+    }
+  }
+
+  @Post('/accounts/:id/login/continue')
+  async continueAccountLogin(@GetOrgFromRequest() org: Organization, @Param('id') id: string, @Body() body: InstagramLoginCodeDto) {
+    await this.account(org, id);
+    try {
+      const result = await this.worker(`/accounts/${encodeURIComponent(id)}/login/continue`, 'POST', body);
+      await this.prisma.snsInstagramAccount.update({ where: { id }, data: { status: 'ACTIVE', lastValidatedAt: new Date() } });
+      return result;
+    } catch (error) {
+      const status = error instanceof HttpException ? error.getStatus() : 502;
+      const detail = error instanceof HttpException ? error.getResponse() : { code: 'IG_REQUEST_FAILED' };
+      await this.updateInstagramLoginStatus(id, error);
+      throw new HttpException(detail, status);
+    }
+  }
+
+  @Post('/accounts/:id/login/recheck')
+  async recheckAccountLogin(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    await this.account(org, id);
+    try {
+      const result = await this.worker(`/accounts/${encodeURIComponent(id)}/login/recheck`, 'POST', {});
+      await this.prisma.snsInstagramAccount.update({ where: { id }, data: { status: 'ACTIVE', lastValidatedAt: new Date() } });
+      return result;
+    } catch (error) {
+      const status = error instanceof HttpException ? error.getStatus() : 502;
+      const detail = error instanceof HttpException ? error.getResponse() : { code: 'IG_REQUEST_FAILED' };
+      await this.updateInstagramLoginStatus(id, error);
       throw new HttpException(detail, status);
     }
   }
@@ -848,9 +887,16 @@ export class SnsStudioController {
   @Post('/accounts/:id/validate')
   async validateAccount(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
     await this.account(org, id);
-    const result = await this.worker(`/accounts/${encodeURIComponent(id)}/validate`, 'POST', {});
-    await this.prisma.snsInstagramAccount.update({ where: { id }, data: { status: 'ACTIVE', lastValidatedAt: new Date() } });
-    return result;
+    try {
+      const result = await this.worker(`/accounts/${encodeURIComponent(id)}/validate`, 'POST', {});
+      await this.prisma.snsInstagramAccount.update({ where: { id }, data: { status: 'ACTIVE', lastValidatedAt: new Date() } });
+      return result;
+    } catch (error) {
+      const status = error instanceof HttpException ? error.getStatus() : 502;
+      const detail = error instanceof HttpException ? error.getResponse() : { code: 'IG_REQUEST_FAILED' };
+      await this.updateInstagramLoginStatus(id, error);
+      throw new HttpException(detail, status);
+    }
   }
 
   @Delete('/accounts/:id')
