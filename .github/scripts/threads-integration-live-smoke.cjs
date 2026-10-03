@@ -625,7 +625,9 @@ async function runBrowserSmoke(database, testFixture) {
   const commonColumnNames = commonColumns.map((item) => item.column_name);
   assert(commonColumnNames.includes('settingsOverride') && commonColumnNames.includes('providerSettingsSnapshot'), 'Common Publishing settingsOverride/providerSettingsSnapshot columns are not independently present.');
   await page.getByRole('button', { name: 'この配信計画で投稿を作成', exact: true }).click();
-  await page.getByText(/Ghost Post/).last().waitFor({ state: 'visible', timeout: 30000 });
+  const commonComposer = page.locator('#social-content [contenteditable="true"]');
+  await commonComposer.waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText('threads-ci-e2e-common-content', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   summary.commonPublishingInvariant = true;
 
   const egressRecords = EGRESS_LOG && fs.existsSync(EGRESS_LOG)
