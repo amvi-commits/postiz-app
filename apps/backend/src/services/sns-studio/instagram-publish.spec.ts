@@ -87,6 +87,69 @@ describe('SnsStudioController.publishReel failure handling', () => {
   });
 });
 
+describe('SnsStudioController.publishStory failure handling', () => {
+  it('creates one FAILED Story record and calls the Instagram Worker once', async () => {
+    const publishRecord = { id: 'story-record-1' };
+    const prisma = {
+      snsInstagramAccount: { update: jest.fn().mockResolvedValue({}) },
+      snsMediaAsset: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      snsPublishRecord: {
+        create: jest.fn().mockResolvedValue(publishRecord),
+        update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
+      },
+    };
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const body = {
+      accountId: 'account-1',
+      mediaPath: '/uploads/story.mp4',
+      mediaType: 'video',
+      linkUrl: 'https://example.com/',
+      sticker: { x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0 },
+    };
+    const worker = jest.fn().mockRejectedValue(
+      new HttpException({ code: 'IG_STORY_UPLOAD_FAILED', message: 'Instagram Story upload did not complete.' }, 502),
+    );
+    (controller as any).account = jest.fn().mockResolvedValue({ id: 'account-1', username: 'lovenight_8r' });
+    (controller as any).preflightStory = jest.fn().mockResolvedValue({ ready: true, warnings: [] });
+    (controller as any).worker = worker;
+
+    let thrown: unknown;
+    try {
+      await controller.publishStory({ id: 'org-1' } as any, body as any);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(HttpException);
+    expect((thrown as HttpException).getStatus()).toBe(502);
+    expect((thrown as HttpException).getResponse()).toEqual({
+      code: 'IG_STORY_UPLOAD_FAILED',
+      message: 'Instagram Story upload did not complete.',
+    });
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(worker).toHaveBeenCalledWith('/publish/story', 'POST', body);
+    expect(prisma.snsPublishRecord.create).toHaveBeenCalledTimes(1);
+    expect(prisma.snsPublishRecord.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accountId: 'account-1',
+        mediaPath: body.mediaPath,
+        publishType: 'STORY',
+        status: 'PUBLISHING',
+        variantSettings: {
+          sticker: body.sticker,
+          mediaType: 'video',
+          linkUrl: body.linkUrl,
+        },
+      }),
+    });
+    expect(prisma.snsPublishRecord.update).toHaveBeenCalledTimes(1);
+    expect(prisma.snsPublishRecord.update).toHaveBeenCalledWith({
+      where: { id: 'story-record-1' },
+      data: expect.objectContaining({ status: 'FAILED', errorCode: 'IG_STORY_UPLOAD_FAILED' }),
+    });
+  });
+});
+
 describe('SnsStudioController.listAccounts organization scope', () => {
   const accounts: Array<{
     id: string;

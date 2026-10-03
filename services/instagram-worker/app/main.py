@@ -229,6 +229,7 @@ def _log_publish_exception(
     stage: str,
     error_code: str,
     credential_record: dict[str, Any],
+    failure_category: str = "unknown",
 ) -> None:
     exception_type = type(exc)
     exception_class = exception_type.__name__
@@ -237,10 +238,11 @@ def _log_publish_exception(
     safe_module = exception_module if _SAFE_DIAGNOSTIC_VALUE.fullmatch(exception_module) else "unknown"
     safe_account_id = account_id if _SAFE_ACCOUNT_ID.fullmatch(account_id) else "invalid"
     logger.error(
-        "PUBLISH_FAILURE accountId=%s stage=%s errorCode=%s exceptionClass=%s exceptionModule=%s "
+        "PUBLISH_FAILURE accountId=%s stage=%s failureCategory=%s errorCode=%s exceptionClass=%s exceptionModule=%s "
         "statusCode=%s errorType=%s remoteCode=%s message=%s",
         safe_account_id,
         stage,
+        failure_category if _SAFE_DIAGNOSTIC_VALUE.fullmatch(failure_category) else "unknown",
         error_code,
         safe_class,
         safe_module,
@@ -293,6 +295,52 @@ def _error_code(exc: Exception) -> tuple[str, str, int]:
     if "runtimeerror" in name and any(token in message for token in ("thumbnail", "moviepy", "ffmpeg", "video")):
         return "IG_MEDIA_PROCESSING_FAILED", "The Reel video could not be prepared for upload.", 422
     return "IG_REQUEST_FAILED", "Instagram could not complete the request.", 502
+
+
+def _story_error_code(exc: Exception, stage: str) -> tuple[str, str, int]:
+    """Map Story adapter failures without losing the shared auth/network classifications."""
+    name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    if stage == "story_link_build" or (
+        any(token in name for token in ("storylink", "urlvalidation", "invalidurl"))
+        or ("url" in message and any(token in message for token in ("invalid", "unsupported", "not allowed")))
+    ):
+        return "IG_STORY_LINK_INVALID", "Instagram rejected the Story link payload.", 422
+
+    code, safe_message, status = _error_code(exc)
+    if code == "IG_MEDIA_REJECTED":
+        return code, "Instagram rejected the Story media or request.", status
+    if code in {
+        "IG_BAD_PASSWORD",
+        "IG_2FA_REQUIRED",
+        "IG_CHALLENGE_REQUIRED",
+        "IG_FEEDBACK_REQUIRED",
+        "IG_LOGIN_REQUIRED",
+        "IG_RATE_LIMITED",
+        "IG_NETWORK_ERROR",
+    }:
+        return code, safe_message, status
+    if stage == "thumbnail_generation":
+        return "IG_MEDIA_PROCESSING_FAILED", "The Story video could not be prepared for upload.", 422
+    if stage in {"video_upload_to_story", "photo_upload_to_story"} or code == "IG_UPLOAD_FAILED":
+        return "IG_STORY_UPLOAD_FAILED", "Instagram Story upload did not complete.", 502
+    return code, safe_message, status
+
+
+def _story_failure_category(error_code: str, stage: str) -> str:
+    if stage == "thumbnail_generation" or error_code == "IG_MEDIA_PROCESSING_FAILED":
+        return "media"
+    if error_code == "IG_STORY_LINK_INVALID":
+        return "story_link"
+    if error_code == "IG_NETWORK_ERROR":
+        return "network"
+    if error_code == "IG_RATE_LIMITED":
+        return "rate_limit"
+    if error_code in {"IG_LOGIN_REQUIRED", "IG_2FA_REQUIRED", "IG_CHALLENGE_REQUIRED", "IG_FEEDBACK_REQUIRED"}:
+        return "account_action"
+    if error_code in {"IG_MEDIA_REJECTED", "IG_STORY_UPLOAD_FAILED"}:
+        return "upload"
+    return "library"
 
 
 def _masked_username(username: str) -> str:
@@ -642,24 +690,39 @@ def create_app(
     def publish_story(body: PublishStoryRequest):
         from instagrapi.types import StoryLink
 
-        client, _ = client_for(body.accountId)
+        client, credential_record = client_for(body.accountId)
         media = media_path(body.mediaPath)
         sticker = body.sticker
-        link = StoryLink(
-            webUri=str(body.linkUrl),
-            x=sticker.x,
-            y=sticker.y,
-            width=sticker.width,
-            height=sticker.height,
-            rotation=sticker.rotation,
-        )
+        stage = "story_link_build"
         try:
+            link = StoryLink(
+                webUri=str(body.linkUrl),
+                x=sticker.x,
+                y=sticker.y,
+                width=sticker.width,
+                height=sticker.height,
+                rotation=sticker.rotation,
+            )
             if body.mediaType == "image":
+                stage = "photo_upload_to_story"
                 published = client.photo_upload_to_story(media, links=[link])
             else:
-                published = client.video_upload_to_story(media, links=[link])
+                stage = "thumbnail_generation"
+                with tempfile.TemporaryDirectory(prefix="sns-instagram-story-") as thumbnail_directory:
+                    thumbnail = Path(thumbnail_directory) / "story-thumbnail.jpg"
+                    app.state.thumbnail_generator(media, thumbnail)
+                    stage = "video_upload_to_story"
+                    published = client.video_upload_to_story(media, thumbnail=thumbnail, links=[link])
         except Exception as exc:
-            code, message, status = _error_code(exc)
+            code, message, status = _story_error_code(exc, stage)
+            _log_publish_exception(
+                exc,
+                account_id=body.accountId,
+                stage=stage,
+                error_code=code,
+                credential_record=credential_record,
+                failure_category=_story_failure_category(code, stage),
+            )
             raise HTTPException(status_code=status, detail={"code": code, "message": message}) from None
         shortcode = getattr(published, "code", None)
         return PublishResponse(
