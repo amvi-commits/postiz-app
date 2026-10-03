@@ -88,7 +88,7 @@ export type ThreadsTextAttachment = string | ThreadsTextAttachmentObject;
 
 export interface ThreadsGifAttachment {
   gif_id: string;
-  provider?: 'GIPHY' | string;
+  provider?: 'GIPHY';
 }
 
 export interface ThreadsSettingsData {
@@ -350,6 +350,16 @@ export interface ThreadsValidationResult {
 }
 
 export class ThreadsValidationRules {
+  static gifProviderError(provider: unknown): string | undefined {
+    if (provider === undefined || provider === 'GIPHY') {
+      return undefined;
+    }
+    if (provider === 'TENOR') {
+      return 'Tenor GIF is no longer supported. Please select the GIF again using GIPHY.';
+    }
+    return 'Threads GIF provider must be GIPHY. Please select the GIF again using GIPHY.';
+  }
+
   static validate(context: ThreadsValidationContext): ThreadsValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -442,6 +452,13 @@ export class ThreadsValidationRules {
     // 6. Alt Text validation
     if (settings.altText && settings.altText.length > 1000) {
       errors.push('代替テキスト（Alt Text）は1,000文字以内で入力してください。');
+    }
+
+    if (settings.gifAttachment?.gif_id) {
+      const gifError = this.gifProviderError(settings.gifAttachment.provider);
+      if (gifError) {
+        errors.push(gifError);
+      }
     }
 
     // Auto-sanitize disabled features

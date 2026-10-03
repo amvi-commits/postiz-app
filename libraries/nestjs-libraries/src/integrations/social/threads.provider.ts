@@ -396,6 +396,18 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     return data.id;
   }
 
+  private assertGifProvider(settings?: ThreadsSettingsData): void {
+    if (settings?.gifAttachment?.gif_id) {
+      const message = ThreadsValidationRules.gifProviderError(
+        settings.gifAttachment.provider
+      );
+      if (message) {
+        // A Tenor ID cannot be made into a GIPHY ID by relabeling its provider.
+        throw new BadBody(this.identifier, '{}', '{}', message);
+      }
+    }
+  }
+
   private async createTextContent(
     userId: string,
     accessToken: string,
@@ -404,6 +416,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     quoteId?: string,
     settings?: ThreadsSettingsData
   ): Promise<string> {
+    this.assertGifProvider(settings);
     const form = new FormData();
     form.append('media_type', 'TEXT');
     form.append('text', message);
@@ -473,7 +486,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
         'gif_attachment',
         JSON.stringify({
           gif_id: settings.gifAttachment.gif_id,
-          provider: settings.gifAttachment.provider || 'GIPHY',
+          provider: 'GIPHY',
         })
       );
     }
@@ -539,6 +552,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     quoteId?: string
   ): Promise<string> {
     const settings = postDetails.settings || {};
+    this.assertGifProvider(settings);
     if (!postDetails.media || postDetails.media.length === 0) {
       return await this.createTextContent(
         userId,
@@ -601,6 +615,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
 
     const [firstPost] = postDetails;
     const settings: ThreadsSettingsData = firstPost.settings || {};
+    this.assertGifProvider(settings);
 
     // Carousels
     if ((firstPost.media?.length || 0) > 1) {
@@ -678,6 +693,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
+    this.assertGifProvider(pendingData.settings);
     if (pendingData.step === 'children') {
       for (const childId of pendingData.childIds || []) {
         const status = await this.checkContainerStatus(childId, accessToken);
@@ -719,6 +735,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
+    this.assertGifProvider(pendingData.settings);
     if (pendingData.step === 'children') {
       const settings = pendingData.settings;
       const params: Record<string, string> = {

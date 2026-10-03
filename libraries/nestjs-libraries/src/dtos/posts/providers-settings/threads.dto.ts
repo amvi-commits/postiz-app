@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JSONSchema } from 'class-validator-jsonschema';
+import { ThreadsValidationRules } from '@gitroom/nestjs-libraries/integrations/social/threads.capabilities';
 import type {
   ThreadsReplyControl,
   ThreadsTextAttachment,
@@ -57,11 +58,13 @@ export class ThreadsGifDto {
   gif_id: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(['GIPHY'], {
+    message: ({ value }) => ThreadsValidationRules.gifProviderError(value)!,
+  })
   @JSONSchema({
     description: 'GIF provider (defaults to GIPHY)',
   })
-  provider?: string;
+  provider?: 'GIPHY';
 }
 
 export class ThreadsDto {

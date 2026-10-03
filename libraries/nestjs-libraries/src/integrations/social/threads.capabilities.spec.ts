@@ -6,6 +6,7 @@ import {
   THREADS_SCOPES,
   THREADS_THREAD_INTERVALS,
 } from './threads.capabilities';
+import type { ThreadsSettingsData } from './threads.capabilities';
 
 describe('Threads Capabilities & Validation Rules', () => {
   describe('Constants & Capabilities', () => {
@@ -38,6 +39,23 @@ describe('Threads Capabilities & Validation Rules', () => {
   });
 
   describe('ThreadsValidationRules', () => {
+    it.each([undefined, 'GIPHY'] as const)('accepts GIF provider %s', (provider) => {
+      expect(ThreadsValidationRules.validate({
+        settings: { gifAttachment: { gif_id: 'giphy-test-id', provider } },
+      }).isValid).toBe(true);
+    });
+
+    it.each(['TENOR', 'UNKNOWN'])('rejects GIF provider %s without rewriting it', (provider) => {
+      const settings = {
+        gifAttachment: Object.freeze({ gif_id: 'legacy-gif-id', provider }),
+      } as unknown as ThreadsSettingsData;
+      const result = ThreadsValidationRules.validate({ settings });
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain(ThreadsValidationRules.gifProviderError(provider));
+      expect(result.sanitizedSettings.gifAttachment?.provider).toBe(provider);
+      expect(settings.gifAttachment?.provider).toBe(provider);
+    });
+
     it('validates a standard text post successfully', () => {
       const result = ThreadsValidationRules.validate({
         message: 'Hello Threads world!',
