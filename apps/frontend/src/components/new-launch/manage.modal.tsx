@@ -412,6 +412,9 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
 
       const data = {
         type,
+        ...(props.commonContentPlanId
+          ? { snsStudioContentPlanId: props.commonContentPlanId }
+          : {}),
         ...(republish ? { republish } : {}),
         ...(repeater ? { inter: repeater } : {}),
         tags,
@@ -437,14 +440,126 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
       }
 
       if (!dummy) {
-        addEditSets
-          ? addEditSets(data)
-          : await fetch('/posts', {
-              method: 'POST',
-              body: JSON.stringify(data),
-            });
+        if (addEditSets) {
+          addEditSets(data);
+        } else {
+          const payloads: any[] =
+            type === 'schedule' && props.scheduledAtByIntegration
+              ? Array.from(
+                  posts.reduce((grouped: Map<string, any[]>, post: any) => {
+                    const requestedDate =
+                      props.scheduledAtByIntegration?.[post.integration.id];
+                    const effectiveDate = requestedDate
+                      ? dayjs(requestedDate)
+                          .utc()
+                          .format('YYYY-MM-DDTHH:mm:ss')
+                      : data.date;
+                    const list = grouped.get(effectiveDate) || [];
+                    list.push(post);
+                    grouped.set(effectiveDate, list);
+                    return grouped;
+                  }, new Map<string, any[]>())
+                ).map((entry) => {
+                  const [effectiveDate, groupedPosts] = entry as [string, any[]];
+                  return {
+                    ...data,
+                    date: effectiveDate,
+                    posts: groupedPosts,
+                  };
+                })
+              : [data];
 
-        if (!addEditSets) {
+          if (
+            (type === 'now' || type === 'schedule') &&
+            props.onBeforePost
+          ) {
+            try {
+              await props.onBeforePost(type);
+            } catch (policyError) {
+              toaster.show(
+                policyError instanceof Error
+                  ? policyError.message
+                  : '投稿Policyの確認に失敗しました。',
+                'warning'
+              );
+              setLoading(false);
+              return;
+            }
+          }
+
+          const postedItems: Array<{
+            postId: string;
+            integration: string;
+            date: string;
+            content?: string;
+            settings?: Record<string, any>;
+          }> = [];
+
+          for (const payload of payloads) {
+            const response = await fetch('/posts', {
+              method: 'POST',
+              body: JSON.stringify(payload),
+            });
+            const created = await response.json().catch(() => []);
+            if (!response.ok) {
+              if (postedItems.length && props.onPosted) {
+                try {
+                  await props.onPosted({ type, items: postedItems });
+                } catch {
+                  toaster.show(
+                    t(
+                      'sns_studio_tracking_update_failed',
+                      'Earlier destinations were created, but SNS Studio tracking could not be updated. Review the calendar before retrying.'
+                    ),
+                    'warning'
+                  );
+                }
+              }
+              toaster.show(
+                (created as any)?.message ||
+                  (created as any)?.error ||
+                  t(
+                    'sns_studio_partial_schedule_failed',
+                    'A scheduled post could not be created. Earlier successful destinations were recorded; review the calendar before creating the remaining destinations.'
+                  ),
+                'warning'
+              );
+              setLoading(false);
+              return;
+            }
+            if (Array.isArray(created)) {
+              postedItems.push(
+                ...created.map((item: any) => {
+                  const source = payload.posts.find(
+                    (post: any) =>
+                      post.integration.id === item.integration
+                  );
+                  return {
+                    postId: item.postId,
+                    integration: item.integration,
+                    date: payload.date,
+                    content: source?.value?.[0]?.content,
+                    settings: source?.settings,
+                  };
+                })
+              );
+            }
+          }
+
+          if (props.onPosted) {
+            try {
+              await props.onPosted({ type, items: postedItems });
+            } catch {
+              toaster.show(
+                t(
+                  'sns_studio_tracking_update_failed',
+                  'The posts were created, but SNS Studio tracking could not be updated.'
+                ),
+                'warning'
+              );
+            }
+          }
+
           mutate();
           toaster.show(
             !existingData.integration

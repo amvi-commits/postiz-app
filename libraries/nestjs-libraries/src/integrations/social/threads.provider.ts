@@ -18,24 +18,42 @@ import { Plug } from '@gitroom/helpers/decorators/plug.decorator';
 import { Integration } from '@prisma/client';
 import { stripHtmlValidation } from '@gitroom/helpers/utils/strip.html.validation';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import { ThreadsDto } from '@gitroom/nestjs-libraries/dtos/posts/providers-settings/threads.dto';
+import {
+  ThreadsSettingsData,
+  ThreadsValidationRules,
+  mapThreadsApiError,
+  THREADS_SCOPES,
+  THREADS_BASE_GRAPH_URL,
+} from '@gitroom/nestjs-libraries/integrations/social/threads.capabilities';
 
 export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   identifier = 'threads';
   name = 'Threads';
   isBetweenSteps = false;
-  scopes = [
-    'threads_basic',
-    'threads_content_publish',
-    'threads_manage_replies',
-    'threads_manage_insights',
-    // 'threads_profile_discovery',
-  ];
+  scopes = [...THREADS_SCOPES];
   override maxConcurrentJob = 2; // Threads has moderate rate limits
   refreshCron = true;
+  dto = ThreadsDto;
 
   editor = 'normal' as const;
   maxLength() {
     return 500;
+  }
+
+  override async checkValidity(
+    [firstPost, ...comments]: Array<{ path: string }[]>,
+    settings: any
+  ): Promise<string | true> {
+    const mediaCount = (firstPost?.length || 0) + comments.flat().length;
+    const validation = ThreadsValidationRules.validate({
+      mediaCount,
+      settings,
+    });
+    if (!validation.isValid) {
+      return validation.errors[0];
+    }
+    return true;
   }
 
   override handleErrors(body: string):
@@ -45,43 +63,17 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       }
     | undefined {
     console.log(body);
-    if (body.includes('Error validating access token')) {
-      return { type: 'refresh-token', value: 'Threads access token expired' };
+    const mapped = mapThreadsApiError(body);
+    if (mapped.category === 'token_expired' || mapped.category === 'auth') {
+      return { type: 'refresh-token', value: mapped.userMessage };
     }
-
-    if (body.includes('2207051')) {
+    if (mapped.isRetryable) {
+      return { type: 'retry', value: mapped.userMessage };
+    }
+    if (body.includes('Error') || body.includes('error') || body.includes('code')) {
       return {
         type: 'bad-body',
-        value:
-          'Error from Meta: We restrict certain activity to protect our community',
-      };
-    }
-
-    if (body.includes('4279013')) {
-      return {
-        type: 'bad-body',
-        value:
-          'User restricted',
-      };
-    }
-    if (body.includes('The media could not be fetched from this URI')) {
-      return {
-        type: 'bad-body',
-        value:
-          "One of the media URLs is invalid or inaccessible, make sure it's being uploaded to Postiz first",
-      };
-    }
-    if (body.includes('4279009')) {
-      return {
-        type: 'retry',
-        value:
-          'Threads could not find the media container yet, please try again in a few seconds',
-      };
-    }
-    if (body.includes('text must be at most 500 characters')) {
-      return {
-        type: 'bad-body',
-        value: 'Post text exceeds 500 characters limit',
+        value: `${mapped.userMessage} (${mapped.suggestedAction})`,
       };
     }
 
@@ -123,6 +115,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
               : `${process?.env.FRONTEND_URL}`
           }/integrations/social/threads`
         )}` +
+        `&response_type=code` +
         `&state=${state}` +
         `&scope=${encodeURIComponent(this.scopes.join(','))}`,
       codeVerifier: makeSecureId(10),
@@ -252,44 +245,86 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   private async createSingleMediaContent(
     userId: string,
     accessToken: string,
-    media: { path: string },
+    media: { path: string; alt?: string },
     message: string,
     isCarouselItem = false,
-    replyToId?: string
+    replyToId?: string,
+    settings?: ThreadsSettingsData
   ): Promise<string> {
     const mediaType = hasExtension(media.path, 'mp4')
       ? 'video_url'
       : 'image_url';
-    const mediaParams = new URLSearchParams({
+    const mediaParams: Record<string, string> = {
       ...(mediaType === 'video_url' ? { video_url: media.path } : {}),
       ...(mediaType === 'image_url' ? { image_url: media.path } : {}),
       ...(isCarouselItem ? { is_carousel_item: 'true' } : {}),
       ...(replyToId ? { reply_to_id: replyToId } : {}),
       media_type: mediaType === 'video_url' ? 'VIDEO' : 'IMAGE',
-      text: message,
+      text: isCarouselItem ? '' : message,
       access_token: accessToken,
-    });
+    };
 
-    const { id: mediaId } = await (
-      await this.fetch(
-        `https://graph.threads.net/v1.0/${userId}/threads?${mediaParams.toString()}`,
-        {
-          method: 'POST',
-        }
-      )
-    ).json();
+    const effectiveAltText = media.alt || settings?.altText;
+    if (effectiveAltText) {
+      mediaParams.alt_text = effectiveAltText;
+    }
 
-    return mediaId;
+    if (settings?.isSpoilerMedia) {
+      mediaParams.is_spoiler_media = 'true';
+    }
+
+    if (!isCarouselItem) {
+      if (settings?.topicTag) {
+        mediaParams.topic_tag = settings.topicTag.replace(/^#/, '');
+      }
+      if (settings?.locationId) {
+        mediaParams.location_id = settings.locationId;
+      }
+      if (settings?.replyControl) {
+        mediaParams.reply_control = settings.replyControl;
+      }
+      if (settings?.enableReplyApprovals) {
+        mediaParams.enable_reply_approvals = 'true';
+      }
+      if (settings?.quotePostId) {
+        mediaParams.quote_post_id = settings.quotePostId;
+      }
+      if (settings?.textSpoilerRanges?.length) {
+        mediaParams.text_entities = JSON.stringify(
+          settings.textSpoilerRanges.map((r) => ({
+            entity_type: 'SPOILER',
+            offset: r.offset,
+            length: r.length,
+          }))
+        );
+      }
+    }
+
+    const searchParams = new URLSearchParams(mediaParams);
+    const response = await this.fetch(
+      `https://graph.threads.net/v1.0/${userId}/threads?${searchParams.toString()}`,
+      { method: 'POST' }
+    );
+    const data = await response.json();
+    if (!data.id) {
+      throw new BadBody(
+        this.identifier,
+        JSON.stringify(data),
+        '{}',
+        data.error?.message || 'Failed to create Threads media container'
+      );
+    }
+    return data.id;
   }
 
   private async createCarouselContent(
     userId: string,
     accessToken: string,
-    media: { path: string }[],
+    media: { path: string; alt?: string }[],
     message: string,
-    replyToId?: string
+    replyToId?: string,
+    settings?: ThreadsSettingsData
   ): Promise<string> {
-    // Create each media item
     const mediaIds = [];
     for (const mediaItem of media) {
       const mediaId = await this.createSingleMediaContent(
@@ -297,35 +332,80 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
         accessToken,
         mediaItem,
         message,
-        true
+        true,
+        undefined,
+        settings
       );
       mediaIds.push(mediaId);
     }
 
-    // Wait for all media to be loaded
     await Promise.all(
       mediaIds.map((id: string) => this.checkLoaded(id, accessToken))
     );
 
-    // Create carousel container
-    const params = new URLSearchParams({
+    const params: Record<string, string> = {
       text: message,
       media_type: 'CAROUSEL',
       children: mediaIds.join(','),
       ...(replyToId ? { reply_to_id: replyToId } : {}),
       access_token: accessToken,
-    });
+    };
 
-    const { id: containerId } = await (
-      await this.fetch(
-        `https://graph.threads.net/v1.0/${userId}/threads?${params.toString()}`,
-        {
-          method: 'POST',
-        }
-      )
-    ).json();
+    if (settings?.topicTag) {
+      params.topic_tag = settings.topicTag.replace(/^#/, '');
+    }
+    if (settings?.locationId) {
+      params.location_id = settings.locationId;
+    }
+    if (settings?.replyControl) {
+      params.reply_control = settings.replyControl;
+    }
+    if (settings?.enableReplyApprovals) {
+      params.enable_reply_approvals = 'true';
+    }
+    if (settings?.quotePostId) {
+      params.quote_post_id = settings.quotePostId;
+    }
+    if (settings?.isSpoilerMedia) {
+      params.is_spoiler_media = 'true';
+    }
+    if (settings?.textSpoilerRanges?.length) {
+      params.text_entities = JSON.stringify(
+        settings.textSpoilerRanges.map((r) => ({
+          entity_type: 'SPOILER',
+          offset: r.offset,
+          length: r.length,
+        }))
+      );
+    }
 
-    return containerId;
+    const searchParams = new URLSearchParams(params);
+    const response = await this.fetch(
+      `https://graph.threads.net/v1.0/${userId}/threads?${searchParams.toString()}`,
+      { method: 'POST' }
+    );
+    const data = await response.json();
+    if (!data.id) {
+      throw new BadBody(
+        this.identifier,
+        JSON.stringify(data),
+        '{}',
+        data.error?.message || 'Failed to create Threads carousel container'
+      );
+    }
+    return data.id;
+  }
+
+  private assertGifProvider(settings?: ThreadsSettingsData): void {
+    if (settings?.gifAttachment?.gif_id) {
+      const message = ThreadsValidationRules.gifProviderError(
+        settings.gifAttachment.provider
+      );
+      if (message) {
+        // A Tenor ID cannot be made into a GIPHY ID by relabeling its provider.
+        throw new BadBody(this.identifier, '{}', '{}', message);
+      }
+    }
   }
 
   private async createTextContent(
@@ -333,8 +413,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     accessToken: string,
     message: string,
     replyToId?: string,
-    quoteId?: string
+    quoteId?: string,
+    settings?: ThreadsSettingsData
   ): Promise<string> {
+    this.assertGifProvider(settings);
     const form = new FormData();
     form.append('media_type', 'TEXT');
     form.append('text', message);
@@ -344,18 +426,97 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       form.append('reply_to_id', replyToId);
     }
 
-    if (quoteId) {
-      form.append('quote_post_id', quoteId);
+    const effectiveQuoteId = quoteId || settings?.quotePostId;
+    if (effectiveQuoteId) {
+      form.append('quote_post_id', effectiveQuoteId);
     }
 
-    const { id: contentId, ...all } = await (
-      await this.fetch(`https://graph.threads.net/v1.0/${userId}/threads`, {
-        method: 'POST',
-        body: form,
-      })
-    ).json();
+    if (settings?.isGhostPost) {
+      form.append('is_ghost_post', 'true');
+    }
 
-    return contentId;
+    if (settings?.poll?.options?.length) {
+      const pollAttachment: Record<string, string> = {};
+      const alphabet = ['option_a', 'option_b', 'option_c', 'option_d'];
+      settings.poll.options.slice(0, 4).forEach((opt, idx) => {
+        pollAttachment[alphabet[idx]] = opt;
+      });
+      form.append('poll_attachment', JSON.stringify(pollAttachment));
+    }
+
+    if (settings?.topicTag) {
+      form.append('topic_tag', settings.topicTag.replace(/^#/, ''));
+    }
+
+    if (settings?.locationId) {
+      form.append('location_id', settings.locationId);
+    }
+
+    if (settings?.textSpoilerRanges?.length) {
+      form.append(
+        'text_entities',
+        JSON.stringify(
+          settings.textSpoilerRanges.map((r) => ({
+            entity_type: 'SPOILER',
+            offset: r.offset,
+            length: r.length,
+          }))
+        )
+      );
+    }
+
+    if (settings?.textAttachment) {
+      if (typeof settings.textAttachment === 'string') {
+        try {
+          JSON.parse(settings.textAttachment);
+          form.append('text_attachment', settings.textAttachment);
+        } catch {
+          form.append(
+            'text_attachment',
+            JSON.stringify({ plaintext: settings.textAttachment })
+          );
+        }
+      } else {
+        form.append('text_attachment', JSON.stringify(settings.textAttachment));
+      }
+    }
+
+    if (settings?.gifAttachment?.gif_id) {
+      form.append(
+        'gif_attachment',
+        JSON.stringify({
+          gif_id: settings.gifAttachment.gif_id,
+          provider: 'GIPHY',
+        })
+      );
+    }
+
+    if (settings?.linkAttachment) {
+      form.append('link_attachment', settings.linkAttachment);
+    }
+
+    if (settings?.replyControl) {
+      form.append('reply_control', settings.replyControl);
+    }
+
+    if (settings?.enableReplyApprovals) {
+      form.append('enable_reply_approvals', 'true');
+    }
+
+    const response = await this.fetch(`https://graph.threads.net/v1.0/${userId}/threads`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await response.json();
+    if (!data.id) {
+      throw new BadBody(
+        this.identifier,
+        JSON.stringify(data),
+        '{}',
+        data.error?.message || 'Failed to create Threads text container'
+      );
+    }
+    return data.id;
   }
 
   private async publishThread(
@@ -386,38 +547,39 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   private async createThreadContent(
     userId: string,
     accessToken: string,
-    postDetails: PostDetails,
+    postDetails: PostDetails<ThreadsSettingsData>,
     replyToId?: string,
     quoteId?: string
   ): Promise<string> {
-    // Handle content creation based on media type
+    const settings = postDetails.settings || {};
+    this.assertGifProvider(settings);
     if (!postDetails.media || postDetails.media.length === 0) {
-      // Text-only content
       return await this.createTextContent(
         userId,
         accessToken,
         postDetails.message,
         replyToId,
-        quoteId
+        quoteId,
+        settings
       );
     } else if (postDetails.media.length === 1) {
-      // Single media content
       return await this.createSingleMediaContent(
         userId,
         accessToken,
         postDetails.media[0],
         postDetails.message,
         false,
-        replyToId
+        replyToId,
+        settings
       );
     } else {
-      // Carousel content
       return await this.createCarouselContent(
         userId,
         accessToken,
         postDetails.media,
         postDetails.message,
-        replyToId
+        replyToId,
+        settings
       );
     }
   }
@@ -444,10 +606,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   async postPending(
     userId: string,
     accessToken: string,
-    postDetails: PostDetails<{
-      active_thread_finisher: boolean;
-      thread_finisher: string;
-    }>[],
+    postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
     if (!postDetails.length) {
@@ -455,9 +614,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     }
 
     const [firstPost] = postDetails;
+    const settings: ThreadsSettingsData = firstPost.settings || {};
+    this.assertGifProvider(settings);
 
-    // Carousels: only create the child containers here, the carousel container
-    // itself is created by finalizePost once the children are processed.
+    // Carousels
     if ((firstPost.media?.length || 0) > 1) {
       const childIds = [];
       for (const mediaItem of firstPost.media!) {
@@ -467,7 +627,9 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
             accessToken,
             mediaItem,
             firstPost.message,
-            true
+            true,
+            undefined,
+            settings
           )
         );
       }
@@ -482,22 +644,31 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
             step: 'children',
             childIds,
             message: firstPost.message,
+            settings,
           },
         },
       ];
     }
 
-    // Text / single media: one container, nothing is visible until
-    // threads_publish runs in finalizePost.
+    // Text / single media
     const containerId =
       !firstPost.media || firstPost.media.length === 0
-        ? await this.createTextContent(userId, accessToken, firstPost.message)
+        ? await this.createTextContent(
+            userId,
+            accessToken,
+            firstPost.message,
+            undefined,
+            undefined,
+            settings
+          )
         : await this.createSingleMediaContent(
             userId,
             accessToken,
             firstPost.media[0],
             firstPost.message,
-            false
+            false,
+            undefined,
+            settings
           );
 
     return [
@@ -506,7 +677,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
         postId: '',
         releaseURL: '',
         status: 'pending',
-        pendingData: { step: 'container', containerId },
+        pendingData: { step: 'container', containerId, settings },
       },
     ];
   }
@@ -518,10 +689,11 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       childIds?: string[];
       containerId?: string;
       message?: string;
+      settings?: ThreadsSettingsData;
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
-    // waiting for the carousel children to be processed
+    this.assertGifProvider(pendingData.settings);
     if (pendingData.step === 'children') {
       for (const childId of pendingData.childIds || []) {
         const status = await this.checkContainerStatus(childId, accessToken);
@@ -529,8 +701,6 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
           return { status: 'pending', pendingData };
         }
       }
-
-      // all children processed, finalizePost creates the carousel container
       return { status: 'ready', pendingData };
     }
 
@@ -543,8 +713,6 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       return { status: 'pending', pendingData };
     }
 
-    // a previous finalizePost published but died before reporting: the post is
-    // live, never publish again
     if (status === 'PUBLISHED') {
       return {
         status: 'completed',
@@ -563,23 +731,52 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       childIds?: string[];
       containerId?: string;
       message?: string;
+      settings?: ThreadsSettingsData;
     },
     integration: Integration
   ): Promise<PendingCheckResponse> {
-    // the carousel children are processed: create the carousel container and
-    // hand back to the workflow to wait for it (an orphan container from a
-    // crashed run is invisible, so re-running this is safe)
+    this.assertGifProvider(pendingData.settings);
     if (pendingData.step === 'children') {
-      const params = new URLSearchParams({
+      const settings = pendingData.settings;
+      const params: Record<string, string> = {
         text: pendingData.message || '',
         media_type: 'CAROUSEL',
         children: (pendingData.childIds || []).join(','),
         access_token: accessToken,
-      });
+      };
 
+      if (settings?.topicTag) {
+        params.topic_tag = settings.topicTag.replace(/^#/, '');
+      }
+      if (settings?.locationId) {
+        params.location_id = settings.locationId;
+      }
+      if (settings?.replyControl) {
+        params.reply_control = settings.replyControl;
+      }
+      if (settings?.enableReplyApprovals && !settings?.isGhostPost) {
+        params.enable_reply_approvals = 'true';
+      }
+      if (settings?.quotePostId) {
+        params.quote_post_id = settings.quotePostId;
+      }
+      if (settings?.isSpoilerMedia) {
+        params.is_spoiler_media = 'true';
+      }
+      if (settings?.textSpoilerRanges?.length) {
+        params.text_entities = JSON.stringify(
+          settings.textSpoilerRanges.map((r) => ({
+            entity_type: 'SPOILER',
+            offset: r.offset,
+            length: r.length,
+          }))
+        );
+      }
+
+      const searchParams = new URLSearchParams(params);
       const { id: containerId } = await (
         await this.fetch(
-          `https://graph.threads.net/v1.0/${integration.internalId}/threads?${params.toString()}`,
+          `https://graph.threads.net/v1.0/${integration.internalId}/threads?${searchParams.toString()}`,
           {
             method: 'POST',
           }
@@ -588,7 +785,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
 
       return {
         status: 'pending',
-        pendingData: { step: 'container', containerId },
+        pendingData: { step: 'container', containerId, settings },
       };
     }
 
@@ -608,15 +805,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
-  // Old blocking behavior, kept for workflow versions before v1.0.6 that don't
-  // know how to resolve a `pending` response.
   async post(
     userId: string,
     accessToken: string,
-    postDetails: PostDetails<{
-      active_thread_finisher: boolean;
-      thread_finisher: string;
-    }>[],
+    postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
     if (!postDetails.length) {
@@ -634,11 +826,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     let pendingData = response.pendingData;
     const started = Date.now();
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
-      // Cap below the 10-minute activity timeout of the old workflows using
-      // this method: failing here (non-retryable) is safe, timing the
-      // activity out is not - a retried activity would publish again.
       if (Date.now() - started > 8 * 60 * 1000) {
         throw new BadBody(
           this.identifier,
@@ -686,10 +874,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     postId: string,
     lastCommentId: string | undefined,
     accessToken: string,
-    postDetails: PostDetails<{
-      active_thread_finisher: boolean;
-      thread_finisher: string;
-    }>[],
+    postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
     if (!postDetails.length) {
@@ -883,28 +1068,137 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     }
   }
 
-  // override async mention(
-  //   token: string,
-  //   data: { query: string },
-  //   id: string,
-  //   integration: Integration
-  // ) {
-  //   const p = await (
-  //     await fetch(
-  //       `https://graph.threads.net/v1.0/profile_lookup?username=${data.query}&access_token=${integration.token}`
-  //     )
-  //   ).json();
-  //
-  //   return [
-  //     {
-  //       id: String(p.id),
-  //       label: p.name,
-  //       image: p.profile_picture_url,
-  //     },
-  //   ];
-  // }
-  //
-  // mentionFormat(idOrHandle: string, name: string) {
-  //   return `@${idOrHandle}`;
-  // }
+  async fetchPendingReplies(accessToken: string, mediaId: string) {
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/${mediaId}/pending_replies?fields=id,text,timestamp,username,from,hide_status&access_token=${accessToken}`
+    );
+    return res.json();
+  }
+
+  async managePendingReply(
+    accessToken: string,
+    replyId: string,
+    approve: boolean
+  ) {
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/${replyId}/manage_pending_reply?approve=${approve}&access_token=${accessToken}`,
+      { method: 'POST' }
+    );
+    return res.json();
+  }
+
+  async manageReply(
+    accessToken: string,
+    replyId: string,
+    hide: boolean
+  ) {
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/${replyId}/manage_reply?hide=${hide}&access_token=${accessToken}`,
+      { method: 'POST' }
+    );
+    return res.json();
+  }
+
+  async fetchConversation(accessToken: string, mediaId: string) {
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/${mediaId}/conversation?fields=id,text,timestamp,username,permalink,hide_status&access_token=${accessToken}`
+    );
+    return res.json();
+  }
+
+  async fetchUserThreads(accessToken: string, limit = 25) {
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/me/threads?fields=id,media_product_type,media_type,text,permalink,timestamp,shortcode,is_quote_post&limit=${limit}&access_token=${accessToken}`
+    );
+    return res.json();
+  }
+
+  async keywordSearch(
+    accessToken: string,
+    query: string,
+    searchType: 'TOP' | 'RECENT' = 'RECENT',
+    searchMode: 'KEYWORD' | 'TAG' = 'KEYWORD'
+  ) {
+    const params = new URLSearchParams({
+      q: query,
+      search_type: searchType,
+      search_mode: searchMode,
+      access_token: accessToken,
+    });
+    const res = await this.fetch(
+      `https://graph.threads.net/v1.0/keyword_search?${params.toString()}`
+    );
+    return res.json();
+  }
+
+  async replyToThread(
+    userId: string,
+    accessToken: string,
+    replyToId: string,
+    text: string
+  ): Promise<{ threadId: string; permalink: string }> {
+    const form = new FormData();
+    form.append('media_type', 'TEXT');
+    form.append('text', text);
+    form.append('reply_to_id', replyToId);
+    form.append('access_token', accessToken);
+
+    const { id: replyCreationId } = await (
+      await this.fetch(`https://graph.threads.net/v1.0/${userId}/threads`, {
+        method: 'POST',
+        body: form,
+      })
+    ).json();
+
+    const { id: publishedId } = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${userId}/threads_publish?creation_id=${replyCreationId}&access_token=${accessToken}`,
+        { method: 'POST' }
+      )
+    ).json();
+
+    const { permalink } = await (
+      await this.fetch(
+        `https://graph.threads.net/v1.0/${publishedId}?fields=id,permalink&access_token=${accessToken}`
+      )
+    ).json();
+
+    return { threadId: publishedId, permalink: permalink || '' };
+  }
+
+  async searchLocations(
+    accessToken: string,
+    query: string
+  ): Promise<{ data: Array<{ id: string; name: string }> }> {
+    const params = new URLSearchParams({
+      q: query,
+      access_token: accessToken,
+    });
+    const res = await this.fetch(
+      `${THREADS_BASE_GRAPH_URL}/location_search?${params.toString()}`
+    );
+    return res.json();
+  }
+
+  async fetchPublishingLimit(
+    accessToken: string,
+    userId: string
+  ): Promise<{
+    data: Array<{
+      quota_usage?: number;
+      config?: {
+        quota_total?: number;
+        quota_duration?: number;
+        reply_quota_total?: number;
+        reply_quota_duration?: number;
+      };
+      reply_quota_usage?: number;
+    }>;
+  }> {
+    const res = await this.fetch(
+      `${THREADS_BASE_GRAPH_URL}/${userId}/threads_publishing_limit?fields=quota_usage,config,reply_quota_usage&access_token=${accessToken}`
+    );
+    return res.json();
+  }
 }
+
