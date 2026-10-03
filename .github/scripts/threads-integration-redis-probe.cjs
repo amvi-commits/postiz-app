@@ -44,7 +44,7 @@ socket.on('data', (chunk) => {
   }
 
   const headerEnd = received.indexOf('\r\n');
-  if (headerEnd < 0 || received[0] !== '$') return;
+  if (headerEnd < 0 || received[0] !== 0x24) return;
   const bodyLength = Number(received.subarray(1, headerEnd).toString());
   if (!Number.isInteger(bodyLength) || bodyLength < 0) {
     finish(new Error('Redis returned an invalid INFO response.'));
@@ -60,3 +60,4 @@ socket.on('data', (chunk) => {
   }
   finish(null, match[1]);
 });
+
