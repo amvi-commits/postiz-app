@@ -40,16 +40,37 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 12
+      temporal-postgresql:
+        image: postgres:16
+        env:
+          POSTGRES_USER: temporal
+          POSTGRES_PASSWORD: temporal
+        options: >-
+          --health-cmd "pg_isready -U temporal"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+      temporal-elasticsearch:
+        image: elasticsearch:7.17.27
+        env:
+          cluster.routing.allocation.disk.threshold_enabled: 'true'
+          cluster.routing.allocation.disk.watermark.low: 512mb
+          cluster.routing.allocation.disk.watermark.high: 256mb
+          cluster.routing.allocation.disk.watermark.flood_stage: 128mb
+          discovery.type: single-node
+          ES_JAVA_OPTS: -Xms256m -Xmx256m
+          xpack.security.enabled: 'false'
       temporal:
         image: temporalio/auto-setup:1.28.1
         env:
           DB: postgres12
           DB_PORT: '5432'
-          POSTGRES_USER: postgres
-          POSTGRES_PWD: postgres
-          POSTGRES_SEEDS: postgres
-          DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/docker.yaml
-          ENABLE_ES: 'false'
+          POSTGRES_USER: temporal
+          POSTGRES_PWD: temporal
+          POSTGRES_SEEDS: temporal-postgresql
+          ENABLE_ES: 'true'
+          ES_SEEDS: temporal-elasticsearch
+          ES_VERSION: v7
           DEFAULT_NAMESPACE: default
           DEFAULT_NAMESPACE_RETENTION: 24h
         ports:
