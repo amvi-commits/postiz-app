@@ -718,6 +718,32 @@ async function main() {
   }
 
   if (browser) await browser.close().catch(() => {});
+  browser = undefined;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  try {
+    const unexpectedBrowserExternalAttempts = summary.browserExternalAttempts.filter(({ host, path }) =>
+      !EXPECTED_BLOCKED_STATIC_ASSETS.has(host + '|' + path),
+    );
+    assert(unexpectedBrowserExternalAttempts.length === 0, 'Browser attempted an unexpected external network request after teardown: ' + JSON.stringify(unexpectedBrowserExternalAttempts));
+    assert(summary.researchSearchCalls === 0, 'Threads research must remain unopened at the provider API layer.');
+    assert(summary.unexpected404 === 0, 'Browser Smoke received an unexpected 404 after teardown.');
+    assert(summary.unexpected500 === 0, 'Browser Smoke received an unexpected HTTP 500 after teardown.');
+    assert(summary.unexpected5xx === 0, 'Browser Smoke received an unexpected 5xx after teardown.');
+    assert(summary.backendUnexpected4xx === 0, 'Browser Smoke received an unexpected backend 4xx after teardown: ' + JSON.stringify(networkRecords.filter((item) => item.status >= 400 && item.status < 500)));
+    assert(summary.browserUnexpected4xx === 0, 'Browser Smoke received an unexpected local HTTP 4xx after teardown: ' + JSON.stringify(networkRecords.filter((item) => item.status >= 400 && item.status < 500)));
+    const unexpectedConsoleErrors = summary.consoleErrors.filter((message) =>
+      !message.includes('net::ERR_BLOCKED_BY_CLIENT') &&
+      !message.includes('status of 503 (Service Unavailable)'),
+    );
+    assert(unexpectedConsoleErrors.length === 0, 'Unexpected browser console.error after teardown: ' + JSON.stringify(unexpectedConsoleErrors));
+    assert(summary.pageErrors.length === 0, 'Browser pageerror was emitted before teardown.');
+  } catch (error) {
+    caught = caught || error;
+    summary.result = 'FAIL';
+    summary.failure = safeText(error && error.stack ? error.stack : error);
+  }
+
   if (prisma) await prisma.$disconnect().catch(() => {});
   await writeSummary();
 
