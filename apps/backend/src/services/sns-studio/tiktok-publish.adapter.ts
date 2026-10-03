@@ -1,6 +1,6 @@
 import {
   BadRequestException,
-  ForbiddenException,
+  ConflictException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -16,6 +16,11 @@ import { CreationMethod, Integration } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import {
+  TikTokPublishGuard,
+  TikTokPublishGuardResult,
+} from './tiktok-publish.guard';
+import { CommonPublishingService } from './common-publishing.service';
 
 export interface TikTokPublishMediaItem {
   id?: string;
@@ -29,7 +34,6 @@ export interface TikTokPublishInput {
   media: TikTokPublishMediaItem[];
   settings?: Partial<TikTokDto>;
   mode?: 'now' | 'draft';
-  approved?: boolean;
   mediaDurationSeconds?: number;
 }
 
@@ -48,6 +52,7 @@ export interface TikTokPreflightResult {
   maxDurationSeconds?: number;
   warnings: TikTokPreflightWarning[];
   errors: Array<{ code: string; message: string }>;
+  guard?: TikTokPublishGuardResult;
 }
 
 export interface TikTokPublishResult {
@@ -78,8 +83,38 @@ export class TikTokPublishAdapter {
     private readonly prisma: PrismaService,
     private readonly postsService: PostsService,
     private readonly integrationManager: IntegrationManager,
-    private readonly refreshIntegrationService: RefreshIntegrationService
+    private readonly refreshIntegrationService: RefreshIntegrationService,
+    private readonly publishGuard: TikTokPublishGuard,
+    private readonly commonPublishing: CommonPublishingService
   ) {}
+
+  private async assertCommonPolicyUsesCommonPublisher(
+    organizationId: string,
+    integrationId: string
+  ) {
+    const account = (await this.commonPublishing.listAccountPolicies(organizationId))
+      .find((item) => item.integrationId === integrationId);
+
+    if (!account) {
+      throw new NotFoundException({
+        code: 'TIKTOK_INTEGRATION_NOT_FOUND',
+      });
+    }
+
+    const policy = account.policy;
+    if (
+      !policy.autoPostEnabled ||
+      policy.approvalRequired ||
+      policy.maxPostsPerDay !== null ||
+      policy.sameContentCooldownDays > 0
+    ) {
+      throw new ConflictException({
+        code: 'COMMON_CONTENT_PLAN_REQUIRED',
+        message:
+          'このアカウントには共通投稿ポリシーが設定されています。承認・投稿上限・再投稿間隔を適用するため、共通投稿画面から配信計画を投稿してください。',
+      });
+    }
+  }
 
   /**
    * Validate Integration ownership, status, and TikTok platform suitability.
@@ -370,6 +405,15 @@ export class TikTokPublishAdapter {
       }
     }
 
+    const guard =
+      input.mode === 'draft'
+        ? undefined
+        : await this.publishGuard.check({
+            organizationId: orgId,
+            integrationId: integration.id,
+            media: input.media,
+          });
+
     return {
       valid: true,
       integrationId: integration.id,
@@ -383,6 +427,7 @@ export class TikTokPublishAdapter {
       maxDurationSeconds,
       warnings,
       errors: [],
+      ...(guard ? { guard } : {}),
     };
   }
 
@@ -393,40 +438,18 @@ export class TikTokPublishAdapter {
     orgId: string,
     input: TikTokPublishInput
   ): Promise<TikTokPublishResult> {
+    const isPublishing = input.mode !== 'draft';
+    if (isPublishing) {
+      await this.assertCommonPolicyUsesCommonPublisher(
+        orgId,
+        input.integrationId
+      );
+    }
+
     // 1. Run Preflight
     const preflightResult = await this.preflight(orgId, input);
 
-    // 2. Check autoPublishEnabled setting in SnsAppSetting (only publishing requires approval, not draft)
-    const isPublishing = input.mode !== 'draft';
-
-    const settingKey = `sns:tiktok:account:${input.integrationId}`;
-    const settingRecord = await this.prisma.snsAppSetting.findUnique({
-      where: {
-        organizationId_key: {
-          organizationId: orgId,
-          key: settingKey,
-        },
-      },
-    });
-
-    const settingValue =
-      settingRecord?.value && typeof settingRecord.value === 'object'
-        ? (settingRecord.value as Record<string, any>)
-        : {};
-    const autoPublishEnabled =
-      typeof settingValue.autoPublishEnabled === 'boolean'
-        ? settingValue.autoPublishEnabled
-        : true;
-
-    if (isPublishing && !autoPublishEnabled && input.approved !== true) {
-      throw new ForbiddenException({
-        code: 'TIKTOK_APPROVAL_REQUIRED',
-        message:
-          'Auto-publish is disabled for this TikTok account. Explicit approval (approved: true) is required to publish.',
-      });
-    }
-
-    // 3. Build Postiz CreatePostDto
+    // 2. Build Postiz CreatePostDto
     const createPostDto = {
       type: input.mode === 'draft' ? 'draft' : 'now',
       shortLink: false,
@@ -452,18 +475,38 @@ export class TikTokPublishAdapter {
       ],
     } as unknown as CreatePostDto;
 
-    // 4. Map settings and set __type via PostsService.mapTypeToPost()
-    const mappedPostDto = await this.postsService.mapTypeToPost(
-      createPostDto,
-      orgId
-    );
+    const createPost = async () => {
+      // The final provider duplicate check and standard Postiz creation share
+      // an account-scoped lock so concurrent requests cannot publish the same media.
+      if (isPublishing) {
+        await this.publishGuard.check({
+          organizationId: orgId,
+          integrationId: input.integrationId,
+          media: input.media,
+        });
+      }
 
-    // 5. Delegate to PostsService.createPost with CreationMethod.API
-    const createdPosts = await this.postsService.createPost(
-      orgId,
-      mappedPostDto,
-      CreationMethod.API
-    );
+      // 4. Map settings and set __type via PostsService.mapTypeToPost()
+      const mappedPostDto = await this.postsService.mapTypeToPost(
+        createPostDto,
+        orgId
+      );
+
+      // 5. Delegate to PostsService.createPost with CreationMethod.API
+      return this.postsService.createPost(
+        orgId,
+        mappedPostDto,
+        CreationMethod.API
+      );
+    };
+
+    const createdPosts = isPublishing
+      ? await this.publishGuard.withIntegrationLock(
+          orgId,
+          input.integrationId,
+          createPost
+        )
+      : await createPost();
 
     const postId = createdPosts?.[0]?.postId;
 

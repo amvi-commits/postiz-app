@@ -24,8 +24,6 @@ type TikTokAccount = {
   picture?: string | null;
   status: 'ACTIVE' | 'DISCONNECTED' | 'NEEDS_USER_ACTION' | string;
   tokenExpired?: boolean;
-  autoPublishEnabled: boolean;
-  dailyPostLimit: number;
   duplicateWindowDays: number;
   lastValidatedAt?: string | null;
   lastPublishedAt?: string | null;
@@ -584,25 +582,7 @@ export const SnsStudio = () => {
                           </div>
                         </div>
                       </div>
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <label className="flex items-center gap-2 text-sm cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={current.autoPublishEnabled}
-                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], autoPublishEnabled: e.target.checked } }))}
-                          />
-                          <span>自動投稿 {current.autoPublishEnabled ? 'ON' : 'OFF'}</span>
-                        </label>
-                        <Field label="1日投稿上限">
-                          <input
-                            className={field}
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={current.dailyPostLimit}
-                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], dailyPostLimit: Number(e.target.value) } }))}
-                          />
-                        </Field>
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-1">
                         <Field label="再投稿禁止期間（日）">
                           <input
                             className={field}
@@ -622,8 +602,6 @@ export const SnsStudio = () => {
                             () => request(`/sns-studio/tiktok/accounts/${account.id}`, {
                               method: 'PUT',
                               body: JSON.stringify({
-                                autoPublishEnabled: current.autoPublishEnabled,
-                                dailyPostLimit: current.dailyPostLimit,
                                 duplicateWindowDays: current.duplicateWindowDays,
                               }),
                             }),

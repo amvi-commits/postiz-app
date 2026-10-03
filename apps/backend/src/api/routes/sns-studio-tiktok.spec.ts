@@ -178,8 +178,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         expect(personal.accountType).toBe('personal');
         expect(personal.username).toBe('@personal_user');
         // Default values applied
-        expect(personal.autoPublishEnabled).toBe(true);
-        expect(personal.dailyPostLimit).toBe(2);
+        expect(personal.autoPublishEnabled).toBeUndefined();
+        expect(personal.dailyPostLimit).toBeUndefined();
         expect(personal.duplicateWindowDays).toBe(30);
         // Expired access token alone does NOT cause DISCONNECTED status!
         expect(personal.tokenExpired).toBe(true);
@@ -191,8 +191,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         expect(business.platform).toBe('tiktok');
         expect(business.providerIdentifier).toBe('tiktok-business');
         expect(business.accountType).toBe('business');
-        expect(business.autoPublishEnabled).toBe(false);
-        expect(business.dailyPostLimit).toBe(5);
+        expect(business.autoPublishEnabled).toBeUndefined();
+        expect(business.dailyPostLimit).toBeUndefined();
         expect(business.duplicateWindowDays).toBe(60);
         expect(business.status).toBe('ACTIVE');
 
@@ -245,10 +245,7 @@ describe('SNS Studio TikTok Phase 1', () => {
           },
         });
 
-        const updateDto = {
-          autoPublishEnabled: false,
-          dailyPostLimit: 4,
-        };
+        const updateDto = { duplicateWindowDays: 60 };
 
         const result = await controller.updateTikTokAccount(testOrg, 'int_tt_1', updateDto);
 
@@ -273,17 +270,17 @@ describe('SNS Studio TikTok Phase 1', () => {
             organizationId: 'org_123',
             key: 'sns:tiktok:account:int_tt_1',
             value: expect.objectContaining({
-              autoPublishEnabled: false,
-              dailyPostLimit: 4,
-              duplicateWindowDays: 45,
+              autoPublishEnabled: true,
+              dailyPostLimit: 2,
+              duplicateWindowDays: 60,
               otherCustomField: 'keep_me',
             }),
           }),
           update: expect.objectContaining({
             value: expect.objectContaining({
-              autoPublishEnabled: false,
-              dailyPostLimit: 4,
-              duplicateWindowDays: 45,
+              autoPublishEnabled: true,
+              dailyPostLimit: 2,
+              duplicateWindowDays: 60,
               otherCustomField: 'keep_me',
             }),
           }),
@@ -295,10 +292,10 @@ describe('SNS Studio TikTok Phase 1', () => {
           platform: 'tiktok',
           providerIdentifier: 'tiktok',
           accountType: 'personal',
-          autoPublishEnabled: false,
-          dailyPostLimit: 4,
-          duplicateWindowDays: 45,
+          duplicateWindowDays: 60,
         });
+        expect(result.autoPublishEnabled).toBeUndefined();
+        expect(result.dailyPostLimit).toBeUndefined();
       });
 
       it('throws 404 NOT_FOUND if integration does not belong to organization or is not TikTok', async () => {
@@ -306,7 +303,7 @@ describe('SNS Studio TikTok Phase 1', () => {
 
         await expect(
           controller.updateTikTokAccount(testOrg, 'non_existent_or_other_org', {
-            dailyPostLimit: 3,
+            duplicateWindowDays: 30,
           })
         ).rejects.toThrow(new HttpException('TikTok integration not found', HttpStatus.NOT_FOUND));
 
@@ -406,9 +403,11 @@ describe('SNS Studio TikTok Phase 1', () => {
       expect(adapterContent).toContain('validationResult.tooLong');
     });
 
-    it('TikTokPublishAdapter allows draft mode without approval requirement', () => {
+    it('routes accounts with Common Policy restrictions through the Common publisher', () => {
       expect(adapterContent).toContain("const isPublishing = input.mode !== 'draft';");
-      expect(adapterContent).toContain('if (isPublishing && !autoPublishEnabled && input.approved !== true)');
+      expect(adapterContent).toContain('this.commonPublishing.listAccountPolicies');
+      expect(adapterContent).not.toContain('autoPublishEnabled');
+      expect(adapterContent).not.toContain('dailyPostLimit');
     });
 
     it('Controller exposes /tiktok/preflight and /tiktok/publish endpoints', () => {

@@ -1,10 +1,11 @@
 import {
   BadRequestException,
-  ForbiddenException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { TikTokPublishAdapter } from './tiktok-publish.adapter';
 import { CreationMethod } from '@prisma/client';
+import { TikTokPublishGuard } from './tiktok-publish.guard';
 
 jest.mock('isomorphic-dompurify', () => ({
   __esModule: true,
@@ -31,6 +32,7 @@ describe('TikTokPublishAdapter', () => {
   let mockPostsService: any;
   let mockIntegrationManager: any;
   let mockRefreshIntegrationService: any;
+  let mockCommonPublishingService: any;
 
   const orgId = 'org_123';
   const testPersonalIntegration = {
@@ -68,6 +70,9 @@ describe('TikTokPublishAdapter', () => {
       snsAppSetting: {
         findUnique: jest.fn().mockResolvedValue(null),
       },
+      post: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
 
     mockPostsService = {
@@ -100,11 +105,36 @@ describe('TikTokPublishAdapter', () => {
       refresh: jest.fn().mockResolvedValue({ accessToken: 'refreshed_token' }),
     };
 
+    mockCommonPublishingService = {
+      listAccountPolicies: jest.fn().mockResolvedValue([
+        {
+          integrationId: 'int_personal',
+          policy: {
+            autoPostEnabled: true,
+            approvalRequired: false,
+            maxPostsPerDay: null,
+            sameContentCooldownDays: 0,
+          },
+        },
+        {
+          integrationId: 'int_business',
+          policy: {
+            autoPostEnabled: true,
+            approvalRequired: false,
+            maxPostsPerDay: null,
+            sameContentCooldownDays: 0,
+          },
+        },
+      ]),
+    };
+
     adapter = new TikTokPublishAdapter(
       mockPrisma,
       mockPostsService,
       mockIntegrationManager,
-      mockRefreshIntegrationService
+      mockRefreshIntegrationService,
+      new TikTokPublishGuard(mockPrisma),
+      mockCommonPublishingService
     );
   });
 
@@ -348,77 +378,135 @@ describe('TikTokPublishAdapter', () => {
   // =========================================================================
   // 4. Approval and autoPublish Logic
   // =========================================================================
+  // 4. Common Account Policy integration
+  // =========================================================================
 
-  describe('Approval and autoPublish Logic', () => {
-    it('now + autoPublish=false + unapproved throws ForbiddenException (TIKTOK_APPROVAL_REQUIRED)', async () => {
-      mockPrisma.snsAppSetting.findUnique.mockResolvedValueOnce({
-        organizationId: orgId,
-        key: 'sns:tiktok:account:int_personal',
-        value: { autoPublishEnabled: false },
-      });
+  describe('Common Account Policy integration', () => {
+    it.each([
+      ['automatic posting disabled', { autoPostEnabled: false }],
+      ['approval required', { approvalRequired: true }],
+      ['daily limit configured', { maxPostsPerDay: 3 }],
+      ['same-content cooldown configured', { sameContentCooldownDays: 7 }],
+    ])('requires the Common content plan when %s is configured', async (_label, override) => {
+      mockCommonPublishingService.listAccountPolicies.mockResolvedValue([
+        {
+          integrationId: 'int_personal',
+          policy: {
+            autoPostEnabled: true,
+            approvalRequired: false,
+            maxPostsPerDay: null,
+            sameContentCooldownDays: 0,
+            ...override,
+          },
+        },
+      ]);
 
       await expect(
         adapter.publish(orgId, {
           integrationId: 'int_personal',
-          content: 'Now post',
+          content: 'Policy protected post',
           media: [{ path: '/uploads/video.mp4' }],
           mode: 'now',
-          approved: false,
         })
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toMatchObject({
+        response: { code: 'COMMON_CONTENT_PLAN_REQUIRED' },
+      });
+      expect(mockPostsService.createPost).not.toHaveBeenCalled();
+      expect(mockIntegrationManager.getSocialIntegration).not.toHaveBeenCalled();
     });
 
-    it('now + autoPublish=false + approved=true succeeds', async () => {
-      mockPrisma.snsAppSetting.findUnique.mockResolvedValueOnce({
+    it('ignores legacy TikTok auto-publish and daily-limit settings', async () => {
+      mockPrisma.snsAppSetting.findUnique.mockResolvedValue({
         organizationId: orgId,
         key: 'sns:tiktok:account:int_personal',
-        value: { autoPublishEnabled: false },
+        value: {
+          autoPublishEnabled: false,
+          dailyPostLimit: 1,
+          duplicateWindowDays: 0,
+        },
       });
 
-      const res = await adapter.publish(orgId, {
+      const result = await adapter.publish(orgId, {
         integrationId: 'int_personal',
-        content: 'Approved post',
+        content: 'Common defaults allow this post',
         media: [{ path: '/uploads/video.mp4' }],
         mode: 'now',
-        approved: true,
       });
-      expect(res.postId).toBe('post_real_123');
+
+      expect(result.postId).toBe('post_real_123');
+      expect(mockCommonPublishingService.listAccountPolicies).toHaveBeenCalledWith(orgId);
     });
 
-    it('autoPublish=true succeeds without approved flag', async () => {
-      mockPrisma.snsAppSetting.findUnique.mockResolvedValueOnce({
-        organizationId: orgId,
-        key: 'sns:tiktok:account:int_personal',
-        value: { autoPublishEnabled: true },
-      });
+    it('allows a draft even when Common Policy requires approval', async () => {
+      mockCommonPublishingService.listAccountPolicies.mockResolvedValue([
+        {
+          integrationId: 'int_personal',
+          policy: {
+            autoPostEnabled: false,
+            approvalRequired: true,
+            maxPostsPerDay: 1,
+            sameContentCooldownDays: 30,
+          },
+        },
+      ]);
 
-      const res = await adapter.publish(orgId, {
-        integrationId: 'int_personal',
-        content: 'Auto publish post',
-        media: [{ path: '/uploads/video.mp4' }],
-      });
-      expect(res.postId).toBe('post_real_123');
-    });
-
-    it('draft + autoPublish=false + unapproved succeeds without approval', async () => {
-      mockPrisma.snsAppSetting.findUnique.mockResolvedValueOnce({
-        organizationId: orgId,
-        key: 'sns:tiktok:account:int_personal',
-        value: { autoPublishEnabled: false },
-      });
-
-      const res = await adapter.publish(orgId, {
+      const result = await adapter.publish(orgId, {
         integrationId: 'int_personal',
         content: 'Draft post',
         media: [{ path: '/uploads/video.mp4' }],
         mode: 'draft',
-        approved: false,
       });
-      expect(res.postId).toBe('post_real_123');
-      expect(res.mode).toBe('draft');
+
+      expect(result.postId).toBe('post_real_123');
+      expect(result.mode).toBe('draft');
+      expect(mockCommonPublishingService.listAccountPolicies).not.toHaveBeenCalled();
+    });
+
+    it('draft mode bypasses TikTok duplicate checks', async () => {
+      await adapter.publish(orgId, {
+        integrationId: 'int_personal',
+        content: 'Draft only',
+        media: [{ id: 'media_draft', path: '/uploads/draft.mp4' }],
+        mode: 'draft',
+      });
+
+      expect(mockPrisma.post.findMany).not.toHaveBeenCalled();
+    });
+
+    it('does not let legacy approval settings bypass duplicate media protection', async () => {
+      mockPrisma.snsAppSetting.findUnique.mockResolvedValue({
+        value: {
+          autoPublishEnabled: false,
+          dailyPostLimit: 2,
+          duplicateWindowDays: 30,
+        },
+      });
+      mockPrisma.post.findMany.mockResolvedValue([
+        {
+          id: 'previous-media',
+          organizationId: orgId,
+          integrationId: 'int_personal',
+          state: 'QUEUE',
+          publishDate: new Date(Date.now() - 60 * 60 * 1000),
+          deletedAt: null,
+          settings: '{"content_posting_method":"UPLOAD"}',
+          image: JSON.stringify([{ id: 'same-id', path: '/uploads/video.mp4' }]),
+        },
+      ]);
+
+      await expect(
+        adapter.publish(orgId, {
+          integrationId: 'int_personal',
+          content: 'Repeated media',
+          media: [{ id: 'same-id', path: '/uploads/processed.mp4' }],
+          mode: 'now',
+        })
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_DUPLICATE_MEDIA' },
+      });
+      expect(mockPostsService.createPost).not.toHaveBeenCalled();
     });
   });
-
   // =========================================================================
   // 5. createPost Bridge & postId Extraction
   // =========================================================================
@@ -627,6 +715,102 @@ describe('TikTokPublishAdapter', () => {
           }),
         ])
       );
+    });
+
+    it('serializes same-account publish requests and rechecks TikTok duplicate media', async () => {
+      const posts: any[] = [];
+      mockPrisma.snsAppSetting.findUnique.mockResolvedValue({
+        value: {
+          duplicateWindowDays: 30,
+        },
+      });
+      mockPrisma.post.findMany.mockImplementation(async () => [...posts]);
+      mockPostsService.createPost.mockImplementation(async () => {
+        posts.push({
+          id: 'created-post',
+          organizationId: orgId,
+          integrationId: 'int_personal',
+          state: 'QUEUE',
+          publishDate: new Date(),
+          deletedAt: null,
+          settings: '{"content_posting_method":"DIRECT_POST"}',
+          image: JSON.stringify([
+            { id: 'media-concurrent', path: '/uploads/concurrent.mp4' },
+          ]),
+        });
+        return [{ postId: 'created-post' }];
+      });
+
+      const input = {
+        integrationId: 'int_personal',
+        content: 'Concurrent post',
+        media: [{ id: 'media-concurrent', path: '/uploads/concurrent.mp4' }],
+        mode: 'now' as const,
+      };
+      const results = await Promise.allSettled([
+        adapter.publish(orgId, input),
+        adapter.publish(orgId, input),
+      ]);
+
+      expect(mockPostsService.createPost).toHaveBeenCalledTimes(1);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+      expect(rejected.reason.getResponse()).toMatchObject({
+        code: 'TIKTOK_DUPLICATE_MEDIA',
+      });
+    });
+
+    it('allows different TikTok integrations to enter Postiz creation concurrently', async () => {
+      const integrationIds = ['int_personal', 'int_business'];
+      mockPrisma.integration.findFirst.mockImplementation(async ({ where }) => ({
+        ...testPersonalIntegration,
+        id: where.id,
+        providerIdentifier: 'tiktok',
+      }));
+      mockPrisma.snsAppSetting.findUnique.mockResolvedValue({
+        value: {
+          duplicateWindowDays: 0,
+        },
+      });
+      mockPrisma.post.findMany.mockImplementation(async ({ where }) => [
+        {
+          id: `existing-${where.integrationId}`,
+          organizationId: orgId,
+          integrationId: where.integrationId,
+          state: 'PUBLISHED',
+          publishDate: new Date(Date.now() - 60 * 60 * 1000),
+          deletedAt: null,
+          settings: '{"content_posting_method":"DIRECT_POST"}',
+          image: '[]',
+        },
+      ]);
+
+      let mappingCalls = 0;
+      let releaseMappingBarrier!: () => void;
+      const bothMappingsStarted = new Promise<void>((resolve) => {
+        releaseMappingBarrier = resolve;
+      });
+      mockPostsService.mapTypeToPost.mockImplementation(async (dto) => {
+        mappingCalls += 1;
+        if (mappingCalls === integrationIds.length) releaseMappingBarrier();
+        await bothMappingsStarted;
+        return dto;
+      });
+
+      const results = await Promise.all(
+        integrationIds.map((integrationId) =>
+          adapter.publish(orgId, {
+            integrationId,
+            content: 'Parallel account post',
+            media: [],
+            mode: 'now',
+          })
+        )
+      );
+
+      expect(results).toHaveLength(2);
+      expect(mappingCalls).toBe(2);
+      expect(mockPostsService.createPost).toHaveBeenCalledTimes(2);
     });
   });
 });

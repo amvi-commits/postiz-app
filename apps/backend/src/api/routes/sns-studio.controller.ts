@@ -45,8 +45,6 @@ class InstagramLoginDto {
 }
 
 class UpdateTikTokAccountDto {
-  @IsOptional() @IsBoolean() autoPublishEnabled?: boolean;
-  @IsOptional() @IsNumber() @Min(1) @Max(100) dailyPostLimit?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(365) duplicateWindowDays?: number;
 }
 
@@ -65,6 +63,7 @@ class TikTokPreflightDto {
   @IsOptional() @IsString() content?: string;
   @IsOptional() @ValidateNested({ each: true }) @Type(() => TikTokPublishMediaItemDto) media?: TikTokPublishMediaItemDto[];
   @IsOptional() settings?: Record<string, any>;
+  @IsOptional() @IsIn(['now', 'draft']) mode?: 'now' | 'draft';
   @IsOptional() @IsNumber() mediaDurationSeconds?: number;
 }
 
@@ -74,7 +73,6 @@ class TikTokPublishDto {
   @IsOptional() @ValidateNested({ each: true }) @Type(() => TikTokPublishMediaItemDto) media?: TikTokPublishMediaItemDto[];
   @IsOptional() settings?: Record<string, any>;
   @IsOptional() @IsIn(['now', 'draft']) mode?: 'now' | 'draft';
-  @IsOptional() @IsBoolean() approved?: boolean;
   @IsOptional() @IsNumber() mediaDurationSeconds?: number;
 }
 
@@ -869,16 +867,15 @@ export class SnsStudioController {
   // ---------------------------------------------------------------------------
 
   private readonly DEFAULT_TIKTOK_SETTINGS = {
-    autoPublishEnabled: true,
-    dailyPostLimit: 2,
     duplicateWindowDays: 30,
   };
 
   /**
    * List all TikTok / TikTok Business accounts for this organization.
    * Uses Postiz Integration as Single Source of Truth.
-   * Account-specific settings (autoPublish, dailyPostLimit, duplicateWindowDays)
-   * are read from SnsAppSetting ('sns:tiktok:account:<integrationId>').
+   * TikTok-specific media duplicate protection is read from SnsAppSetting
+   * ('sns:tiktok:account:<integrationId>'). Common posting policy is managed
+   * by the shared Account Policy.
    */
   @Get('/tiktok/accounts')
   async listTikTokAccounts(@GetOrgFromRequest() org: Organization) {
@@ -940,8 +937,6 @@ export class SnsStudioController {
         picture: integration.picture,
         status,
         tokenExpired: isExpired,
-        autoPublishEnabled: typeof setting.autoPublishEnabled === 'boolean' ? setting.autoPublishEnabled : this.DEFAULT_TIKTOK_SETTINGS.autoPublishEnabled,
-        dailyPostLimit: typeof setting.dailyPostLimit === 'number' ? setting.dailyPostLimit : this.DEFAULT_TIKTOK_SETTINGS.dailyPostLimit,
         duplicateWindowDays: typeof setting.duplicateWindowDays === 'number' ? setting.duplicateWindowDays : this.DEFAULT_TIKTOK_SETTINGS.duplicateWindowDays,
         lastValidatedAt: status === 'DISCONNECTED' ? null : (setting.lastValidatedAt || integration.updatedAt || integration.createdAt),
         lastPublishedAt: setting.lastPublishedAt || null,
@@ -977,13 +972,9 @@ export class SnsStudioController {
     const currentVal = (existing?.value && typeof existing.value === 'object' ? existing.value : {}) as Record<string, any>;
     const newVal = {
       ...currentVal,
-      ...(body.autoPublishEnabled !== undefined ? { autoPublishEnabled: body.autoPublishEnabled } : {}),
-      ...(body.dailyPostLimit !== undefined ? { dailyPostLimit: body.dailyPostLimit } : {}),
       ...(body.duplicateWindowDays !== undefined ? { duplicateWindowDays: body.duplicateWindowDays } : {}),
     };
 
-    if (newVal.autoPublishEnabled === undefined) newVal.autoPublishEnabled = this.DEFAULT_TIKTOK_SETTINGS.autoPublishEnabled;
-    if (newVal.dailyPostLimit === undefined) newVal.dailyPostLimit = this.DEFAULT_TIKTOK_SETTINGS.dailyPostLimit;
     if (newVal.duplicateWindowDays === undefined) newVal.duplicateWindowDays = this.DEFAULT_TIKTOK_SETTINGS.duplicateWindowDays;
 
     await this.prisma.snsAppSetting.upsert({
@@ -1006,7 +997,7 @@ export class SnsStudioController {
       platform: 'tiktok',
       providerIdentifier: integration.providerIdentifier,
       accountType: integration.providerIdentifier === 'tiktok-business' ? 'business' : 'personal',
-      ...newVal,
+      duplicateWindowDays: newVal.duplicateWindowDays,
     };
   }
 

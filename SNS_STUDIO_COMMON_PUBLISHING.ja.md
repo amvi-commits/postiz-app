@@ -248,7 +248,7 @@ account override
 - `maxPostsPerDay`は直近24時間のPostiz `QUEUE` / `PUBLISHED`投稿数で評価する。
 - cooldownは同じ`SnsMediaAsset` IDを共有するコンテンツと配信先の既存Post履歴で評価する。元素材IDがない場合は選択variantのmediaAssetIdを使う。類似度推定はしない。
 - 承認時刻は`SnsDelivery.approvedAt`へ保存する。Phase 5 migrationはこのnullable列を追加するだけで、既存status、ユーザー指定settings、snapshotは変更しない。
-- TikTok側の既存初期値（maxPostsPerDay 2 / sameContentCooldownDays 30）と既存`SnsAppSetting`キーはprovider-specific guardに属する。Common branchへTikTok実装はmergeせず、将来adapterへ接続する際にCommon Policyを正本にし、provider guardにはAPI固有の最終検査だけを残す。
+- TikTokの自動投稿・承認・投稿上限・共通再投稿禁止期間はorganization-scoped Common Account Policyを正本とする。旧TikTok専用autoPublishEnabled / dailyPostLimit値は判定に使わず、TikTok provider guardにはAPI固有検証と完全一致メディアの再投稿検査だけを残す。TikTok専用duplicateWindowDaysはprovider固有のメディア重複制約として扱い、CommonのsameContentCooldownDaysとは別の判定とする。
 
 判定と投稿接続:
 
