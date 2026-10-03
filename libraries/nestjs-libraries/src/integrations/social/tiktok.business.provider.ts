@@ -21,6 +21,7 @@ import { hasExtension } from '@gitroom/helpers/utils/has.extension';
 import { Integration } from '@prisma/client';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
 import { Tool } from '@gitroom/nestjs-libraries/integrations/tool.decorator';
+import { tiktokPublicationDetail } from '@gitroom/nestjs-libraries/integrations/social/tiktok-publication-status.adapter';
 
 @Rules(
   [
@@ -38,6 +39,7 @@ export class TiktokBusinessProvider
 {
   identifier = 'tiktok-business';
   name = 'TikTok';
+  commonPostPublicationDetail = tiktokPublicationDetail;
   isBetweenSteps = false;
   convertToJPEG = true;
   scopes = [

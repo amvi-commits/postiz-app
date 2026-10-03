@@ -16,6 +16,10 @@ import {
   CommonPublishMode,
   CommonPublishingService,
 } from '@gitroom/backend/services/sns-studio/common-publishing.service';
+import {
+  CommonDeliveryFilters,
+  CommonDeliveryViewService,
+} from '@gitroom/backend/services/sns-studio/common-delivery-view.service';
 
 function publishMode(value: unknown): CommonPublishMode {
   return value === 'draft' || value === 'now' || value === 'schedule'
@@ -23,10 +27,65 @@ function publishMode(value: unknown): CommonPublishMode {
     : 'schedule';
 }
 
+function deliveryFilters(query: Record<string, unknown>): CommonDeliveryFilters {
+  const value = (key: string) =>
+    typeof query?.[key] === 'string' && query[key].trim()
+      ? query[key].trim()
+      : undefined;
+  return {
+    providerIdentifier: value('platform'),
+    integrationId: value('accountId'),
+    contentId: value('contentId'),
+    state: value('state'),
+    query: value('q'),
+  };
+}
+
 @ApiTags('SNS Studio Common Publishing')
 @Controller('/sns-studio/common')
 export class SnsStudioCommonPublishingController {
-  constructor(private readonly commonPublishing: CommonPublishingService) {}
+  constructor(
+    private readonly commonPublishing: CommonPublishingService,
+    private readonly deliveryViews: CommonDeliveryViewService
+  ) {}
+
+  @Get('/queue')
+  listQueue(
+    @GetOrgFromRequest() org: Organization,
+    @Query() query: Record<string, unknown>
+  ) {
+    return this.deliveryViews.listQueue(org.id, deliveryFilters(query));
+  }
+
+  @Get('/history')
+  listHistory(
+    @GetOrgFromRequest() org: Organization,
+    @Query() query: Record<string, unknown>
+  ) {
+    return this.deliveryViews.listHistory(org.id, deliveryFilters(query));
+  }
+
+  @Get('/analytics')
+  listAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Query() query: Record<string, unknown>
+  ) {
+    return this.deliveryViews.listAnalytics(org.id, deliveryFilters(query));
+  }
+
+  @Get('/analytics/:deliveryId')
+  deliveryAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Param('deliveryId') deliveryId: string,
+    @Query('date') date: string
+  ) {
+    const timestamp = Number(date);
+    return this.deliveryViews.deliveryAnalytics(
+      org.id,
+      deliveryId,
+      Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now()
+    );
+  }
 
   @Get('/account-policies')
   listAccountPolicies(@GetOrgFromRequest() org: Organization) {

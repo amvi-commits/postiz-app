@@ -263,12 +263,20 @@ account override
 
 ### Phase 6 — 履歴 / Queue / Analytics統合
 
-- Postiz Post stateをSNS Studioで集約表示
-- DRAFT / QUEUE / PUBLISHED / ERRORを共通表示
-- providerごとのエラーを共通retry UIへ統合
-- SNS Studio独自PublishRecordはlegacy Instagram経路だけに限定
-- 新規共通配信はPostiz Post / groupを参照
-- Analyticsは共通ダッシュボードからSNS別詳細へ遷移
+実装内容:
+
+- `SnsDelivery`を共通Queue / History / Analyticsの一覧SSOTとし、`postId`からPostiz `Post`を参照する。Postizの投稿作成・予約・workflowは変更しない。
+- `GET /sns-studio/common/queue`, `/history`, `/analytics`, `/analytics/:deliveryId`を追加。全検索でDeliveryのContentとPostを現在のorganizationに限定し、platform / account / content / state / 本文検索をサポートする。
+- QueueにはDelivery、Content、選択Variant、platform、account、共通状態、実効投稿日時、approval、Policy判定、Postiz link、失敗情報を表示する。
+- HistoryにはPostiz `postId`、Provider `releaseId` / URL、投稿に使った最終本文、Variant、結果、時刻、エラー、`settingsOverride`と`providerSettingsSnapshot`を別項目として表示する。投稿結果を複製する履歴テーブルは作らない。
+- 共通状態は`planned` / `draft` / `queued` / `scheduled` / `published` / `uploaded` / `failed` / `link_missing`へ変換する。投稿済みPostが見つからない場合は正常な公開済みとして扱わない。
+- TikTok / TikTok BusinessのUPLOADはProvider Adapterが受信箱へのアップロード状態として返し、公開済みには数えない。SNS固有の状態判定をCommon schemaへ追加していない。
+- AnalyticsはPostiz `PostsService.checkPostAnalytics`を使い、likes / comments / shares / views / reach / impressions / saves / clicksを共通化する。取得できない指標は`null`、未知の指標はProvider詳細に残す。未投稿、受信箱UPLOAD、Provider ID欠落、削除済みPostは取得不可として扱う。
+- SNS Studio共通メニューにQueue / History / Analyticsを追加し、既存の制作QueueとInstagram Analyticsは区別して維持する。
+- 失敗情報はCommon Historyで確認する。再試行処理はPostiz / Temporalの既存実行責務に残し、Common側から独自投稿jobや再送ボタンを作らない。これにより部分成功したdeliveryの二重投稿を避ける。
+- Phase 6ではschema / migrationの変更なし。
+
+Phase 5/6のAccount Policyと配信一覧は共通基盤で管理し、provider-specific validation、analytics詳細、UPLOAD / public publishの判定だけをadapterへ委譲する。
 
 ## 非目標
 
@@ -287,4 +295,4 @@ account override
 - 接続済み Instagram / TikTok / TikTok Business / YouTube / Threads / X の抽出
 - 既存Postiz共通投稿モーダルの再利用
 
-Phase 1〜4まで実装済み。Phase 5の共通配信ポリシーでは既存`SnsAppSetting`のCommon namespaceと`SnsDelivery.approvedAt`を利用し、SNS固有policyをCommon schemaへコピーしない。
+Phase 1〜6まで実装済み。Phase 5の共通配信ポリシーでは既存`SnsAppSetting`のCommon namespaceと`SnsDelivery.approvedAt`を利用し、SNS固有policyをCommon schemaへコピーしない。Phase 6は既存`SnsDelivery` / Postiz `Post`を利用し、queue用modelやAnalytics用metrics列を追加しない。
