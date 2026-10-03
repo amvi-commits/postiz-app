@@ -1,3 +1,4 @@
+import type { NextFunction, Request, Response } from 'express';
 import { createServer, Server } from 'http';
 import { randomBytes, randomUUID } from 'crypto';
 import { execFileSync } from 'child_process';
@@ -375,7 +376,7 @@ describeDb('Account Protection database and browser E2E', () => {
       app = await NestFactory.create(AccountProtectionAuthenticatedE2eModule, { logger: false });
       app.use(cookieParser());
       const authMiddleware = app.get(AuthMiddleware);
-      app.use((request, response, next) => authMiddleware.use(request, response, next));
+      app.use((request: Request, response: Response, next: NextFunction) => authMiddleware.use(request, response, next));
       await app.listen(3000, '127.0.0.1');
 
       browser = await chromium.launch({ headless: true });
