@@ -225,20 +225,24 @@ jobs:
           cp -R "$migration_path/20260929190000_sns_studio_phase3" "$temp_prisma/migrations/"
           cp -R "$migration_path/20260929193000_account_protection" "$temp_prisma/migrations/"
           cp -R "$migration_path/20260929200000_add_threads_models" "$temp_prisma/migrations/"
+          cp -R "$migration_path/20261003120000_sns_common_delivery_approval" "$temp_prisma/migrations/"
+          cp -R "$migration_path/20261003150000_sns_studio_v1_integration" "$temp_prisma/migrations/"
 
           for migration_dir in \
             "$migration_path/20260929190000_sns_studio_phase3" \
             "$migration_path/20260929193000_account_protection" \
-            "$migration_path/20260929200000_add_threads_models"; do
+            "$migration_path/20260929200000_add_threads_models" \
+            "$migration_path/20261003120000_sns_common_delivery_approval" \
+            "$migration_path/20261003150000_sns_studio_v1_integration"; do
             if grep -Eiq '(^|[^[:alnum:]_])(DROP[[:space:]]+(TABLE|COLUMN|TYPE|SCHEMA|DATABASE|INDEX)|TRUNCATE([[:space:]]|;)|DELETE[[:space:]]+FROM)([[:space:]]|;)' "$migration_dir"/*.sql; then
               echo "Unexpected destructive SQL found in $migration_dir." >&2
               grep -Ein '(^|[^[:alnum:]_])(DROP[[:space:]]+(TABLE|COLUMN|TYPE|SCHEMA|DATABASE|INDEX)|TRUNCATE([[:space:]]|;)|DELETE[[:space:]]+FROM)([[:space:]]|;)' "$migration_dir"/*.sql >&2 || true
               exit 1
             fi
           done
-          echo 'No destructive DROP/TRUNCATE/DELETE statements found in the three production migration folders.'
+          echo 'No destructive DROP/TRUNCATE/DELETE statements found in the five production migration folders.'
 
-          echo 'Applying only the disposable runner migration chain: V1 generated baseline -> Common Publishing -> Account Protection -> Threads.'
+          echo 'Applying only the disposable runner migration chain: V1 generated baseline -> Common Publishing -> Account Protection -> Threads -> Common Delivery Approval -> SNS Studio V1 Integration.'
           pnpm exec prisma migrate deploy --schema "$temp_prisma/schema.prisma"
           pnpm exec prisma migrate status --schema "$temp_prisma/schema.prisma"
 
