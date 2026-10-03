@@ -35,6 +35,7 @@ import { normalizeInstagramMetrics } from '@gitroom/backend/services/sns-studio/
 import { MediaService } from '@gitroom/nestjs-libraries/database/prisma/media/media.service';
 import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
 import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.upload.validation';
+import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -51,6 +52,30 @@ class UpdateTikTokAccountDto {
 
 class InstagramLoginCodeDto {
   @IsString() @MinLength(1) @MaxLength(32) verificationCode!: string;
+}
+
+class TikTokPublishMediaItemDto {
+  @IsOptional() @IsString() id?: string;
+  @IsString() path!: string;
+  @IsOptional() @IsString() thumbnail?: string;
+}
+
+class TikTokPreflightDto {
+  @IsString() integrationId!: string;
+  @IsOptional() @IsString() content?: string;
+  @IsOptional() @ValidateNested({ each: true }) @Type(() => TikTokPublishMediaItemDto) media?: TikTokPublishMediaItemDto[];
+  @IsOptional() settings?: Record<string, any>;
+  @IsOptional() @IsNumber() mediaDurationSeconds?: number;
+}
+
+class TikTokPublishDto {
+  @IsString() integrationId!: string;
+  @IsOptional() @IsString() content?: string;
+  @IsOptional() @ValidateNested({ each: true }) @Type(() => TikTokPublishMediaItemDto) media?: TikTokPublishMediaItemDto[];
+  @IsOptional() settings?: Record<string, any>;
+  @IsOptional() @IsIn(['now', 'draft']) mode?: 'now' | 'draft';
+  @IsOptional() @IsBoolean() approved?: boolean;
+  @IsOptional() @IsNumber() mediaDurationSeconds?: number;
 }
 
 class StoryPoolDto {
@@ -188,6 +213,7 @@ export class SnsStudioController {
     private readonly mediaService: MediaService,
     private readonly accountProtection: AccountProtectionService,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
+    private readonly tiktokPublishAdapter: TikTokPublishAdapter,
   ) {}
 
   private protectedInstagram<T>(org: Organization, accountId: string, action: ProtectedAction, operation: () => Promise<T>) {
@@ -984,7 +1010,27 @@ export class SnsStudioController {
     };
   }
 
+  /**
+   * Preflight checks for a TikTok post before submission.
+   */
+  @Post('/tiktok/preflight')
+  async tiktokPreflight(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: TikTokPreflightDto
+  ) {
+    return this.tiktokPublishAdapter.preflight(org.id, body as any);
+  }
 
+  /**
+   * Publish or save draft for a TikTok post via Postiz PostsService bridge.
+   */
+  @Post('/tiktok/publish')
+  async tiktokPublish(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: TikTokPublishDto
+  ) {
+    return this.tiktokPublishAdapter.publish(org.id, body as any);
+  }
 
   // ---------------------------------------------------------------------------
   // Instagram-specific endpoints (existing)

@@ -67,6 +67,7 @@ import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-stu
 import { OpenAICaptionProvider } from '@gitroom/backend/services/sns-studio/openai-caption.provider';
 import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import { AccountProtectionController } from '@gitroom/backend/api/routes/account-protection.controller';
+import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 
 const authenticatedController = [
   UsersController,
@@ -147,6 +148,7 @@ const authenticatedController = [
     CommonPublishingService,
     CommonDeliveryViewService,
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
+    TikTokPublishAdapter,
   ],
   get exports() {
     return [...this.imports, ...this.providers];

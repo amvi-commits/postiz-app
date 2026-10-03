@@ -12,8 +12,6 @@
     "types": [
       "jest",
       "node"
-    ],
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    ]
   }
 }
