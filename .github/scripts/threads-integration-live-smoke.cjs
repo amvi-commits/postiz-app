@@ -456,7 +456,8 @@ async function runBrowserSmoke(database, testFixture) {
   assert(calendarStableCount === 1, 'Calendar revalidation loop detected; initial fetch count was ' + calendarStableCount + '.');
   const refreshCalendarResult = page.waitForResponse((response) => backendPath(response.url()) === calendarPath && response.request().method() === 'GET', { timeout: 30000 })
     .then((response) => ({ response }), (error) => ({ error }));
-  await page.getByRole('button', { name: '更新', exact: true }).click();
+  const calendarPanel = page.getByRole('heading', { name: /Threads投稿カレンダー/ }).locator('xpath=../../..');
+  await calendarPanel.getByRole('button', { name: '更新', exact: true }).click();
   const refreshResult = await refreshCalendarResult;
   assert(!refreshResult.error, 'Calendar refresh response was not observed: ' + (refreshResult.error?.message || 'unknown error'));
   const refreshedCalendar = refreshResult.response;
@@ -613,10 +614,11 @@ async function runBrowserSmoke(database, testFixture) {
   assert(summary.browserExternalAttempts.length === 0, 'Browser attempted an external network request: ' + JSON.stringify(summary.browserExternalAttempts));
   assert(summary.researchSearchCalls === 0, 'Threads research must remain unopened at the provider API layer.');
   assert(summary.unexpected404 === 0, 'Browser Smoke received an unexpected 404.');
-  assert(summary.unexpected500 === 0, 'Browser Smoke received an unexpected 500.');
+  const unexpected500Responses = networkRecords.filter((item) => item.status >= 500).map(({ method, path, status }) => ({ method, path, status }));
+  assert(summary.unexpected500 === 0, 'Browser Smoke received an unexpected 500: ' + JSON.stringify(unexpected500Responses));
   assert(summary.backendUnexpected4xx === 0, 'Browser Smoke received an unexpected 4xx.');
   assert(summary.browserUnexpected4xx === 0, 'Browser Smoke received an unexpected local HTTP 4xx.');
-  assert(summary.consoleErrors.length === 0, 'Browser console.error was emitted.');
+  assert(summary.consoleErrors.length === 0, 'Browser console.error was emitted: ' + JSON.stringify(summary.consoleErrors));
   assert(summary.pageErrors.length === 0, 'Browser pageerror was emitted.');
   assert(summary.researchBlockedStatus === 'PRESENT', 'Research did not display a blocked/auth-required status while its provider-backed action was intentionally not invoked.');
   summary.providerStubInvocations = providerStubs.length;
