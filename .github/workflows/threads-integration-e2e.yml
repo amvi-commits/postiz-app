@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - feature/sns-studio-integration
-  push:
-    branches:
-      - test/sns-studio-threads-integration-e2e
 
 permissions:
   contents: read
@@ -272,15 +269,15 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/threads-capabilities.log"
 
       - name: Run repository Jest suite with the disposable Threads database
+        id: full_jest
         shell: bash
         run: |
           set -euo pipefail
           set +e
-          pnpm exec jest --runInBand --json --outputFile "$RUNNER_TEMP/threads-jest-results.json" \
-            > "$RUNNER_TEMP/threads-full-jest.log" 2>&1
-          jest_status=$?
+          pnpm exec jest --runInBand --forceExit --json --outputFile "$RUNNER_TEMP/threads-jest-results.json" \
+            2>&1 | tee "$RUNNER_TEMP/threads-full-jest.log"
+          jest_status=${PIPESTATUS[0]}
           set -e
-          cat "$RUNNER_TEMP/threads-full-jest.log"
           if [ -f "$RUNNER_TEMP/threads-jest-results.json" ]; then
             node - "$RUNNER_TEMP/threads-jest-results.json" <<'NODE'
           const result = require(process.argv[2]);
@@ -447,8 +444,8 @@ jobs:
             exit 1
           fi
 
-      - name: Upload failure-only CI diagnostics
-        if: ${{ failure() }}
+      - name: Upload failed-run CI diagnostics
+        if: ${{ always() && steps.full_jest.outcome != 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: threads-integration-e2e-failure-diagnostics
