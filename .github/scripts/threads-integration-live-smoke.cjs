@@ -448,7 +448,7 @@ async function runBrowserSmoke(database, testFixture) {
   const calendarPath = '/threads-studio/calendar';
   const calendarBefore = networkRecords.filter((item) => item.path === calendarPath).length;
   const firstCalendarResponse = observeResponse(page.waitForResponse((response) => backendPath(response.url()) === calendarPath && response.request().method() === 'GET', { timeout: 30000 }));
-  await page.getByRole('button', { name: 'カレンダー (Ghost消滅)', exact: true }).click();
+  await page.getByRole('button', { name: /カレンダー \(Ghost消滅\)/ }).click();
   const firstCalendar = responseFromObservation(await firstCalendarResponse, 'Initial calendar response was not observed');
   assert(firstCalendar.ok(), 'Live Threads calendar endpoint returned ' + firstCalendar.status());
   const calendarBody = await firstCalendar.json();
@@ -475,7 +475,7 @@ async function runBrowserSmoke(database, testFixture) {
 
   const inboxPath = '/threads-studio/inbox';
   const inboxResponsePromise = observeResponse(page.waitForResponse((response) => backendPath(response.url()) === inboxPath && response.request().method() === 'GET', { timeout: 30000 }));
-  await page.getByRole('button', { name: 'Inbox & 返信', exact: true }).click();
+  await page.getByRole('button', { name: /Inbox & 返信/ }).click();
   const inboxResponse = responseFromObservation(await inboxResponsePromise, 'Live Threads inbox response was not observed');
   assert(inboxResponse.ok(), 'Live Threads inbox endpoint returned ' + inboxResponse.status());
   const inboxBody = await inboxResponse.json();
@@ -505,7 +505,7 @@ async function runBrowserSmoke(database, testFixture) {
   assert(savedDraft && savedDraft.aiDraftText, 'AI Reply draft did not persist through the live backend.');
   summary.aiReplyDraftSaved = true;
 
-  await page.getByRole('button', { name: 'リサーチ (Search)', exact: true }).click();
+  await page.getByRole('button', { name: /リサーチ \(Search\)/ }).click();
   await page.getByRole('button', { name: 'Threads検索を実行', exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   const researchStatusText = await page.locator('body').innerText();
   summary.researchBlockedStatus = /(?:BLOCKED|Meta.{0,12}(?:未接続|認証)|認証が必要|権限が必要)/i.test(researchStatusText)
@@ -540,20 +540,20 @@ async function runBrowserSmoke(database, testFixture) {
   summary.referenceDirectDbVerified = true;
 
   const referenceGetPromise = observeResponse(page.waitForResponse((response) => backendPath(response.url()) === '/threads-studio/reference-posts' && response.request().method() === 'GET', { timeout: 30000 }));
-  await page.getByRole('button', { name: '参考投稿ストック', exact: true }).click();
+  await page.getByRole('button', { name: /参考投稿ストック/ }).click();
   const referenceGet = responseFromObservation(await referenceGetPromise, 'Live reference-post GET response was not observed');
   assert(referenceGet.ok(), 'Live reference-post GET returned ' + referenceGet.status());
   await page.getByText('threads-ci-e2e-reference-content', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
 
   const analyticsPromise = observeResponse(page.waitForResponse((response) => backendPath(response.url()) === '/threads-studio/analytics' && response.request().method() === 'GET', { timeout: 30000 }));
-  await page.getByRole('button', { name: '分析', exact: true }).click();
+  await page.getByRole('button', { name: /分析 \(Analytics\)/ }).click();
   const analyticsResponse = responseFromObservation(await analyticsPromise, 'Live Threads analytics response was not observed');
   assert(analyticsResponse.ok(), 'Live Threads analytics endpoint returned ' + analyticsResponse.status());
   await page.getByText('Total Views', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
 
   const quotaPathPrefix = '/threads-studio/accounts/' + testFixture.integrationId + '/quota';
   const quotaPromise = observeResponse(page.waitForResponse((response) => backendPath(response.url()) === quotaPathPrefix && response.request().method() === 'GET', { timeout: 30000 }));
-  await page.getByRole('button', { name: 'アカウント・自動化', exact: true }).click();
+  await page.getByRole('button', { name: /アカウント・自動化/ }).click();
   const quotaResponse = responseFromObservation(await quotaPromise, 'Threads quota response was not observed');
   assert(quotaResponse.ok(), 'CI-only Threads quota stub did not return a successful response.');
   const settingsValue = 'threads-ci-e2e-ai-character-updated';
@@ -584,7 +584,7 @@ async function runBrowserSmoke(database, testFixture) {
 
   await page.getByRole('button', { name: 'Threads', exact: true }).click();
   await page.getByRole('heading', { name: 'Threads Studio' }).waitFor({ state: 'visible', timeout: 30000 });
-  await page.getByRole('button', { name: '投稿 (Publish)', exact: true }).click();
+  await page.getByRole('button', { name: /投稿 \(Publish\)/ }).click();
   await page.getByRole('button', { name: /Threadsプリセットで共通投稿を開く/ }).click();
   await page.getByRole('heading', { name: '共通投稿・配信' }).waitFor({ state: 'visible', timeout: 30000 });
   const planTitle = 'threads-ci-e2e-common-plan-' + testFixture.id.slice(0, 8);
