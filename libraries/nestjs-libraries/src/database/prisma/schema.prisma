@@ -1969,15 +1969,20 @@ model SnsMediaAsset {
   isOriginal     Boolean      @default(false)
   isFinal        Boolean      @default(false)
   publishedAt    DateTime?
+  parentId       String?
+  assetType      String?      @default("ORIGINAL")
   metadata       Json?
   createdAt      DateTime     @default(now())
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent         SnsMediaAsset? @relation("SnsMediaHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children       SnsMediaAsset[] @relation("SnsMediaHierarchy")
   storyItems     SnsStoryPoolItem[]
   inboxItems     SnsContentInboxItem[]
   originalContents SnsContent[]        @relation("SnsContentOriginalAsset")
   contentVariants  SnsContentVariant[] @relation("SnsContentVariantAsset")
 
   @@index([organizationId, isFinal, createdAt])
+  @@index([organizationId, parentId])
 }
 
 model SnsContent {
@@ -2050,6 +2055,7 @@ model SnsDelivery {
   resolvedContent          String?
   resolvedHashtags    Json?
   resolvedScheduledAt DateTime?
+  approvedAt          DateTime?
   postId              String?
   status              String      @default("PLANNED")
   lastError           String?
@@ -2065,9 +2071,6 @@ model SnsDelivery {
   @@index([postId])
 }
 
-// Account Protection is intentionally isolated from the common publishing models.
-// accountId points to Integration or SnsInstagramAccount according to accountType;
-// this avoids changing either legacy account model in Phase A.
 model AccountSecurityProfile {
   id                        String   @id @default(cuid())
   organizationId            String
@@ -2293,14 +2296,18 @@ model SnsPipelineStep {
 model SnsPublishRecord {
   id             String       @id @default(cuid())
   organizationId String
-  accountId      String
+  accountId      String?
+  integrationId  String?
+  platform       String       @default("INSTAGRAM")
   pipelineRunId  String?
+  postId         String?
   mediaId        String?
   mediaPath      String?
   postUrl        String?
   publishType    String
   status         String
   trialReel      Boolean      @default(false)
+  title          String?
   caption        String?
   publishedAt    DateTime?
   errorCode      String?
@@ -2313,12 +2320,14 @@ model SnsPublishRecord {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  account        SnsInstagramAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  account        SnsInstagramAccount? @relation(fields: [accountId], references: [id], onDelete: Restrict)
   pipelineRun    SnsPipelineRun? @relation(fields: [pipelineRunId], references: [id], onDelete: SetNull)
   snapshots      SnsAnalyticsSnapshot[]
 
   @@index([organizationId, createdAt])
   @@index([accountId, status, publishedAt])
+  @@index([integrationId, status, publishedAt])
+  @@index([platform, status])
 }
 
 model SnsAnalyticsSnapshot {
@@ -2511,4 +2520,3 @@ model SnsThreadsAutomationRule {
 
   @@index([organizationId, ruleType, active])
 }
-

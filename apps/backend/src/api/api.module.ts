@@ -59,6 +59,9 @@ import { StripeController } from '@gitroom/backend/api/routes/stripe.controller'
 import { SnsStudioController } from '@gitroom/backend/api/routes/sns-studio.controller';
 import { ThreadsStudioController } from '@gitroom/backend/api/routes/threads-studio.controller';
 import { ThreadsStudioService } from '@gitroom/backend/services/sns-studio/threads-studio.service';
+import { SnsStudioCommonPublishingController } from '@gitroom/backend/api/routes/sns-studio-common-publishing.controller';
+import { CommonPublishingService } from '@gitroom/backend/services/sns-studio/common-publishing.service';
+import { CommonDeliveryViewService } from '@gitroom/backend/services/sns-studio/common-delivery-view.service';
 import { GoogleDriveStorageProvider } from '@gitroom/backend/services/sns-studio/google-drive.storage';
 import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-studio/google-drive.generation-provider';
 import { OpenAICaptionProvider } from '@gitroom/backend/services/sns-studio/openai-caption.provider';
@@ -89,6 +92,7 @@ const authenticatedController = [
   SnsStudioController,
   ThreadsStudioController,
   AccountProtectionController,
+  SnsStudioCommonPublishingController,
 ];
 @Module({
   imports: [UploadModule],
@@ -140,6 +144,8 @@ const authenticatedController = [
     GoogleDriveGenerationProvider,
     OpenAICaptionProvider,
     ThreadsStudioService,
+    CommonPublishingService,
+    CommonDeliveryViewService,
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
   ],
   get exports() {

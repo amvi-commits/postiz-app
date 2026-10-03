@@ -31,6 +31,7 @@ import { UserAgent } from '@gitroom/nestjs-libraries/user/user.agent';
 import { TrackEnum } from '@gitroom/nestjs-libraries/user/track.enum';
 import { TrackService } from '@gitroom/nestjs-libraries/track/track.service';
 import { makeId } from '@gitroom/nestjs-libraries/services/make.is';
+import { assertOrganizationMembership } from '../../services/sns-studio/organization-membership';
 import {
   AuthorizationActions,
   Sections,
@@ -304,10 +305,14 @@ export class UsersController {
   }
 
   @Post('/change-org')
-  changeOrg(
+  async changeOrg(
     @Body('id') id: string,
+    @GetUserFromRequest() user: User,
     @Res({ passthrough: true }) response: Response
   ) {
+    const organizations = await this._orgService.getOrgsByUserId(user.id);
+    assertOrganizationMembership(organizations, id);
+
     response.cookie('showorg', id, {
       domain: getCookieUrlFromDomain(process.env.FRONTEND_URL!),
       ...(!process.env.NOT_SECURED

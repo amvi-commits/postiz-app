@@ -22,6 +22,7 @@ import { createReadStream } from 'fs';
 import { getSsrfSafeDispatcher } from '@gitroom/nestjs-libraries/dtos/webhooks/ssrf.safe.dispatcher';
 import { Integration } from '@prisma/client';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
+import { tiktokPublicationDetail } from '@gitroom/nestjs-libraries/integrations/social/tiktok-publication-status.adapter';
 
 @Rules(
   [
@@ -34,6 +35,8 @@ import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorato
 export class TiktokProvider extends SocialAbstract implements SocialProvider {
   identifier = 'tiktok';
   name = 'Tiktok';
+
+  commonPostPublicationDetail = tiktokPublicationDetail;
   isBetweenSteps = false;
   convertToJPEG = true;
   scopes = [

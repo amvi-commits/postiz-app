@@ -3,14 +3,16 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { useVariables } from '@gitroom/react/helpers/variable.context';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import { ThreadsWorkspace } from '@gitroom/frontend/components/sns-studio/threads/threads-workspace';
 import { useAddProvider } from '@gitroom/frontend/components/launches/add.provider.component';
+import { CommonDeliveryWorkspace } from '@gitroom/frontend/components/sns-studio/common-delivery-workspace';
 
-type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Threads' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
-type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
-// TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
+type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Threads' | 'Common Queue' | 'Common History' | 'Common Analytics' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
+type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
 type TikTokAccount = {
   id: string; // Integration.id
   integrationId: string;
@@ -28,12 +30,15 @@ type TikTokAccount = {
   lastValidatedAt?: string | null;
   lastPublishedAt?: string | null;
 };
+type OrganizationSummary = { id: string; name: string };
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
 type Recipe = { id: string; name: string; inputType: string; config: Record<string, unknown> };
 type PublishRecord = { id: string; publishType: string; status: string; postUrl?: string | null; mediaId?: string | null; publishedAt?: string | null; errorCode?: string | null; account: { username: string }; snapshots?: Array<{ metrics?: Record<string, unknown> | null }> };
+type ReelPreflightProbe = { kind?: string; sizeBytes?: number; durationSeconds?: number; video?: { codec?: string; width?: number; height?: number }; hasAudio?: boolean };
+type ReelPreflightResult = { ready: boolean; errors: string[]; warnings: string[]; account: { id: string; username: string; status: string }; media: ReelPreflightProbe | null; thumbnail?: ReelPreflightProbe | null; trialEligible: boolean | null };
 
-const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
+const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Common Queue', 'Common History', 'Common Analytics', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field = 'w-full rounded-lg border border-blockSeparator bg-newBgColorInner px-3 py-2 text-newTextColor outline-none focus:border-[#7774ff]';
 const primaryButton = 'rounded-lg bg-[#5145ff] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
@@ -42,16 +47,21 @@ const secondaryButton = 'rounded-lg border border-blockSeparator px-4 py-2 font-
 const explainError = (payload: any) => {
   const detail = payload?.detail ?? payload?.response?.data?.detail ?? payload?.response?.data ?? payload;
   if (Array.isArray(detail?.errors) && detail.errors.length) return `Preflightで停止しました: ${detail.errors.join(', ')}`;
-  return typeof detail === 'string' ? detail : detail?.message || detail?.code || payload?.message || '処理に失敗しました。';
+  return typeof detail === 'string' ? detail : detail?.message || detail?.errorCode || detail?.code || payload?.message || '処理に失敗しました。';
 };
 
 export const SnsStudio = () => {
   const fetch = useFetch();
+  const { backendUrl } = useVariables();
+  const user = useUser();
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '', verificationCode: '' });
+  const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '' });
+  const [loginOpenFor, setLoginOpenFor] = useState<string | null>(null);
+  const [loginDrafts, setLoginDrafts] = useState<Record<string, { password: string; proxy: string; verificationCode: string }>>({});
   const [reelForm, setReelForm] = useState({ accountId: '', videoPath: '', caption: '', thumbnailPath: '', trialReel: false, pipelineRunId: '' });
+  const [reelPreflight, setReelPreflight] = useState<{ inputKey: string; result: ReelPreflightResult } | null>(null);
   const [storyForm, setStoryForm] = useState({ accountId: '', mediaPath: '', mediaType: 'image', linkUrl: '', x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0, pipelineRunId: '' });
   const [poolForm, setPoolForm] = useState({ name: '', description: '' });
   const [poolItemForm, setPoolItemForm] = useState({ poolId: '', mediaPath: '', mediaType: 'image', urlLibraryId: '' });
@@ -82,11 +92,24 @@ export const SnsStudio = () => {
       headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(explainError(data));
+    if (!response.ok) {
+      const detail = data?.detail ?? data?.response?.data?.detail ?? data?.response?.data ?? data;
+      const error = new Error(explainError(data)) as Error & { errorCode?: string; requiresAction?: boolean };
+      error.errorCode = detail?.errorCode || detail?.code;
+      error.requiresAction = !!detail?.requiresAction;
+      throw error;
+    }
     return data;
   }, [fetch]);
 
   const load = useCallback(async (path: string) => request(path), [request]);
+  const { data: organizations = [] } = useSWR<OrganizationSummary[]>(
+    '/user/organizations',
+    load,
+  );
+  const currentOrganization = organizations.find(
+    (organization) => organization.id === user?.orgId,
+  );
   const { data: dashboard, mutate: refreshDashboard } = useSWR('/sns-studio/dashboard', load, { refreshInterval: 5000 });
   const { data: accounts = [], mutate: refreshAccounts } = useSWR<Account[]>('/sns-studio/accounts', load);
   const { data: urls = [], mutate: refreshUrls } = useSWR<UrlItem[]>('/sns-studio/urls', load);
@@ -134,7 +157,103 @@ export const SnsStudio = () => {
     void run(action, success);
   };
 
+  const accountLoginState = (account: Account) => account.health?.loginState || (
+    account.lastError === 'IG_2FA_REQUIRED' ? '2FA_REQUIRED' :
+      account.lastError === 'IG_CHALLENGE_REQUIRED' ? 'CHALLENGE_REQUIRED' :
+        account.lastError === 'IG_BAD_PASSWORD' ? 'BAD_PASSWORD' :
+          account.healthStatus === 'GREEN' ? 'ACTIVE' : 'LOGIN_REQUIRED'
+  );
+
+  const updateLoginDraft = (accountId: string, fieldName: 'password' | 'proxy' | 'verificationCode', value: string) => {
+    setLoginDrafts((current) => ({ ...current, [accountId]: { password: '', proxy: '', verificationCode: '', ...current[accountId], [fieldName]: value } }));
+  };
+
+  const submitNewInstagramLogin = (event: FormEvent) => {
+    event.preventDefault();
+    const submitted = { ...accountForm, username: accountForm.username.trim().replace(/^@/, '') };
+    void run(async () => {
+      try {
+        return await request('/sns-studio/accounts', {
+          method: 'POST',
+          body: JSON.stringify({ username: submitted.username, password: submitted.password, proxy: submitted.proxy || undefined }),
+        });
+      } catch (error) {
+        const latest = await refreshAccounts().catch(() => undefined);
+        const code = (error as Error & { errorCode?: string }).errorCode;
+        const account = (latest || accounts).find((candidate: Account) => candidate.username.toLowerCase() === submitted.username.toLowerCase());
+        if (account && ['IG_2FA_REQUIRED', 'IG_CHALLENGE_REQUIRED'].includes(code || '')) setLoginOpenFor(account.id);
+        throw error;
+      } finally {
+        setAccountForm((current) => ({ ...current, password: '' }));
+      }
+    }, 'Instagramへログインしました。');
+  };
+
+  const submitExistingInstagramLogin = (account: Account) => {
+    const draft = loginDrafts[account.id] || { password: '', proxy: '', verificationCode: '' };
+    if (!draft.password) {
+      setMessage('Instagramへログインするため、パスワードを入力してください。');
+      return;
+    }
+    void run(async () => {
+      try {
+        return await request('/sns-studio/accounts', {
+          method: 'POST',
+          body: JSON.stringify({ username: account.username, password: draft.password, proxy: draft.proxy || undefined }),
+        });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      } finally {
+        updateLoginDraft(account.id, 'password', '');
+      }
+    }, 'Instagramへログインしました。');
+  };
+
+  const submitTwoFactorCode = (account: Account) => {
+    const verificationCode = loginDrafts[account.id]?.verificationCode?.trim();
+    if (!verificationCode) {
+      setMessage('Instagramの2FAコードを入力してください。');
+      return;
+    }
+    void run(async () => {
+      try {
+        return await request(`/sns-studio/accounts/${account.id}/login/continue`, {
+          method: 'POST',
+          body: JSON.stringify({ verificationCode }),
+        });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      } finally {
+        updateLoginDraft(account.id, 'verificationCode', '');
+      }
+    }, 'Instagramの2FAを確認しました。Sessionを保存しました。');
+  };
+
+  const recheckInstagramChallenge = (account: Account): void => {
+    void run(async () => {
+      try {
+        return await request(`/sns-studio/accounts/${account.id}/login/recheck`, { method: 'POST', body: '{}' });
+      } catch (error) {
+        await refreshAccounts().catch(() => undefined);
+        throw error;
+      }
+    },
+      'Instagramログインを確認しました。Sessionを保存しました。',
+    );
+  };
+
   const defaultAccount = useMemo(() => accounts[0]?.id || '', [accounts]);
+  const reelPreflightBody = useMemo(() => ({
+    accountId: reelForm.accountId || defaultAccount,
+    mediaPath: reelForm.videoPath,
+    caption: reelForm.caption,
+    thumbnailPath: reelForm.thumbnailPath || undefined,
+    trialReel: reelForm.trialReel,
+  }), [reelForm.accountId, reelForm.videoPath, reelForm.caption, reelForm.thumbnailPath, reelForm.trialReel, defaultAccount]);
+  const reelPreflightInputKey = JSON.stringify(reelPreflightBody);
+  const reelPreflightReady = reelPreflight?.inputKey === reelPreflightInputKey && reelPreflight.result.ready;
 
   const bridgeMediaAsset = useCallback(async (mediaAssetId: string) => {
     if (!mediaAssetId) {
@@ -227,6 +346,19 @@ export const SnsStudio = () => {
     return response;
   };
 
+  const preflightReel = async () => {
+    if (!reelPreflightBody.accountId) throw new Error('Instagramアカウントを選択してください。');
+    if (!reelPreflightBody.mediaPath.trim()) throw new Error('動画パスを入力してください。');
+    setReelPreflight(null);
+    const result = await request('/sns-studio/media/preflight/reel', {
+      method: 'POST',
+      body: JSON.stringify(reelPreflightBody),
+    }) as ReelPreflightResult;
+    setReelPreflight({ inputKey: reelPreflightInputKey, result });
+    if (!result.ready) throw new Error(`Preflightで停止しました: ${result.errors.join(', ') || '確認が必要です。'}`);
+    return result;
+  };
+
   const publishStory = async () => {
     const body = { ...storyForm, accountId: storyForm.accountId || defaultAccount };
     const response = await request('/sns-studio/publish/story', { method: 'POST', body: JSON.stringify({ accountId: body.accountId, mediaPath: body.mediaPath, mediaType: body.mediaType, linkUrl: body.linkUrl, pipelineRunId: body.pipelineRunId || undefined, sticker: { x: body.x, y: body.y, width: body.width, height: body.height, rotation: body.rotation } }) });
@@ -289,7 +421,7 @@ export const SnsStudio = () => {
     setActiveTab('Create');
   };
 
-  const previewUrl = (path: string) => `/sns-studio/media/preview?path=${encodeURIComponent(path)}`;
+  const previewUrl = (path: string) => `${backendUrl.replace(/\/$/, '')}/sns-studio/media/preview?path=${encodeURIComponent(path)}`;
 
   const prepareRandomStory = async () => {
     const accountId = storyForm.accountId || defaultAccount;
@@ -312,7 +444,9 @@ export const SnsStudio = () => {
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-newBgColor p-5 text-newTextColor lg:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-textItemBlur">Local workspace</div>
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-textItemBlur">
+            Organization: {currentOrganization?.name || 'Unavailable'}
+          </div>
           <h1 className="mt-1 text-3xl font-bold">SNS Studio</h1>
           <p className="mt-2 max-w-3xl text-sm text-textItemBlur">素材を準備し、プレビューを確認してからInstagramへ今すぐ投稿します。</p>
         </div>
@@ -322,7 +456,7 @@ export const SnsStudio = () => {
       <nav className="flex flex-wrap gap-2 rounded-xl border border-blockSeparator bg-newBgColorInner p-2" aria-label="SNS Studio navigation">
         {tabs.map((tab) => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>
-            {tab}
+            {tab === 'Common Queue' ? '共通Queue' : tab === 'Common History' ? '共通History' : tab === 'Common Analytics' ? '共通Analytics' : tab === 'Queue' ? '制作Queue' : tab === 'Analytics' ? 'Instagram Analytics' : tab}
           </button>
         ))}
       </nav>
@@ -341,16 +475,15 @@ export const SnsStudio = () => {
       </section>}
 
       {activeTab === 'Accounts' && <section className="grid gap-5 xl:grid-cols-[minmax(320px,420px)_1fr]">
-        <form className={card} onSubmit={submit(async () => { const result = await request('/sns-studio/accounts', { method: 'POST', body: JSON.stringify(accountForm) }); setAccountForm((current) => ({ ...current, password: '', verificationCode: '' })); return result; }, 'Instagramアカウントを接続しました。')}>
-          <h2 className="text-lg font-bold">Instagramアカウントを接続</h2>
+        <form className={card} onSubmit={submitNewInstagramLogin}>
+          <h2 className="text-lg font-bold">Instagramアカウントを追加</h2>
           <p className="mb-4 mt-1 text-sm text-textItemBlur">パスワードとセッションはInstagram Worker内で暗号化して保存します。</p>
           <div className="grid gap-3">
             <Field label="Username"><input className={field} autoComplete="username" value={accountForm.username} onChange={(e) => setAccountForm({ ...accountForm, username: e.target.value })} required /></Field>
             <Field label="Password"><input className={field} type="password" autoComplete="current-password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} required /></Field>
             <Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={accountForm.proxy} onChange={(e) => setAccountForm({ ...accountForm, proxy: e.target.value })} /></Field>
             <button type="button" className={secondaryButton} disabled={busy || !accountForm.proxy.trim()} onClick={() => void run(async () => { const result = await request('/sns-studio/proxy/test', { method: 'POST', body: JSON.stringify({ proxy: accountForm.proxy }) }); if (!result.reachable) throw new Error(result.code || 'Proxy connection failed'); }, 'Proxy接続を確認しました。')}>Test Proxy</button>
-            <Field label="2FA code (when requested)"><input className={field} inputMode="numeric" value={accountForm.verificationCode} onChange={(e) => setAccountForm({ ...accountForm, verificationCode: e.target.value })} /></Field>
-            <button className={primaryButton} disabled={busy}>Login / Save session</button>
+            <button className={primaryButton} disabled={busy}>Instagramへログイン</button>
           </div>
         </form>
         <div className="flex flex-col gap-5">
@@ -359,7 +492,36 @@ export const SnsStudio = () => {
             <div className="mt-4 grid gap-3">
               {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
               {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
-                <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus || account.status} · Session: {account.health?.session || account.status} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}</div>
+                <div className="min-w-[220px] flex-1">
+                  <div className="font-bold">@{account.username}</div>
+                  <div className={'mt-1 text-xs ' + (account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' || account.healthStatus === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300')}>
+                    {account.healthStatus === 'GREEN' ? 'ACTIVE · Session: VALID · Health: GREEN' : 'YELLOW · Session: ' + (account.health?.session || 'INVALID') + ' · ' + accountLoginState(account)}
+                    {' · Proxy: ' + (account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし')}
+                  </div>
+                  <div className="mt-1 text-xs text-textItemBlur">
+                    Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}
+                  </div>
+                  {account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}
+                  {account.healthStatus !== 'GREEN' && (loginOpenFor === account.id || ['2FA_REQUIRED', 'CHALLENGE_REQUIRED'].includes(accountLoginState(account))) && (
+                    <div className="mt-3 grid w-full gap-3 rounded-lg border border-blockSeparator p-3">
+                      {accountLoginState(account) === '2FA_REQUIRED' ? <>
+                        <p className="text-sm">Instagramの2FAコードを入力してください。</p>
+                        <Field label="2FAコード"><input className={field} inputMode="numeric" autoComplete="one-time-code" value={loginDrafts[account.id]?.verificationCode || ''} onChange={(e) => updateLoginDraft(account.id, 'verificationCode', e.target.value)} /></Field>
+                        <button type="button" className={primaryButton} disabled={busy} onClick={() => submitTwoFactorCode(account)}>確認</button>
+                      </> : accountLoginState(account) === 'CHALLENGE_REQUIRED' ? (
+                        <p className="text-sm">Instagramアプリでログインを承認してください。承認後、［再確認］を押してください。</p>
+                      ) : <>
+                        <p className="text-sm">保存済みアカウント @{account.username} にログインします。</p>
+                        <Field label="Password"><input className={field} type="password" autoComplete="current-password" value={loginDrafts[account.id]?.password || ''} onChange={(e) => updateLoginDraft(account.id, 'password', e.target.value)} /></Field>
+                        <Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={loginDrafts[account.id]?.proxy || ''} onChange={(e) => updateLoginDraft(account.id, 'proxy', e.target.value)} /></Field>
+                        <button type="button" className={primaryButton} disabled={busy || !loginDrafts[account.id]?.password} onClick={() => submitExistingInstagramLogin(account)}>Instagramへログイン</button>
+                      </>}
+                    </div>
+                  )}
+                </div>
+                {account.healthStatus !== 'GREEN' && <button type="button" className={secondaryButton} onClick={() => accountLoginState(account) === 'CHALLENGE_REQUIRED' ? recheckInstagramChallenge(account) : setLoginOpenFor(account.id)} disabled={busy}>
+                  {accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : accountLoginState(account) === '2FA_REQUIRED' ? '2FAコードを入力' : 'Instagramへログイン'}
+                </button>}
                 <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
                 <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
                 <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>Validate</button>
@@ -485,6 +647,9 @@ export const SnsStudio = () => {
       </section>}
 
       {activeTab === 'Publish' && <SnsStudioCommonPublisher prefill={commonPostPrefill} />}
+      {activeTab === 'Common Queue' && <CommonDeliveryWorkspace view="queue" />}
+      {activeTab === 'Common History' && <CommonDeliveryWorkspace view="history" />}
+      {activeTab === 'Common Analytics' && <CommonDeliveryWorkspace view="analytics" />}
 
       {activeTab === 'Threads' && (
         <ThreadsWorkspace
@@ -508,7 +673,18 @@ export const SnsStudio = () => {
             <Field label="AI Caption用の素材メモ"><textarea className={`${field} min-h-16`} maxLength={12000} value={captionPrompt} onChange={(e) => setCaptionPrompt(e.target.value)} placeholder="動画の内容、伝えたい要点など" /></Field><button type="button" className={secondaryButton} disabled={busy || !captionPrompt.trim() || !accounts.find((account) => account.id === (reelForm.accountId || defaultAccount))?.captionAIEnabled} onClick={() => void run(generateCaption, 'AI Captionを作成しました。内容を確認して編集してください。')}>AI Captionを生成</button>
             <Field label="Thumbnail path (optional)"><input className={field} value={reelForm.thumbnailPath} onChange={(e) => setReelForm({ ...reelForm, thumbnailPath: e.target.value })} placeholder="/uploads/cover.jpg" /></Field>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reelForm.trialReel} onChange={(e) => setReelForm({ ...reelForm, trialReel: e.target.checked })} /> Trial Reel</label>
-            <button className={primaryButton} disabled={busy || !accounts.length}>Preflight and publish now</button>
+            <button type="button" className={secondaryButton} disabled={busy || !accounts.length || !reelForm.videoPath.trim()} onClick={() => void run(preflightReel, 'Preflight PASS。投稿リクエストは送信していません。')}>投稿せずにPreflight</button>
+            {reelPreflight && <div className="rounded-lg border border-blockSeparator p-4" aria-live="polite">
+              <h3 className="font-semibold">Preflight結果{reelPreflight.inputKey === reelPreflightInputKey ? (reelPreflight.result.ready ? ' · PASS' : ' · STOP') : ' · 入力変更あり'}</h3>
+              {reelPreflight.inputKey !== reelPreflightInputKey ? <p className="mt-2 text-sm text-textItemBlur">対象アカウントまたは投稿内容が変わりました。投稿前にPreflightを再実行してください。</p> : <>
+                <p className="mt-2 text-sm">Account: @{reelPreflight.result.account.username} · Session/Health: {reelPreflight.result.account.status}</p>
+                {reelPreflight.result.media && <p className="mt-1 text-sm">Video: {reelPreflight.result.media.kind || 'unknown'} · {reelPreflight.result.media.durationSeconds?.toFixed(2) ?? '—'}s · {reelPreflight.result.media.video?.width ?? '—'}×{reelPreflight.result.media.video?.height ?? '—'} · {reelPreflight.result.media.video?.codec || 'codec unknown'} · {reelPreflight.result.media.sizeBytes ? `${(reelPreflight.result.media.sizeBytes / 1024 / 1024).toFixed(2)} MB` : 'size unknown'} · Audio: {reelPreflight.result.media.hasAudio ? 'あり' : 'なし'}</p>}
+                <p className="mt-1 text-sm">Trial Reel: {reelForm.trialReel ? 'ON' : 'OFF'}</p>
+                {!!reelPreflight.result.errors.length && <p className="mt-2 text-sm text-red-400">停止理由: {reelPreflight.result.errors.join(', ')}</p>}
+                {!!reelPreflight.result.warnings.length && <p className="mt-2 text-sm text-amber-300">確認事項: {reelPreflight.result.warnings.join(', ')}</p>}
+              </>}
+            </div>}
+            <button className={primaryButton} disabled={busy || !accounts.length || !reelPreflightReady} title={reelPreflightReady ? 'InstagramへReelを1件投稿します。' : '現在の入力内容でPreflight PASS後に有効になります。'}>InstagramへReelを1件投稿</button>
           </div>
         </form>
         <form className={card} onSubmit={submit(publishStory, 'Story投稿が完了しました。リンクスタンプはInstagram上でも表示を確認してください。')}>

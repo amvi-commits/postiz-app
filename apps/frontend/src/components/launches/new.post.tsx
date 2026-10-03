@@ -15,6 +15,8 @@ export const NewPost = (props: {
   selectedChannels?: string[];
   selectedChannelSettings?: AddEditModalProps['selectedChannelSettings'];
   scheduledAtByIntegration?: AddEditModalProps['scheduledAtByIntegration'];
+  commonContentPlanId?: AddEditModalProps['commonContentPlanId'];
+  onBeforePost?: AddEditModalProps['onBeforePost'];
   onPosted?: AddEditModalProps['onPosted'];
   date?: dayjs.Dayjs;
   label?: string;
@@ -81,6 +83,8 @@ export const NewPost = (props: {
           {...(props.selectedChannels ? { selectedChannels: props.selectedChannels } : {})}
           {...(props.selectedChannelSettings ? { selectedChannelSettings: props.selectedChannelSettings } : {})}
           {...(props.scheduledAtByIntegration ? { scheduledAtByIntegration: props.scheduledAtByIntegration } : {})}
+          {...(props.commonContentPlanId ? { commonContentPlanId: props.commonContentPlanId } : {})}
+          {...(props.onBeforePost ? { onBeforePost: props.onBeforePost } : {})}
           {...(props.onPosted ? { onPosted: props.onPosted } : {})}
           reopenModal={createAPost}
           mutate={reloadCalendarView}
@@ -99,6 +103,8 @@ export const NewPost = (props: {
     props.selectedChannels,
     props.selectedChannelSettings,
     props.scheduledAtByIntegration,
+    props.commonContentPlanId,
+    props.onBeforePost,
     props.onPosted,
     props.date,
   ]);
