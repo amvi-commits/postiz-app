@@ -72,7 +72,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         {} as any,
         {} as any,
         mockTikTokPublishAdapter as any,
-        mockTikTokAnalyticsAdapter as any
+        mockTikTokAnalyticsAdapter as any,
+        {} as any
       );
     });
 
@@ -185,8 +186,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         expect(personal.accountType).toBe('personal');
         expect(personal.username).toBe('@personal_user');
         // Default values applied
-        expect(personal.autoPublishEnabled).toBeUndefined();
-        expect(personal.dailyPostLimit).toBeUndefined();
+        expect(personal).not.toHaveProperty('autoPublishEnabled');
+        expect(personal).not.toHaveProperty('dailyPostLimit');
         expect(personal.duplicateWindowDays).toBe(30);
         // Expired access token alone does NOT cause DISCONNECTED status!
         expect(personal.tokenExpired).toBe(true);
@@ -198,8 +199,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         expect(business.platform).toBe('tiktok');
         expect(business.providerIdentifier).toBe('tiktok-business');
         expect(business.accountType).toBe('business');
-        expect(business.autoPublishEnabled).toBeUndefined();
-        expect(business.dailyPostLimit).toBeUndefined();
+        expect(business).not.toHaveProperty('autoPublishEnabled');
+        expect(business).not.toHaveProperty('dailyPostLimit');
         expect(business.duplicateWindowDays).toBe(60);
         expect(business.status).toBe('ACTIVE');
 
@@ -301,8 +302,8 @@ describe('SNS Studio TikTok Phase 1', () => {
           accountType: 'personal',
           duplicateWindowDays: 60,
         });
-        expect(result.autoPublishEnabled).toBeUndefined();
-        expect(result.dailyPostLimit).toBeUndefined();
+        expect(result).not.toHaveProperty('autoPublishEnabled');
+        expect(result).not.toHaveProperty('dailyPostLimit');
       });
 
       it('throws 404 NOT_FOUND if integration does not belong to organization or is not TikTok', async () => {
@@ -445,7 +446,8 @@ describe('SNS Studio TikTok Phase 1', () => {
         {} as any,
         {} as any,
         {} as any,
-        analyticsAdapter
+        analyticsAdapter,
+        {} as any
       );
     });
 
@@ -483,6 +485,44 @@ describe('SNS Studio TikTok Phase 1', () => {
       expect(source).toContain("@Get('/tiktok/analytics/post/:postId')");
       expect(source).toContain('this.tiktokAnalyticsAdapter.getAccountAnalytics');
       expect(source).toContain('this.tiktokAnalyticsAdapter.getPostAnalytics');
+    });
+  });
+
+  describe('Phase 5: TikTok status controller route', () => {
+    let statusController: SnsStudioController;
+    let statusAdapter: any;
+    const statusOrg = { id: 'org_status', name: 'Status Org' } as any;
+
+    beforeEach(() => {
+      statusAdapter = { getPostStatus: jest.fn() };
+      statusController = new SnsStudioController(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        statusAdapter
+      );
+    });
+
+    it('delegates status retrieval with only organization and Post IDs', async () => {
+      statusAdapter.getPostStatus.mockResolvedValue({ status: 'published' });
+
+      await expect(statusController.tiktokPostStatus(statusOrg, 'post_1')).resolves.toEqual({
+        status: 'published',
+      });
+      expect(statusAdapter.getPostStatus).toHaveBeenCalledWith('org_status', 'post_1');
+    });
+
+    it('exposes the status GET route without adding status logic to the controller', () => {
+      const controllerPath = path.resolve(__dirname, './sns-studio.controller.ts');
+      const source = fs.readFileSync(controllerPath, 'utf8');
+
+      expect(source).toContain("@Get('/tiktok/posts/:postId/status')");
+      expect(source).toContain('this.tiktokStatusAdapter.getPostStatus(org.id, postId)');
     });
   });
 });

@@ -27,6 +27,31 @@ type TikTokPostMetrics = {
   shares: number | null;
 };
 
+type TikTokAccountAnalyticsResponse = {
+  status: 'available' | 'unavailable' | 'error';
+  integrationId: string;
+  platform: 'tiktok';
+  providerIdentifier: TikTokProviderIdentifier;
+  accountType: 'personal' | 'business';
+  capturedAt: string;
+  metrics: TikTokAccountMetrics | null;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
+type TikTokPostAnalyticsResponse = {
+  status: 'draft' | 'pending' | 'error' | 'missing' | 'unavailable' | 'available';
+  postId: string;
+  postState: State;
+  platform: 'tiktok';
+  providerIdentifier: TikTokProviderIdentifier;
+  releaseURL?: string;
+  releaseId?: string;
+  metrics: TikTokPostMetrics | null;
+  errorCode?: string;
+  errorMessage?: string | null;
+};
+
 type TikTokProviderIdentifier = 'tiktok' | 'tiktok-business';
 
 const TIKTOK_PROVIDER_IDENTIFIERS: TikTokProviderIdentifier[] = [
@@ -132,7 +157,7 @@ export class TikTokAnalyticsAdapter {
     organization: Organization,
     integrationId: string,
     date?: string
-  ) {
+  ): Promise<TikTokAccountAnalyticsResponse> {
     const dateKey = resolveTikTokAnalyticsDate(date);
     const integration = await this.prisma.integration.findFirst({
       where: {
@@ -149,16 +174,17 @@ export class TikTokAnalyticsAdapter {
     if (!integration) {
       throw new NotFoundException({ code: 'TIKTOK_INTEGRATION_NOT_FOUND' });
     }
-    if (!isTikTokProvider(integration.providerIdentifier)) {
+    const providerIdentifier = integration.providerIdentifier;
+    if (!isTikTokProvider(providerIdentifier)) {
       throw new BadRequestException({ code: 'TIKTOK_INTEGRATION_NOT_TIKTOK' });
     }
 
-    const accountType =
-      integration.providerIdentifier === 'tiktok-business' ? 'business' : 'personal';
+    const accountType: 'business' | 'personal' =
+      providerIdentifier === 'tiktok-business' ? 'business' : 'personal';
     const responseBase = {
       integrationId: integration.id,
       platform: 'tiktok' as const,
-      providerIdentifier: integration.providerIdentifier,
+      providerIdentifier,
       accountType,
     };
 
@@ -202,7 +228,7 @@ export class TikTokAnalyticsAdapter {
     organization: Organization,
     postId: string,
     date?: string
-  ) {
+  ): Promise<TikTokPostAnalyticsResponse> {
     const dateKey = resolveTikTokAnalyticsDate(date);
     const post = await this.prisma.post.findFirst({
       where: {

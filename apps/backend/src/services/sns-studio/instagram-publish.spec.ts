@@ -1,6 +1,18 @@
 import { HttpException } from '@nestjs/common';
 import { SnsStudioController } from '../../api/routes/sns-studio.controller';
 
+jest.mock('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: { sanitize: (value: any) => value },
+  sanitize: (value: any) => value,
+}));
+jest.mock('nostr-tools', () => ({
+  getPublicKey: jest.fn(),
+  Relay: jest.fn(),
+  finalizeEvent: jest.fn(),
+  SimplePool: jest.fn(),
+}));
+jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
 jest.mock(
   '@gitroom/nestjs-libraries/user/org.from.request',
   () => ({ GetOrgFromRequest: () => () => undefined }),
@@ -41,7 +53,7 @@ describe('SnsStudioController.publishReel failure handling', () => {
         update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockRejectedValue(new HttpException({ code: 'IG_UPLOAD_FAILED' }, 502));
     (controller as any).account = jest.fn().mockResolvedValue({ id: 'account-1' });
     (controller as any).preflightReel = jest.fn().mockResolvedValue({ ready: true, warnings: [] });
@@ -101,7 +113,7 @@ describe('SnsStudioController.listAccounts organization scope', () => {
         ),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockResolvedValue({ status: 'GREEN', session: 'VALID' });
     (controller as any).worker = worker;
     return { controller, prisma, worker };

@@ -42,7 +42,7 @@ describe('TikTokPublishAdapter', () => {
     token: 'valid_personal_token',
     disabled: false,
     refreshNeeded: false,
-    deletedAt: null,
+    deletedAt: null as Date | null,
   };
   const testBusinessIntegration = {
     id: 'int_business',
@@ -51,7 +51,7 @@ describe('TikTokPublishAdapter', () => {
     token: 'valid_business_token',
     disabled: false,
     refreshNeeded: false,
-    deletedAt: null,
+    deletedAt: null as Date | null,
   };
 
   beforeEach(() => {
@@ -762,7 +762,7 @@ describe('TikTokPublishAdapter', () => {
 
     it('allows different TikTok integrations to enter Postiz creation concurrently', async () => {
       const integrationIds = ['int_personal', 'int_business'];
-      mockPrisma.integration.findFirst.mockImplementation(async ({ where }) => ({
+      mockPrisma.integration.findFirst.mockImplementation(async ({ where }: any) => ({
         ...testPersonalIntegration,
         id: where.id,
         providerIdentifier: 'tiktok',
@@ -772,14 +772,14 @@ describe('TikTokPublishAdapter', () => {
           duplicateWindowDays: 0,
         },
       });
-      mockPrisma.post.findMany.mockImplementation(async ({ where }) => [
+      mockPrisma.post.findMany.mockImplementation(async ({ where }: any) => [
         {
           id: `existing-${where.integrationId}`,
           organizationId: orgId,
           integrationId: where.integrationId,
           state: 'PUBLISHED',
           publishDate: new Date(Date.now() - 60 * 60 * 1000),
-          deletedAt: null,
+          deletedAt: null as Date | null,
           settings: '{"content_posting_method":"DIRECT_POST"}',
           image: '[]',
         },
@@ -790,7 +790,7 @@ describe('TikTokPublishAdapter', () => {
       const bothMappingsStarted = new Promise<void>((resolve) => {
         releaseMappingBarrier = resolve;
       });
-      mockPostsService.mapTypeToPost.mockImplementation(async (dto) => {
+      mockPostsService.mapTypeToPost.mockImplementation(async (dto: any) => {
         mappingCalls += 1;
         if (mappingCalls === integrationIds.length) releaseMappingBarrier();
         await bothMappingsStarted;

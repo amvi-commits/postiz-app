@@ -11,7 +11,7 @@ function makePost(overrides: Record<string, unknown> = {}) {
     integrationId: INTEGRATION_ID,
     state: 'PUBLISHED',
     publishDate: new Date(NOW.getTime() - 60 * 60 * 1000),
-    deletedAt: null,
+    deletedAt: null as Date | null,
     settings: '{"content_posting_method":"DIRECT_POST"}',
     image: JSON.stringify([{ id: 'media_1', path: '/uploads/video.mp4' }]),
     ...overrides,
@@ -26,7 +26,17 @@ function setup(settingValue?: unknown, posts: any[] = []) {
       ),
     },
     post: {
-      findMany: jest.fn().mockResolvedValue(posts),
+      findMany: jest.fn().mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          posts.filter((post) => {
+            const publishDate = new Date(post.publishDate);
+            return (
+              publishDate >= where.publishDate.gte &&
+              publishDate <= where.publishDate.lte
+            );
+          })
+        )
+      ),
     },
   };
 
@@ -259,6 +269,42 @@ describe('TikTokPublishGuard', () => {
       await expect(
         guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
       ).resolves.toMatchObject({ duplicateDetected: false });
+    });
+
+    it.each(['QUEUE', 'PUBLISHED'])(
+      'excludes future %s posts from duplicate history',
+      async (state) => {
+        const { guard, prisma } = setup(undefined, [
+          makePost({
+            state,
+            publishDate: new Date(NOW.getTime() + 60 * 60 * 1000),
+          }),
+        ]);
+
+        await expect(
+          guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+        ).resolves.toMatchObject({ duplicateDetected: false });
+        expect(prisma.post.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              publishDate: {
+                gte: new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
+                lte: NOW,
+              },
+            }),
+          })
+        );
+      }
+    );
+
+    it('includes a duplicate published exactly at now in bounded history', async () => {
+      const { guard } = setup(undefined, [makePost({ publishDate: NOW })]);
+
+      await expect(
+        guard.check(guardInput({ media: [{ id: 'media_1', path: '/uploads/video.mp4' }] }))
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_DUPLICATE_MEDIA', matchedPostId: 'post_1' },
+      });
     });
 
     it('applies a custom duplicateWindowDays value', async () => {
