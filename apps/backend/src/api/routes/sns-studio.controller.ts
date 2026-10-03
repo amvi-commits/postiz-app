@@ -36,6 +36,7 @@ import { MediaService } from '@gitroom/nestjs-libraries/database/prisma/media/me
 import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
 import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.upload.validation';
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
+import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -212,6 +213,7 @@ export class SnsStudioController {
     private readonly accountProtection: AccountProtectionService,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
     private readonly tiktokPublishAdapter: TikTokPublishAdapter,
+    private readonly tiktokAnalyticsAdapter: TikTokAnalyticsAdapter,
   ) {}
 
   private protectedInstagram<T>(org: Organization, accountId: string, action: ProtectedAction, operation: () => Promise<T>) {
@@ -1021,6 +1023,24 @@ export class SnsStudioController {
     @Body() body: TikTokPublishDto
   ) {
     return this.tiktokPublishAdapter.publish(org.id, body as any);
+  }
+
+  @Get('/tiktok/analytics/account/:integrationId')
+  tiktokAccountAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Param('integrationId') integrationId: string,
+    @Query('date') date?: string
+  ) {
+    return this.tiktokAnalyticsAdapter.getAccountAnalytics(org, integrationId, date);
+  }
+
+  @Get('/tiktok/analytics/post/:postId')
+  tiktokPostAnalytics(
+    @GetOrgFromRequest() org: Organization,
+    @Param('postId') postId: string,
+    @Query('date') date?: string
+  ) {
+    return this.tiktokAnalyticsAdapter.getPostAnalytics(org, postId, date);
   }
 
   // ---------------------------------------------------------------------------

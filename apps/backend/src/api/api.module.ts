@@ -69,6 +69,7 @@ import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studi
 import { AccountProtectionController } from '@gitroom/backend/api/routes/account-protection.controller';
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 import { TikTokPublishGuard } from '@gitroom/backend/services/sns-studio/tiktok-publish.guard';
+import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 
 const authenticatedController = [
   UsersController,
@@ -151,6 +152,7 @@ const authenticatedController = [
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
     TikTokPublishAdapter,
     TikTokPublishGuard,
+    TikTokAnalyticsAdapter,
   ],
   get exports() {
     return [...this.imports, ...this.providers];
