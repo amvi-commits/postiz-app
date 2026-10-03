@@ -1,5 +1,3 @@
-import type { MetricData, ResourceMetrics, ScopeMetrics } from '@opentelemetry/sdk-metrics';
-import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { AccountProtectionService, accountProtectionMetricAttributes, retryAfterMilliseconds, sanitizeAccountSecurityMetadata } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection.service';
 import { LocalEncryptedSecretStore } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-secret-store';
 import { flushAccountProtectionTelemetry, recordAccountProtectionEvent, startAccountProtectionTelemetry, stopAccountProtectionTelemetry } from '../../../../../libraries/nestjs-libraries/src/database/prisma/account-protection-telemetry';
@@ -33,8 +31,8 @@ describe('SNS Studio account protection safety primitives', () => {
       expect(result.metrics.length).toBeGreaterThan(0);
       expect(result.spans.length).toBeGreaterThan(0);
       const attributes = JSON.stringify({
-        metrics: result.metrics.flatMap((resource: ResourceMetrics) => resource.scopeMetrics.flatMap((scope: ScopeMetrics) => scope.metrics.flatMap((metric: MetricData) => metric.dataPoints.map((point: MetricData['dataPoints'][number]) => point.attributes)))),
-        spans: result.spans.map((span: ReadableSpan) => span.attributes),
+        metrics: result.metrics.flatMap((resource: import('@opentelemetry/sdk-metrics').ResourceMetrics) => resource.scopeMetrics.flatMap((scope: import('@opentelemetry/sdk-metrics').ScopeMetrics) => scope.metrics.flatMap((metric: import('@opentelemetry/sdk-metrics').MetricData) => metric.dataPoints.map((point: import('@opentelemetry/sdk-metrics').MetricData['dataPoints'][number]) => point.attributes)))),
+        spans: result.spans.map((span: import('@opentelemetry/sdk-trace-base').ReadableSpan) => span.attributes),
       });
       expect(attributes).not.toContain('accountId');
       expect(attributes).not.toContain('token');
