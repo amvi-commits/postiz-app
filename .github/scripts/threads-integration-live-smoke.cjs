@@ -454,9 +454,12 @@ async function runBrowserSmoke(database, testFixture) {
   await page.waitForTimeout(5000);
   const calendarStableCount = networkRecords.filter((item) => item.path === calendarPath).length - calendarBefore;
   assert(calendarStableCount === 1, 'Calendar revalidation loop detected; initial fetch count was ' + calendarStableCount + '.');
-  const refreshCalendarResponse = page.waitForResponse((response) => backendPath(response.url()) === calendarPath && response.request().method() === 'GET', { timeout: 30000 });
+  const refreshCalendarResult = page.waitForResponse((response) => backendPath(response.url()) === calendarPath && response.request().method() === 'GET', { timeout: 30000 })
+    .then((response) => ({ response }), (error) => ({ error }));
   await page.getByRole('button', { name: '更新', exact: true }).click();
-  const refreshedCalendar = await refreshCalendarResponse;
+  const refreshResult = await refreshCalendarResult;
+  assert(!refreshResult.error, 'Calendar refresh response was not observed: ' + (refreshResult.error?.message || 'unknown error'));
+  const refreshedCalendar = refreshResult.response;
   assert(refreshedCalendar.ok(), 'Manual calendar refresh failed with ' + refreshedCalendar.status());
   summary.calendarResponses = networkRecords.filter((item) => item.path === calendarPath).length - calendarBefore;
   await page.waitForTimeout(2500);
