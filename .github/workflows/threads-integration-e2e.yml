@@ -336,17 +336,30 @@ jobs:
           })().catch((error) => { console.error(error.message); process.exit(1); });
           NODE
 
-      - name: Production backend and frontend typecheck/build
+      - name: Backend typecheck
+        id: backend_typecheck
+        continue-on-error: true
         shell: bash
-        run: |
-          set -euo pipefail
-          pnpm exec tsc --noEmit --project apps/backend/tsconfig.json
-          pnpm --filter ./apps/backend run build
-          pnpm exec tsc --noEmit --project apps/frontend/tsconfig.json
-          NODE_ENV=production pnpm --filter ./apps/frontend run build
+        run: pnpm exec tsc --noEmit --project apps/backend/tsconfig.json
+
+      - name: Production backend build
+        id: backend_build
+        continue-on-error: true
+        run: pnpm --filter ./apps/backend run build
+
+      - name: Frontend typecheck
+        id: frontend_typecheck
+        continue-on-error: true
+        run: pnpm exec tsc --noEmit --project apps/frontend/tsconfig.json
+
+      - name: Production frontend build
+        id: frontend_build
+        continue-on-error: true
+        run: NODE_ENV=production pnpm --filter ./apps/frontend run build
 
       - name: Start Current Integration backend and frontend
         id: servers
+        if: ${{ steps.backend_build.outcome == 'success' && steps.frontend_build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -399,6 +412,7 @@ jobs:
 
       - name: Run authenticated live Browser Smoke
         id: browser
+        if: ${{ steps.servers.outcome == 'success' }}
         env:
           THREADS_CI_EGRESS_LOG: ${{ runner.temp }}/threads-ci-egress.jsonl
           THREADS_CI_ARTIFACT_DIR: ${{ runner.temp }}/threads-ci
@@ -444,8 +458,25 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce backend and frontend check results
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        env:
+          BACKEND_TYPECHECK: ${{ steps.backend_typecheck.outcome }}
+          BACKEND_BUILD: ${{ steps.backend_build.outcome }}
+          FRONTEND_TYPECHECK: ${{ steps.frontend_typecheck.outcome }}
+          FRONTEND_BUILD: ${{ steps.frontend_build.outcome }}
+        run: |
+          set -euo pipefail
+          printf 'Backend typecheck: %s\nBackend build: %s\nFrontend typecheck: %s\nFrontend build: %s\n' \
+            "$BACKEND_TYPECHECK" "$BACKEND_BUILD" "$FRONTEND_TYPECHECK" "$FRONTEND_BUILD"
+          if [[ "$BACKEND_TYPECHECK" != success || "$BACKEND_BUILD" != success || "$FRONTEND_TYPECHECK" != success || "$FRONTEND_BUILD" != success ]]; then
+            echo 'At least one production typecheck/build validation failed.' >&2
+            exit 1
+          fi
+
       - name: Upload failed-run CI diagnostics
-        if: ${{ always() && steps.full_jest.outcome != 'success' }}
+        if: ${{ always() && (steps.full_jest.outcome != 'success' || steps.backend_typecheck.outcome != 'success' || steps.backend_build.outcome != 'success' || steps.frontend_typecheck.outcome != 'success' || steps.frontend_build.outcome != 'success' || steps.servers.outcome == 'failure' || steps.browser.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: threads-integration-e2e-failure-diagnostics
@@ -462,3 +493,4 @@ jobs:
             ${{ runner.temp }}/threads-db-e2e.log
             ${{ runner.temp }}/threads-capabilities.log
             ${{ runner.temp }}/threads-schema-drift.txt
+
