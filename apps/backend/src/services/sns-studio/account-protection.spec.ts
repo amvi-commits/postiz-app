@@ -31,8 +31,8 @@ describe('SNS Studio account protection safety primitives', () => {
       expect(result.metrics.length).toBeGreaterThan(0);
       expect(result.spans.length).toBeGreaterThan(0);
       const attributes = JSON.stringify({
-        metrics: result.metrics.flatMap((resource) => resource.scopeMetrics.flatMap((scope) => scope.metrics.flatMap((metric) => metric.dataPoints.map((point) => point.attributes)))),
-        spans: result.spans.map((span) => span.attributes),
+        metrics: result.metrics.flatMap((resource: import('@opentelemetry/sdk-metrics').ResourceMetrics) => resource.scopeMetrics.flatMap((scope: import('@opentelemetry/sdk-metrics').ScopeMetrics) => scope.metrics.flatMap((metric: import('@opentelemetry/sdk-metrics').MetricData) => metric.dataPoints.map((point: import('@opentelemetry/sdk-metrics').MetricData['dataPoints'][number]) => point.attributes)))),
+        spans: result.spans.map((span: import('@opentelemetry/sdk-trace-base').ReadableSpan) => span.attributes),
       });
       expect(attributes).not.toContain('accountId');
       expect(attributes).not.toContain('token');
