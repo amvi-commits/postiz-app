@@ -40,7 +40,11 @@ describe('SNS Studio TikTok Phase 1', () => {
         mockPrisma,
         {} as any,
         {} as any,
-        {} as any
+        {} as any,
+        {
+          run: jest.fn(async (_context: unknown, operation: () => Promise<unknown>) => operation()),
+        } as any,
+        { generate: jest.fn().mockResolvedValue('') } as any
       );
     });
 
