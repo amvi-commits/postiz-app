@@ -11,6 +11,21 @@ jest.mock(
   () => ({ PrismaService: class PrismaService {} }),
   { virtual: true },
 );
+jest.mock(
+  '@gitroom/nestjs-libraries/database/prisma/media/media.service',
+  () => ({ MediaService: class MediaService {} }),
+  { virtual: true },
+);
+jest.mock(
+  '@gitroom/nestjs-libraries/upload/upload.factory',
+  () => ({ UploadFactory: { createStorage: jest.fn(() => ({})) } }),
+  { virtual: true },
+);
+jest.mock(
+  '@gitroom/nestjs-libraries/upload/custom.upload.validation',
+  () => ({ uploadStreamToStorage: jest.fn() }),
+  { virtual: true },
+);
 jest.mock('@gitroom/helpers/utils/shuffle-bag', () => ({ chooseShuffleBagItem: jest.fn() }), { virtual: true });
 jest.mock('@gitroom/backend/services/sns-studio/google-drive.storage', () => ({ GoogleDriveStorageProvider: class {} }), { virtual: true });
 jest.mock('@gitroom/backend/services/sns-studio/google-drive.generation-provider', () => ({ GoogleDriveGenerationProvider: class {} }), { virtual: true });
@@ -26,7 +41,7 @@ describe('SnsStudioController.publishReel failure handling', () => {
         update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockRejectedValue(new HttpException({ code: 'IG_UPLOAD_FAILED' }, 502));
     (controller as any).account = jest.fn().mockResolvedValue({ id: 'account-1' });
     (controller as any).preflightReel = jest.fn().mockResolvedValue({ ready: true, warnings: [] });
@@ -86,7 +101,7 @@ describe('SnsStudioController.listAccounts organization scope', () => {
         ),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockResolvedValue({ status: 'GREEN', session: 'VALID' });
     (controller as any).worker = worker;
     return { controller, prisma, worker };

@@ -34,6 +34,10 @@ import {
   ResolveCommentDto,
 } from '@gitroom/nestjs-libraries/dtos/comments/add.comment.dto';
 import { RealIP } from 'nestjs-real-ip';
+import {
+  CommonPublishMode,
+  CommonPublishingService,
+} from '@gitroom/backend/services/sns-studio/common-publishing.service';
 
 @ApiTags('Posts')
 @Controller('/posts')
@@ -41,7 +45,8 @@ export class PostsController {
   constructor(
     private _postsService: PostsService,
     private _agentGraphService: AgentGraphService,
-    private _shortLinkService: ShortLinkService
+    private _shortLinkService: ShortLinkService,
+    private _commonPublishingService: CommonPublishingService
   ) {}
 
   @Get('/:id/statistics')
@@ -234,6 +239,27 @@ export class PostsController {
           fail(item, 'post is too long, please fix it');
         }
       }
+    }
+
+    if (typeof rawBody?.snsStudioContentPlanId === 'string') {
+      if (rawBody.type === 'update') {
+        throw new HttpException(
+          { code: 'COMMON_PLAN_UPDATE_UNSUPPORTED' },
+          400
+        );
+      }
+      const mode: CommonPublishMode =
+        rawBody.type === 'draft'
+          ? 'draft'
+          : rawBody.type === 'now'
+            ? 'now'
+            : 'schedule';
+      await this._commonPublishingService.assertPlanAllowsPost(
+        org.id,
+        rawBody.snsStudioContentPlanId,
+        mode,
+        rawBody?.posts || []
+      );
     }
 
     const body = await this._postsService.mapTypeToPost(rawBody, org.id);

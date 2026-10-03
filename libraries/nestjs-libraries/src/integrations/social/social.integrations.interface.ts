@@ -1,4 +1,17 @@
-import { Integration } from '@prisma/client';
+import { Integration, State } from '@prisma/client';
+
+export type CommonPostPublicationContext = {
+  state: State;
+  settings?: string | null;
+  releaseId?: string | null;
+  releaseURL?: string | null;
+};
+
+export type ProviderPublicationDetail = {
+  providerStatus: string;
+  label: string;
+  publicPublication: boolean;
+};
 
 export interface ClientInformation {
   client_id: string;
@@ -34,6 +47,9 @@ export interface IAuthenticator {
     postId: string,
     fromDate: number,
   ): Promise<AnalyticsData[]>;
+  commonPostPublicationDetail?(
+    post: CommonPostPublicationContext
+  ): ProviderPublicationDetail | undefined;
   changeNickname?(
     id: string,
     accessToken: string,

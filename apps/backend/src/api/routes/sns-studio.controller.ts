@@ -15,10 +15,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
-import { Organization } from '@prisma/client';
+import { Organization, Prisma } from '@prisma/client';
 import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { createReadStream, existsSync, readFileSync, statSync, unlinkSync } from 'fs';
+import { Readable } from 'stream';
 import { randomUUID } from 'crypto';
 import { extname, resolve, sep } from 'path';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
@@ -30,6 +31,9 @@ import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-stu
 import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import type { CaptionProvider } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
 import { normalizeInstagramMetrics } from '@gitroom/backend/services/sns-studio/instagram-metrics';
+import { MediaService } from '@gitroom/nestjs-libraries/database/prisma/media/media.service';
+import { UploadFactory } from '@gitroom/nestjs-libraries/upload/upload.factory';
+import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.upload.validation';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -169,10 +173,12 @@ class CaptionGenerateDto {
 export class SnsStudioController {
   private readonly cleanupAt = new Map<string, number>();
   private readonly activePipelines = new Set<string>();
+  private readonly postizStorage = UploadFactory.createStorage();
   constructor(
     private readonly prisma: PrismaService,
     private readonly googleDrive: GoogleDriveStorageProvider,
     private readonly generationProvider: GoogleDriveGenerationProvider,
+    private readonly mediaService: MediaService,
     @Inject(SNS_STUDIO_CAPTION_PROVIDER) private readonly captionProvider: CaptionProvider,
   ) {}
 
@@ -247,6 +253,317 @@ export class SnsStudioController {
     });
     if (!account) throw new HttpException('Account not found', HttpStatus.NOT_FOUND);
     return account;
+  }
+
+  private snsPlatform(providerIdentifier: string) {
+    if (providerIdentifier.startsWith('instagram')) return 'instagram';
+    if (providerIdentifier.startsWith('tiktok')) return 'tiktok';
+    if (providerIdentifier === 'youtube') return 'youtube';
+    if (providerIdentifier === 'threads') return 'threads';
+    if (providerIdentifier === 'x') return 'x';
+    return providerIdentifier;
+  }
+
+  private snsHashtags(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => (item.startsWith('#') ? item : `#${item}`));
+  }
+
+  private snsOptionalDate(value: unknown, code: string): Date | null {
+    if (value === undefined || value === null || value === '') return null;
+    const text = String(value);
+    const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
+      ? `${text}Z`
+      : text;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      throw new HttpException({ code }, HttpStatus.BAD_REQUEST);
+    }
+    return date;
+  }
+
+  private async contentPlan(organizationId: string, id: string) {
+    return this.prisma.snsContent.findFirst({
+      where: { id, organizationId },
+      include: {
+        originalAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } },
+        variants: {
+          include: { mediaAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } } },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        },
+        platformOverrides: { orderBy: { platform: 'asc' } },
+        deliveries: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  private async saveContentPlan(
+    organizationId: string,
+    body: Record<string, any>,
+    contentId?: string
+  ) {
+    const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+    const commonContent = typeof body.commonContent === 'string' ? body.commonContent : '';
+    const commonHashtags = this.snsHashtags(body.commonHashtags);
+    const commonScheduledAt = this.snsOptionalDate(body.commonScheduledAt, 'COMMON_SCHEDULE_INVALID');
+    const originalAssetId = typeof body.originalAssetId === 'string' && body.originalAssetId ? body.originalAssetId : null;
+    const platformOverrides = Array.isArray(body.platformOverrides) ? body.platformOverrides : [];
+    const deliveryInput = Array.isArray(body.deliveries) ? body.deliveries : [];
+    const variantInput = Array.isArray(body.variants) ? body.variants : [];
+
+    const assetIds = Array.from(
+      new Set([
+        ...(originalAssetId ? [originalAssetId] : []),
+        ...variantInput
+          .map((variant: any) => String(variant?.mediaAssetId || ''))
+          .filter(Boolean),
+      ])
+    );
+    if (assetIds.length) {
+      const assets = await this.prisma.snsMediaAsset.findMany({
+        where: { id: { in: assetIds }, organizationId },
+        select: { id: true },
+      });
+      if (assets.length !== assetIds.length) {
+        throw new HttpException({ code: 'CONTENT_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+      }
+    }
+
+    const integrationIds = Array.from(
+      new Set(
+        deliveryInput
+          .map((delivery: any) => String(delivery?.integrationId || ''))
+          .filter(Boolean)
+      )
+    );
+    const integrations = integrationIds.length
+      ? await this.prisma.integration.findMany({
+          where: {
+            id: { in: integrationIds },
+            organizationId,
+            deletedAt: null,
+            disabled: false,
+          },
+        })
+      : [];
+    if (integrations.length !== integrationIds.length) {
+      throw new HttpException({ code: 'CONTENT_DELIVERY_ACCOUNT_INVALID' }, HttpStatus.BAD_REQUEST);
+    }
+    const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
+
+    const existing = contentId ? await this.contentPlan(organizationId, contentId) : null;
+    if (contentId && !existing) {
+      throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    if (existing?.deliveries.some((delivery) => delivery.status !== 'PLANNED')) {
+      throw new HttpException({ code: 'CONTENT_PLAN_LOCKED_AFTER_POSTIZ_CREATE' }, HttpStatus.CONFLICT);
+    }
+
+    const savedId = await this.prisma.$transaction(async (tx) => {
+      const content = existing
+        ? await tx.snsContent.update({
+            where: { id: existing.id },
+            data: {
+              title: title || null,
+              commonContent,
+              commonHashtags: commonHashtags as any,
+              commonScheduledAt,
+              originalAssetId,
+              status: deliveryInput.length ? 'READY' : 'DRAFT',
+            },
+          })
+        : await tx.snsContent.create({
+            data: {
+              organizationId,
+              title: title || null,
+              commonContent,
+              commonHashtags: commonHashtags as any,
+              commonScheduledAt,
+              originalAssetId,
+              status: deliveryInput.length ? 'READY' : 'DRAFT',
+            },
+          });
+
+      let variants = [...(existing?.variants || [])];
+      for (let index = 0; index < variantInput.length; index += 1) {
+        const item = variantInput[index];
+        const mediaAssetId =
+          typeof item?.mediaAssetId === 'string' ? item.mediaAssetId : '';
+        if (!mediaAssetId) continue;
+        const makeDefault =
+          item.isDefault === true || (!variants.length && index === 0);
+        if (makeDefault) {
+          await tx.snsContentVariant.updateMany({
+            where: { contentId: content.id },
+            data: { isDefault: false },
+          });
+          variants = variants.map((variant: any) => ({
+            ...variant,
+            isDefault: false,
+          }));
+        }
+        const variant = await tx.snsContentVariant.upsert({
+          where: {
+            contentId_mediaAssetId: {
+              contentId: content.id,
+              mediaAssetId,
+            },
+          },
+          create: {
+            contentId: content.id,
+            mediaAssetId,
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim().slice(0, 100)
+                : `Variant ${index + 1}`,
+            isDefault: makeDefault,
+            metadata:
+              item.metadata &&
+              typeof item.metadata === 'object' &&
+              !Array.isArray(item.metadata)
+                ? item.metadata as any
+                : undefined,
+          },
+          update: {
+            name:
+              typeof item.name === 'string' && item.name.trim()
+                ? item.name.trim().slice(0, 100)
+                : undefined,
+            ...(makeDefault ? { isDefault: true } : {}),
+            metadata:
+              item.metadata &&
+              typeof item.metadata === 'object' &&
+              !Array.isArray(item.metadata)
+                ? item.metadata as any
+                : undefined,
+          },
+        });
+        variants = [
+          ...variants.filter(
+            (candidate: any) => candidate.mediaAssetId !== mediaAssetId
+          ),
+          variant as any,
+        ];
+      }
+
+      if (
+        originalAssetId &&
+        !variants.some(
+          (variant: any) => variant.mediaAssetId === originalAssetId
+        )
+      ) {
+        const makeDefault = !variants.some((variant: any) => variant.isDefault);
+        const variant = await tx.snsContentVariant.create({
+          data: {
+            contentId: content.id,
+            mediaAssetId: originalAssetId,
+            name: 'Default',
+            isDefault: makeDefault,
+          },
+        });
+        variants = [...variants, variant as any];
+      }
+
+      await tx.snsContentPlatformOverride.deleteMany({ where: { contentId: content.id } });
+      for (const item of platformOverrides) {
+        const platform = typeof item?.platform === 'string' ? item.platform.trim().toLowerCase() : '';
+        if (!platform) continue;
+        await tx.snsContentPlatformOverride.create({
+          data: {
+            contentId: content.id,
+            platform,
+            contentOverride: typeof item.contentOverride === 'string' && item.contentOverride !== '' ? item.contentOverride : null,
+            hashtagsOverride: Array.isArray(item.hashtagsOverride) ? this.snsHashtags(item.hashtagsOverride) as any : undefined,
+            scheduledAtOverride: this.snsOptionalDate(item.scheduledAtOverride, 'PLATFORM_SCHEDULE_INVALID'),
+            settingsOverride: item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride) ? item.settingsOverride as any : undefined,
+          },
+        });
+      }
+
+      await tx.snsDelivery.deleteMany({ where: { contentId: content.id, status: 'PLANNED' } });
+      const defaultVariant = variants.find((variant: any) => variant.isDefault) || variants[0];
+      const platformMap = new Map(
+        platformOverrides
+          .filter((item: any) => typeof item?.platform === 'string')
+          .map((item: any) => [String(item.platform).trim().toLowerCase(), item])
+      );
+
+      for (const item of deliveryInput) {
+        const integration = integrationById.get(String(item.integrationId || ''));
+        if (!integration) continue;
+        const platform = this.snsPlatform(integration.providerIdentifier);
+        const platformOverride: any = platformMap.get(platform) || {};
+        const resolvedContent =
+          typeof item.contentOverride === 'string' && item.contentOverride !== ''
+            ? item.contentOverride
+            : typeof platformOverride.contentOverride === 'string' && platformOverride.contentOverride !== ''
+              ? platformOverride.contentOverride
+              : commonContent;
+        const resolvedHashtags = Array.isArray(item.hashtagsOverride)
+          ? this.snsHashtags(item.hashtagsOverride)
+          : Array.isArray(platformOverride.hashtagsOverride)
+            ? this.snsHashtags(platformOverride.hashtagsOverride)
+            : commonHashtags;
+        const resolvedScheduledAt =
+          this.snsOptionalDate(item.scheduledAtOverride, 'ACCOUNT_SCHEDULE_INVALID') ||
+          this.snsOptionalDate(platformOverride.scheduledAtOverride, 'PLATFORM_SCHEDULE_INVALID') ||
+          commonScheduledAt;
+        const accountSettings =
+          item.settingsOverride && typeof item.settingsOverride === 'object' && !Array.isArray(item.settingsOverride)
+            ? item.settingsOverride
+            : {};
+        const requestedVariantId =
+          typeof item.variantId === 'string' ? item.variantId : null;
+        const requestedVariantAssetId =
+          typeof item.variantAssetId === 'string' ? item.variantAssetId : null;
+        const requestedVariant =
+          (requestedVariantAssetId &&
+            variants.find(
+              (candidate: any) =>
+                candidate.mediaAssetId === requestedVariantAssetId
+            )) ||
+          (requestedVariantId &&
+            variants.find(
+              (candidate: any) => candidate.id === requestedVariantId
+            )) ||
+          null;
+        if (
+          (requestedVariantAssetId || requestedVariantId) &&
+          !requestedVariant
+        ) {
+          throw new HttpException(
+            { code: 'CONTENT_VARIANT_INVALID' },
+            HttpStatus.BAD_REQUEST
+          );
+        }
+        const variant = requestedVariant || defaultVariant || null;
+
+        await tx.snsDelivery.create({
+          data: {
+            contentId: content.id,
+            variantId: variant?.id || null,
+            integrationId: integration.id,
+            providerIdentifier: integration.providerIdentifier,
+            accountName: integration.name,
+            contentOverride: typeof item.contentOverride === 'string' && item.contentOverride !== '' ? item.contentOverride : null,
+            hashtagsOverride: Array.isArray(item.hashtagsOverride) ? this.snsHashtags(item.hashtagsOverride) as any : undefined,
+            scheduledAtOverride: this.snsOptionalDate(item.scheduledAtOverride, 'ACCOUNT_SCHEDULE_INVALID'),
+            settingsOverride: Object.keys(accountSettings).length ? accountSettings as any : undefined,
+            resolvedContent,
+            resolvedHashtags: resolvedHashtags as any,
+            resolvedScheduledAt,
+          },
+        });
+      }
+
+      return content.id;
+    });
+
+    return this.contentPlan(organizationId, savedId);
   }
 
   private async updateInstagramLoginStatus(accountId: string, error: unknown) {
@@ -348,7 +665,8 @@ export class SnsStudioController {
           const media = await tx.snsMediaAsset.create({
             data: { organizationId: org.id, source: 'GOOGLE_DRIVE', storageKey: mediaPath, fileName: cleanName, mimeType: file.mimeType, sizeBytes: size, isOriginal: true },
           });
-          const data = {
+          const data: Prisma.SnsContentInboxItemUncheckedCreateInput = {
+            organizationId: org.id,
             fileName: cleanName,
             mediaType,
             sizeBytes: size,
@@ -723,6 +1041,97 @@ export class SnsStudioController {
     });
   }
 
+  @Post('/media-assets/:id/post-media')
+  async createPostMedia(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { id, organizationId: org.id },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    const metadata =
+      asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+        ? (asset.metadata as Record<string, unknown>)
+        : {};
+
+    const cachedMediaId =
+      typeof metadata.postizMediaId === 'string' ? metadata.postizMediaId : undefined;
+    if (cachedMediaId) {
+      const cached = await this.mediaService
+        .getMediaStatus(org.id, cachedMediaId)
+        .catch(() => null);
+      if (cached) {
+        return { media: cached, sourceAssetId: asset.id, reused: true };
+      }
+    }
+
+    if (!asset.storageKey.startsWith('/uploads/')) {
+      throw new HttpException(
+        { code: 'MEDIA_ASSET_STORAGE_UNSUPPORTED' },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    const uploadRoot = resolve(process.env.UPLOAD_DIRECTORY || './uploads');
+    const filePath = resolve(
+      uploadRoot,
+      asset.storageKey.slice('/uploads/'.length)
+    );
+    if (
+      !filePath.startsWith(`${uploadRoot}${sep}`) ||
+      !existsSync(filePath) ||
+      !statSync(filePath).isFile()
+    ) {
+      throw new HttpException({ code: 'MEDIA_ASSET_FILE_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    let media: any;
+    if ((process.env.STORAGE_PROVIDER || 'local') === 'local') {
+      const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+      if (!frontendUrl) {
+        throw new ServiceUnavailableException({ code: 'FRONTEND_URL_NOT_CONFIGURED' });
+      }
+      media = await this.mediaService.saveFile(
+        org.id,
+        asset.fileName,
+        `${frontendUrl}${asset.storageKey}`,
+        asset.fileName
+      );
+    } else {
+      const size = statSync(filePath).size;
+      const webStream = Readable.toWeb(createReadStream(filePath)) as any;
+      const uploaded = await uploadStreamToStorage(
+        this.postizStorage,
+        webStream,
+        size
+      );
+      media = await this.mediaService.saveFile(
+        org.id,
+        uploaded.filename,
+        uploaded.path,
+        asset.fileName
+      );
+    }
+
+    await this.prisma.snsMediaAsset.update({
+      where: { id: asset.id },
+      data: {
+        metadata: {
+          ...metadata,
+          postizMediaId: media.id,
+          postizMediaPath: media.path,
+          postizMediaBridgedAt: new Date().toISOString(),
+        } as any,
+      },
+    });
+
+    return { media, sourceAssetId: asset.id, reused: false };
+  }
+
   @Get('/media/health')
   mediaHealth() {
     return this.mediaWorker('/health');
@@ -1012,9 +1421,152 @@ export class SnsStudioController {
     return this.prisma.snsInstagramAccount.update({ where: { id: accountId }, data: { defaultStoryPoolId: poolId } });
   }
 
+  @Get('/content-plans')
+  listContentPlans(@GetOrgFromRequest() org: Organization) {
+    return this.prisma.snsContent.findMany({
+      where: { organizationId: org.id },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+      include: {
+        originalAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } },
+        variants: {
+          include: { mediaAsset: { select: { id: true, storageKey: true, fileName: true, mimeType: true, width: true, height: true, duration: true } } },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        },
+        platformOverrides: true,
+        deliveries: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+  }
+
+  @Get('/content-plans/:id')
+  async getContentPlan(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    return plan;
+  }
+
+  @Post('/content-plans')
+  createContentPlan(@GetOrgFromRequest() org: Organization, @Body() body: Record<string, any>) {
+    return this.saveContentPlan(org.id, body);
+  }
+
+  @Put('/content-plans/:id')
+  updateContentPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: Record<string, any>
+  ) {
+    return this.saveContentPlan(org.id, body, id);
+  }
+
+  @Post('/content-plans/:id/variants')
+  async addContentVariant(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: Record<string, any>
+  ) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const mediaAssetId = typeof body.mediaAssetId === 'string' ? body.mediaAssetId : '';
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { id: mediaAssetId, organizationId: org.id },
+    });
+    if (!asset) throw new HttpException({ code: 'CONTENT_ASSET_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const makeDefault = body.isDefault === true || plan.variants.length === 0;
+    const variant = await this.prisma.$transaction(async (tx) => {
+      if (makeDefault) {
+        await tx.snsContentVariant.updateMany({ where: { contentId: id }, data: { isDefault: false } });
+      }
+      return tx.snsContentVariant.upsert({
+        where: {
+          contentId_mediaAssetId: {
+            contentId: id,
+            mediaAssetId,
+          },
+        },
+        create: {
+          contentId: id,
+          mediaAssetId,
+          name: typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : 'Variant',
+          isDefault: makeDefault,
+          metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
+        },
+        update: {
+          name: typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 100) : undefined,
+          ...(makeDefault ? { isDefault: true } : {}),
+          metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as any : undefined,
+        },
+        include: {
+          mediaAsset: {
+            select: {
+              id: true,
+              storageKey: true,
+              fileName: true,
+              mimeType: true,
+              width: true,
+              height: true,
+              duration: true,
+            },
+          },
+        },
+      });
+    });
+    return variant;
+  }
+
+  @Post('/content-plans/:id/post-links')
+  async linkContentPlanPosts(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Body() body: {
+      type?: string;
+      items?: Array<{
+        integration?: string;
+        postId?: string;
+        date?: string;
+        content?: string;
+        settings?: Record<string, any>;
+      }>;
+    }
+  ) {
+    const plan = await this.contentPlan(org.id, id);
+    if (!plan) throw new HttpException({ code: 'CONTENT_PLAN_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    const type = body.type || 'schedule';
+    const status = type === 'draft' ? 'POSTIZ_DRAFT' : type === 'now' ? 'QUEUED' : 'SCHEDULED';
+    for (const item of body.items || []) {
+      if (!item?.integration || !item?.postId) continue;
+      await this.prisma.snsDelivery.updateMany({
+        where: { contentId: id, integrationId: item.integration },
+        data: {
+          postId: item.postId,
+          status,
+          ...(typeof item.content === 'string'
+            ? { resolvedContent: item.content }
+            : {}),
+          ...(item.settings &&
+          typeof item.settings === 'object' &&
+          !Array.isArray(item.settings)
+            ? { providerSettingsSnapshot: item.settings as any }
+            : {}),
+          resolvedScheduledAt:
+            type === 'schedule' && item.date
+              ? this.snsOptionalDate(item.date, 'DELIVERY_SCHEDULE_INVALID')
+              : undefined,
+          lastError: null,
+        },
+      });
+    }
+    await this.prisma.snsContent.update({
+      where: { id },
+      data: { status: type === 'draft' ? 'POSTIZ_DRAFT' : type === 'now' ? 'QUEUED' : 'SCHEDULED' },
+    });
+    return this.contentPlan(org.id, id);
+  }
+
   @Get('/content-inbox')
   listInbox(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
+    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
   }
 
   @Get('/recipes')

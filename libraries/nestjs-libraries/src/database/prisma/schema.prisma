@@ -2053,6 +2053,7 @@ model SnsDelivery {
   resolvedContent          String?
   resolvedHashtags    Json?
   resolvedScheduledAt DateTime?
+  approvedAt          DateTime?
   postId              String?
   status              String      @default("PLANNED")
   lastError           String?

@@ -6,18 +6,32 @@ import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { SetSelectionModal } from '@gitroom/frontend/components/launches/calendar';
 import { AddEditModal } from '@gitroom/frontend/components/new-launch/add.edit.modal';
+import type { AddEditModalProps } from '@gitroom/frontend/components/new-launch/add.edit.modal';
 import { ModalWrapperComponent } from '@gitroom/frontend/components/new-launch/modal.wrapper.component';
 
-export const NewPost = () => {
+export const NewPost = (props: {
+  onlyValues?: AddEditModalProps['onlyValues'];
+  onlyValuesByIntegration?: AddEditModalProps['onlyValuesByIntegration'];
+  selectedChannels?: string[];
+  selectedChannelSettings?: AddEditModalProps['selectedChannelSettings'];
+  scheduledAtByIntegration?: AddEditModalProps['scheduledAtByIntegration'];
+  commonContentPlanId?: AddEditModalProps['commonContentPlanId'];
+  onBeforePost?: AddEditModalProps['onBeforePost'];
+  onPosted?: AddEditModalProps['onPosted'];
+  date?: dayjs.Dayjs;
+  label?: string;
+} = {}) => {
   const fetch = useFetch();
   const modal = useModals();
   const { integrations, reloadCalendarView, sets } = useCalendar();
   const t = useT();
 
   const createAPost = useCallback(async () => {
-    const date = (await (await fetch('/posts/find-slot')).json()).date;
+    const date =
+      props.date ||
+      dayjs.utc((await (await fetch('/posts/find-slot')).json()).date).local();
 
-    const set: any = !sets.length
+    const set: any = props.onlyValues?.length || !sets.length
       ? undefined
       : await new Promise((resolve) => {
           modal.openModal({
@@ -64,16 +78,36 @@ export const NewPost = () => {
             ...p,
           }))}
           {...(set?.content ? { set: JSON.parse(set.content) } : {})}
+          {...(props.onlyValues ? { onlyValues: props.onlyValues } : {})}
+          {...(props.onlyValuesByIntegration ? { onlyValuesByIntegration: props.onlyValuesByIntegration } : {})}
+          {...(props.selectedChannels ? { selectedChannels: props.selectedChannels } : {})}
+          {...(props.selectedChannelSettings ? { selectedChannelSettings: props.selectedChannelSettings } : {})}
+          {...(props.scheduledAtByIntegration ? { scheduledAtByIntegration: props.scheduledAtByIntegration } : {})}
+          {...(props.commonContentPlanId ? { commonContentPlanId: props.commonContentPlanId } : {})}
+          {...(props.onBeforePost ? { onBeforePost: props.onBeforePost } : {})}
+          {...(props.onPosted ? { onPosted: props.onPosted } : {})}
           reopenModal={createAPost}
           mutate={reloadCalendarView}
           integrations={integrations}
-          date={dayjs.utc(date).local()}
+          date={date}
         />
       ),
       size: '80%',
       title: ``,
     });
-  }, [integrations, sets]);
+  }, [
+    integrations,
+    sets,
+    props.onlyValues,
+    props.onlyValuesByIntegration,
+    props.selectedChannels,
+    props.selectedChannelSettings,
+    props.scheduledAtByIntegration,
+    props.commonContentPlanId,
+    props.onBeforePost,
+    props.onPosted,
+    props.date,
+  ]);
   return (
     <button
       onClick={createAPost}
@@ -96,7 +130,7 @@ export const NewPost = () => {
         />
       </svg>
       <div className="flex-1 text-start text-[14px] group-[.sidebar]:hidden">
-        {t('create_new_post', 'Create Post')}
+        {props.label || t('create_new_post', 'Create Post')}
       </div>
     </button>
   );
