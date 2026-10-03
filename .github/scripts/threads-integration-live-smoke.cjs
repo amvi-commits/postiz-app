@@ -487,7 +487,7 @@ async function runBrowserSmoke(database, testFixture) {
   assert(inboxFixture.status === 'PENDING_APPROVAL', 'Inbox approval status is incorrect.');
   await page.getByText('@threads_ci_e2e_sender', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByText('threads-ci-e2e-inbox-text: How did you prepare this?', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
-  await page.getByText(/承認待ち/).waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText('🛡️ 承認待ち', { exact: true }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByText(/親投稿: threads-ci-e2e-parent-snippet/).waitFor({ state: 'visible', timeout: 30000 });
   summary.inboxResponse = true;
   summary.inboxNormalizedFieldsVisible = true;
@@ -720,9 +720,13 @@ async function main() {
     backendUnexpected4xx: summary.backendUnexpected4xx,
     unexpected404: summary.unexpected404,
     unexpected500: summary.unexpected500,
+    networkErrors: networkRecords.filter((item) => item.status >= 400).map(({ method, host, port, path, status }) => ({ method, host, port, path, status })),
     browserExternalAttempts: summary.browserExternalAttempts.length,
+    browserExternalAttemptDetails: summary.browserExternalAttempts,
     consoleErrors: summary.consoleErrors.length,
+    consoleErrorDetails: summary.consoleErrors.slice(0, 10).map((message) => safeText(message).slice(0, 400)),
     pageErrors: summary.pageErrors.length,
+    pageErrorDetails: summary.pageErrors.slice(0, 10).map((message) => safeText(message).slice(0, 400)),
     fixtureCleanup: summary.fixtureCleanup,
   }, null, 2));
 
