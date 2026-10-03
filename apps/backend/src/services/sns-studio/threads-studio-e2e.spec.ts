@@ -540,7 +540,7 @@ describe('Threads Local DB E2E + API Persistence + Contract Test Suite', () => {
             id: 'mock_meta_container_id_777',
             status: 'FINISHED',
             permalink: 'https://threads.net/p/mock777',
-            data: [],
+            data: [] as unknown[],
           }),
         };
       };

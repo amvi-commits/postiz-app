@@ -87,7 +87,7 @@
       "fingerprints": [
         "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:25:25"
       ],
-      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -99,7 +99,7 @@
       "fingerprints": [
         "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:26:26"
       ],
-      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -109,7 +109,7 @@
       "classification": "SYNTHETIC_TEST_FIXTURE",
       "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
       "fingerprints": [],
-      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
     },
     {
       "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
@@ -119,7 +119,7 @@
       "classification": "SYNTHETIC_TEST_FIXTURE",
       "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
       "fingerprints": [],
-      "currentBlobSha": "74417d7b4a429ca21a027c6f7b0668636ed0d18a"
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
     },
     {
       "path": "apps/docs/installation/development.mdx",
