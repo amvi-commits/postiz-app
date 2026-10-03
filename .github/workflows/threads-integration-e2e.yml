@@ -40,10 +40,26 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 12
+      temporal:
+        image: temporalio/auto-setup:1.28.1
+        env:
+          DB: postgres12
+          DB_PORT: '5432'
+          POSTGRES_USER: postgres
+          POSTGRES_PWD: postgres
+          POSTGRES_SEEDS: postgres
+          DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/docker.yaml
+          ENABLE_ES: 'false'
+          DEFAULT_NAMESPACE: default
+          DEFAULT_NAMESPACE_RETENTION: 24h
+        ports:
+          - 7233:7233
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/threads_integration_ci?schema=public
       TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/threads_integration_ci?schema=public
       REDIS_URL: redis://127.0.0.1:6379
+      TEMPORAL_ADDRESS: 127.0.0.1:7233
+      TEMPORAL_NAMESPACE: default
       JWT_SECRET: threads-ci-only-fixed-test-signing-key-not-for-production
       FRONTEND_URL: http://127.0.0.1:4200
       NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:3000
@@ -357,9 +373,46 @@ jobs:
         continue-on-error: true
         run: NODE_ENV=production pnpm --filter ./apps/frontend run build
 
+      - name: Wait for the disposable Temporal service
+        id: temporal_probe
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { Connection } = require('@temporalio/client');
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          (async () => {
+            const deadline = Date.now() + 90_000;
+            let lastError;
+            while (Date.now() < deadline) {
+              let connection;
+              try {
+                connection = await Connection.connect({
+                  address: process.env.TEMPORAL_ADDRESS,
+                  connectTimeout: '2s',
+                });
+                await connection.operatorService.listSearchAttributes({
+                  namespace: process.env.TEMPORAL_NAMESPACE,
+                });
+                console.log('Temporal operator API is ready on ' + process.env.TEMPORAL_ADDRESS + '.');
+                return;
+              } catch (error) {
+                lastError = error;
+                await sleep(2000);
+              } finally {
+                await connection?.close().catch(() => {});
+              }
+            }
+            throw new Error('Temporal did not become ready within 90 seconds: ' + (lastError?.message || 'no response'));
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+
       - name: Start Current Integration backend and frontend
         id: servers
-        if: ${{ steps.backend_build.outcome == 'success' && steps.frontend_build.outcome == 'success' }}
+        if: ${{ steps.backend_build.outcome == 'success' && steps.frontend_build.outcome == 'success' && steps.temporal_probe.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
