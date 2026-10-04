@@ -1,5 +1,6 @@
 ﻿param(
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [string]$IntegrationRuntimeDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,14 +11,18 @@ $composeFile = Join-Path $repoRoot 'docker-compose.yaml'
 $safeComposeFile = Join-Path $repoRoot 'docker-compose.sns-studio-local-safe.yaml'
 $containerStartupScript = Join-Path $repoRoot 'scripts\sns-studio\start-local-safe.sh'
 $launcherScript = Join-Path $PSScriptRoot 'start-sns-studio.ps1'
-$envFile = Join-Path $repoRoot '.env'
+$runtimeDirectory = if ($IntegrationRuntimeDirectory) { [IO.Path]::GetFullPath($IntegrationRuntimeDirectory) } else { Join-Path $repoRoot '.sns-studio-data\integration-runtime' }
+$runtimeComposeFile = Join-Path $runtimeDirectory 'compose.integration-4017.yaml'
+$runtimeStartupScript = Join-Path $runtimeDirectory 'start-local-safe.lf.sh'
+$envFile = Join-Path $runtimeDirectory '.env.integration'
 $dockerDesktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
-$projectName = 'sns-studio-v1'
-$studioUrl = 'http://localhost:4007/sns-studio'
-$loginUrl = 'http://localhost:4007/auth/login'
-$apiSelfUrl = 'http://localhost:4007/api/user/self'
+$projectName = 'sns-studio-integration-4017'
+$postizService = 'postiz-integration'
+$studioUrl = 'http://localhost:4017/sns-studio'
+$loginUrl = 'http://localhost:4017/auth/login'
+$apiSelfUrl = 'http://localhost:4017/api/user/self'
 $localStateDirectory = Join-Path $env:LOCALAPPDATA 'SNSStudio'
-$safetyMarkerPath = Join-Path $localStateDirectory 'safe-launcher-v1.json'
+$safetyMarkerPath = Join-Path $localStateDirectory 'safe-launcher-4017.json'
 $startupTimeoutSeconds = 300
 $serviceTimeoutSeconds = 600
 
@@ -46,7 +51,7 @@ function Test-DockerEngine {
 }
 
 function Get-ConfigurationFingerprint {
-    $paths = @($composeFile, $safeComposeFile, $containerStartupScript, $launcherScript)
+    $paths = @($composeFile, $safeComposeFile, $containerStartupScript, $launcherScript, $runtimeComposeFile, $runtimeStartupScript)
     $parts = foreach ($path in $paths) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required launcher file is missing: $path" }
         (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -67,16 +72,50 @@ function Test-SafeStartupMarker {
     catch { return $false }
 }
 
-function Invoke-Compose([string[]]$Arguments, [string]$FailureMessage) {
-    $composeArguments = @(
+function Get-ComposeArguments {
+    return @(
         'compose',
-        '--project-directory', $repoRoot,
+        '--project-directory', $runtimeDirectory,
         '--project-name', $projectName,
+        '--env-file', $envFile,
         '-f', $composeFile,
-        '-f', $safeComposeFile
-    ) + $Arguments
-    $result = Invoke-DockerQuiet -Arguments $composeArguments
+        '-f', $safeComposeFile,
+        '-f', $runtimeComposeFile
+    )
+}
+
+function Invoke-Compose([string[]]$Arguments, [string]$FailureMessage) {
+    $result = Invoke-DockerQuiet -Arguments ((Get-ComposeArguments) + $Arguments)
     if ($result.ExitCode -ne 0) { throw $FailureMessage }
+}
+
+function Start-ExistingContainers([string[]]$Names) {
+    foreach ($name in $Names) {
+        $inspection = Invoke-DockerQuiet -Arguments @('inspect', '--format', '{{.State.Running}}', $name)
+        if ($inspection.ExitCode -ne 0) { throw "Required existing container is missing: $name. No replacement was created." }
+        if ([string]::Join('', @($inspection.Output)).Trim() -ne 'true') {
+            $started = Invoke-DockerQuiet -Arguments @('start', $name)
+            if ($started.ExitCode -ne 0) { throw "Existing container could not be started: $name" }
+        }
+    }
+}
+
+function Test-IntegrationComposeConfiguration {
+    $result = Invoke-DockerQuiet -Arguments ((Get-ComposeArguments) + @('config', '--format', 'json'))
+    if ($result.ExitCode -ne 0) { throw '4017 Compose configuration could not be resolved. Configuration output was withheld.' }
+    $configuration = ([string]::Join("`n", @($result.Output))) | ConvertFrom-Json
+    $service = $configuration.services.$postizService
+    if (-not $service -or $service.container_name -ne 'sns-studio-integration-4017' -or $service.restart -ne 'unless-stopped') { throw '4017 runtime service identity or restart policy is incorrect.' }
+    if ([string]::Join(' ', @($service.command)) -ne '/bin/sh /app/scripts/sns-studio/start-local-safe.sh') { throw '4017 runtime does not use the safe startup command.' }
+    $binding = @($service.ports | Where-Object { $_.target -eq 5000 -and $_.published -eq '4017' -and $_.host_ip -eq '127.0.0.1' })
+    if ($binding.Count -ne 1 -or @($service.ports).Count -ne 1) { throw '4017 host port contract is incorrect.' }
+    foreach ($key in @('MAIN_URL', 'FRONTEND_URL', 'NEXT_PUBLIC_BACKEND_URL')) {
+        $expected = if ($key -eq 'NEXT_PUBLIC_BACKEND_URL') { 'http://localhost:4017/api' } else { 'http://localhost:4017' }
+        if ($service.environment.$key -ne $expected) { throw "4017 runtime URL is incorrect: $key" }
+    }
+    $sourceStartup = (Get-Content -LiteralPath $containerStartupScript -Raw).Replace("`r`n", "`n")
+    $runtimeStartup = (Get-Content -LiteralPath $runtimeStartupScript -Raw).Replace("`r`n", "`n")
+    if ($sourceStartup -cne $runtimeStartup) { throw 'The runtime safe startup script differs from the Integration source.' }
 }
 
 function Get-DockerVolumeNames {
@@ -138,14 +177,14 @@ function Wait-HttpStatus([string]$Uri, [scriptblock]$IsExpected, [int]$TimeoutSe
 }
 
 function Test-PostizContainerConfiguration {
-    $composePs = Invoke-DockerQuiet -Arguments @('compose', '--project-directory', $repoRoot, '--project-name', $projectName, '-f', $composeFile, '-f', $safeComposeFile, 'ps', '-q', 'postiz')
+    $composePs = Invoke-DockerQuiet -Arguments ((Get-ComposeArguments) + @('ps', '--all', '-q', $postizService))
     $id = [string]::Join("`n", @($composePs.Output)).Trim()
     if ($composePs.ExitCode -ne 0 -or -not $id) { throw 'Postiz container ID could not be resolved.' }
 
     $commandResult = Invoke-DockerQuiet -Arguments @('inspect', '--format', '{{json .Config.Cmd}}', $id)
     $commandJson = [string]::Join("`n", @($commandResult.Output))
     if ($commandResult.ExitCode -ne 0) { throw 'Postiz container command could not be inspected.' }
-    if (-not $commandJson.Contains('/app/scripts/sns-studio/start-local-safe.sh')) {
+    if ([string]::Join(' ', @($commandJson | ConvertFrom-Json)) -ne '/bin/sh /app/scripts/sns-studio/start-local-safe.sh') {
         throw 'Postiz is not running with the safe local startup command; safe-start marker was not written.'
     }
 
@@ -160,8 +199,18 @@ function Test-PostizContainerConfiguration {
     if ($networksResult.ExitCode -ne 0) { throw 'Postiz network attachments could not be inspected.' }
     $networks = $networksJson | ConvertFrom-Json
     $networkNames = @($networks.PSObject.Properties.Name)
-    foreach ($expected in @("${projectName}_postiz-network", 'temporal-network')) {
+    foreach ($expected in @('sns-studio-v1_postiz-network', 'temporal-network')) {
         if ($networkNames -notcontains $expected) { throw "Postiz is missing required Compose network: $expected" }
+    }
+    $inspection = Invoke-DockerQuiet -Arguments @('inspect', $id)
+    if ($inspection.ExitCode -ne 0) { throw '4017 runtime identity could not be inspected.' }
+    $container = ([string]::Join("`n", @($inspection.Output)) | ConvertFrom-Json)[0]
+    if ($container.Name -ne '/sns-studio-integration-4017' -or $container.Config.Labels.'com.docker.compose.project' -ne $projectName) { throw 'Resolved container is not the dedicated 4017 runtime.' }
+    $port = @($container.HostConfig.PortBindings.'5000/tcp')
+    if ($port.Count -ne 1 -or $port[0].HostPort -ne '4017' -or $port[0].HostIp -ne '127.0.0.1') { throw 'Existing runtime host binding is incorrect.' }
+    $mountedVolumes = @($container.Mounts | Where-Object { $_.Type -eq 'volume' } | ForEach-Object { $_.Name })
+    foreach ($volume in @('sns-studio-integration-4017-config', 'sns-studio-integration-4017-data', 'sns-studio-integration-4017-uploads')) {
+        if ($mountedVolumes -notcontains $volume) { throw "Dedicated 4017 volume is missing: $volume" }
     }
 }
 
@@ -183,8 +232,9 @@ try {
         throw 'SNS Studio safe container startup script is missing.'
     }
     if (-not (Test-Path -LiteralPath $envFile)) {
-        throw '.env is missing. Create the local environment file before starting SNS Studio; its contents were not read.'
+        throw 'The dedicated .env.integration is missing. Configure -IntegrationRuntimeDirectory; the old 4007 environment was not used.'
     }
+    if (-not (Test-Path -LiteralPath $runtimeComposeFile) -or -not (Test-Path -LiteralPath $runtimeStartupScript)) { throw 'The dedicated 4017 runtime configuration is missing.' }
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw 'Docker CLI is unavailable. Install or repair Docker Desktop before starting SNS Studio.'
     }
@@ -201,7 +251,7 @@ try {
             throw "Docker Desktop was not found at the expected installation path: $dockerDesktop"
         }
         Write-Host 'Docker Desktopを起動しています。' -ForegroundColor Yellow
-        Start-Process -FilePath $dockerDesktop | Out-Null
+        Start-Process -FilePath $dockerDesktop -WindowStyle Hidden | Out-Null
         $engineDeadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
         do {
             Start-Sleep -Seconds 3
@@ -211,33 +261,36 @@ try {
     }
 
     $volumesBefore = Get-DockerVolumeNames
+    Test-IntegrationComposeConfiguration
+    Test-PostizContainerConfiguration
 
     Write-Stage 2 'Infrastructure起動'
-    Invoke-Compose -Arguments @('up', '-d', 'postiz-postgres', 'postiz-redis', 'voicevox', 'sns-instagram-worker', 'sns-media-worker') -FailureMessage 'Infrastructure startup failed. Check the Postiz PostgreSQL, Redis, Voicevox, Instagram worker, and media worker containers.'
+    Start-ExistingContainers -Names @('postiz-postgres', 'sns-studio-voicevox', 'sns-instagram-worker', 'sns-media-worker')
+    Invoke-Compose -Arguments @('start', 'integration-redis') -FailureMessage 'Existing Integration Redis could not be started.'
 
     Write-Stage 3 'Temporal待機'
-    Invoke-Compose -Arguments @('up', '-d', 'temporal-postgresql', 'temporal-elasticsearch') -FailureMessage 'Temporal dependency startup failed. Check temporal-postgresql and temporal-elasticsearch.'
+    Start-ExistingContainers -Names @('temporal-postgresql', 'temporal-elasticsearch')
     Wait-ContainerCommand -Container 'temporal-postgresql' -Command @('pg_isready', '-U', 'temporal', '-d', 'temporal') -TimeoutSeconds $serviceTimeoutSeconds -Description 'Temporal PostgreSQL'
     Wait-ContainerCommand -Container 'temporal-elasticsearch' -Command @('curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:9200/_cluster/health') -TimeoutSeconds $serviceTimeoutSeconds -Description 'Temporal Elasticsearch'
-    Invoke-Compose -Arguments @('up', '-d', 'temporal', 'temporal-admin-tools', 'temporal-ui') -FailureMessage 'Temporal startup failed. Check temporal, temporal-admin-tools, and temporal-ui.'
+    Start-ExistingContainers -Names @('temporal', 'temporal-admin-tools', 'temporal-ui')
     Wait-TcpPort -HostName '127.0.0.1' -Port 7233 -TimeoutSeconds $serviceTimeoutSeconds -Description 'Temporal gRPC listener'
 
     Write-Stage 4 'Postiz起動'
-    Invoke-Compose -Arguments @('up', '-d', 'postiz') -FailureMessage 'Postiz startup failed. The safe local Compose override was used; no database push is part of this launcher.'
+    Invoke-Compose -Arguments @('start', $postizService) -FailureMessage 'Existing 4017 Postiz runtime could not be started. No replacement or database push was performed.'
 
     Write-Stage 5 'Backend確認'
     $backendProbe = 'const s=require(''net'').connect(3000,''127.0.0.1'');s.setTimeout(1000,()=>{s.destroy();process.exit(1)});s.once(''connect'',()=>{s.end();process.exit(0)});s.once(''error'',()=>process.exit(1));'
     $deadline = (Get-Date).AddSeconds($serviceTimeoutSeconds)
     $backendReady = $false
-    $containerCommand = @('exec', '-T', 'postiz', 'node', '-e', $backendProbe)
+    $containerCommand = @('exec', '-T', $postizService, 'node', '-e', $backendProbe)
     do {
-        $probeResult = Invoke-DockerQuiet -Arguments (@('compose', '--project-directory', $repoRoot, '--project-name', $projectName, '-f', $composeFile, '-f', $safeComposeFile) + $containerCommand)
+        $probeResult = Invoke-DockerQuiet -Arguments ((Get-ComposeArguments) + $containerCommand)
         $backendReady = ($probeResult.ExitCode -eq 0)
         if (-not $backendReady) { Start-Sleep -Seconds 3 }
     } until ($backendReady -or (Get-Date) -ge $deadline)
     if (-not $backendReady) { throw 'Backend port 3000 did not become ready in Postiz. Check the postiz container and backend PM2 process.' }
 
-    $backendLogsArgs = @('compose', '--project-directory', $repoRoot, '--project-name', $projectName, '-f', $composeFile, '-f', $safeComposeFile, 'exec', '-T', 'postiz', 'pm2', 'logs', 'backend', '--nostream', '--lines', '200')
+    $backendLogsArgs = (Get-ComposeArguments) + @('exec', '-T', $postizService, 'pm2', 'logs', 'backend', '--nostream', '--lines', '200')
     $backendLogResult = Invoke-DockerQuiet -Arguments $backendLogsArgs
     $backendLogLines = @($backendLogResult.Output)
     if ($backendLogLines -match 'EADDRINUSE.*3000|EADDRINUSE :::3000') {
@@ -255,7 +308,7 @@ try {
     $deadline = (Get-Date).AddSeconds($serviceTimeoutSeconds)
     $frontendReady = $false
     do {
-        $probeResult = Invoke-DockerQuiet -Arguments @('compose', '--project-directory', $repoRoot, '--project-name', $projectName, '-f', $composeFile, '-f', $safeComposeFile, 'exec', '-T', 'postiz', 'node', '-e', $frontendProbe)
+        $probeResult = Invoke-DockerQuiet -Arguments ((Get-ComposeArguments) + @('exec', '-T', $postizService, 'node', '-e', $frontendProbe))
         $frontendReady = ($probeResult.ExitCode -eq 0)
         if (-not $frontendReady) { Start-Sleep -Seconds 3 }
     } until ($frontendReady -or (Get-Date) -ge $deadline)
