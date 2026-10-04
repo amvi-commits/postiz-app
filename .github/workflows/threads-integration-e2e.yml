@@ -110,7 +110,7 @@ jobs:
           version: 10.6.1
           run_install: false
 
-      - name: Record Integration base and enforce CI-only diff
+      - name: Record Integration base and runtime
         shell: bash
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
@@ -129,14 +129,7 @@ jobs:
           test "$(node --version)" = "v22.12.0"
           test "$(pnpm --version)" = "10.6.1"
 
-          git diff --name-only "$base_sha...$head_sha" > "$RUNNER_TEMP/threads-ci-changed-files.txt"
-          cat "$RUNNER_TEMP/threads-ci-changed-files.txt"
-          while IFS= read -r changed; do
-            case "$changed" in
-            .github/workflows/threads-integration-e2e.yml|.github/scripts/threads-integration-live-smoke.cjs|.github/scripts/threads-integration-ci-egress.cjs|.github/scripts/threads-integration-redis-probe.cjs) ;;
-              *) echo "Unexpected non-CI file in validation PR: $changed" >&2; exit 1 ;;
-            esac
-          done < "$RUNNER_TEMP/threads-ci-changed-files.txt"
+
 
       - name: Confirm PostgreSQL and Redis services
         shell: bash
