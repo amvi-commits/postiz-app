@@ -20,7 +20,8 @@ import {
 } from '@gitroom/nestjs-libraries/integrations/social.abstract';
 import * as process from 'node:process';
 import dayjs from 'dayjs';
-import { createReadStream, statSync } from 'fs';
+import { createReadStream, realpathSync, statSync } from 'fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { getSsrfSafeDispatcher } from '@gitroom/nestjs-libraries/dtos/webhooks/ssrf.safe.dispatcher';
 import { setHeartbeatDetails } from '@gitroom/nestjs-libraries/temporal/temporal.heartbeat';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
@@ -283,6 +284,9 @@ export class YoutubeProvider extends SocialAbstract implements SocialProvider {
   }
 
   async generateAuthUrl() {
+    if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET) {
+      throw new Error('YouTube OAuth client credentials are not configured');
+    }
     const state = makeSecureId(7);
     const { client } = clientAndYoutube();
     return {
@@ -426,9 +430,88 @@ export class YoutubeProvider extends SocialAbstract implements SocialProvider {
   // workflow calls finalizePost again for the remaining bytes.
   private static readonly YOUTUBE_UPLOAD_BATCH_MS = 4 * 60 * 1000;
 
+  // Resolves a local-upload URL to its file under UPLOAD_DIRECTORY. This
+  // avoids fetching the host-only FRONTEND_URL from inside Docker while the
+  // SSRF guard remains enabled for all remote media URLs.
+  private youtubeLocalUploadPath(path: string): string | null {
+    const frontendUrl = process.env.FRONTEND_URL;
+    const uploadDirectory = process.env.UPLOAD_DIRECTORY;
+
+    if (
+      !frontendUrl ||
+      !uploadDirectory ||
+      (process.env.STORAGE_PROVIDER && process.env.STORAGE_PROVIDER !== 'local')
+    ) {
+      return null;
+    }
+
+    try {
+      // URL parsing removes dot segments. Reject them before normalization,
+      // including encoded separators, rather than accepting a rewritten path.
+      const decodedUrlPath = decodeURIComponent(path.split(/[?#]/, 1)[0]);
+      if (/(^|[\\/])\.{1,2}([\\/]|$)/.test(decodedUrlPath)) {
+        return null;
+      }
+
+      const publicUrl = new URL(frontendUrl);
+      const mediaUrl = path.startsWith('/uploads/')
+        ? new URL(path, publicUrl)
+        : new URL(path);
+
+      if (
+        mediaUrl.origin !== publicUrl.origin ||
+        mediaUrl.username ||
+        mediaUrl.password ||
+        !mediaUrl.pathname.startsWith('/uploads/')
+      ) {
+        return null;
+      }
+
+      const relativeUploadPath = decodeURIComponent(
+        mediaUrl.pathname.slice('/uploads/'.length)
+      );
+      if (!relativeUploadPath) {
+        return null;
+      }
+
+      const uploadRoot = resolve(uploadDirectory);
+      const candidatePath = resolve(uploadRoot, relativeUploadPath);
+      const relativeCandidate = relative(uploadRoot, candidatePath);
+      if (
+        !relativeCandidate ||
+        relativeCandidate === '..' ||
+        relativeCandidate.startsWith('..' + sep) ||
+        isAbsolute(relativeCandidate)
+      ) {
+        return null;
+      }
+
+      const realUploadRoot = realpathSync(uploadRoot);
+      const realCandidatePath = realpathSync(candidatePath);
+      const relativeRealCandidate = relative(realUploadRoot, realCandidatePath);
+      if (
+        !relativeRealCandidate ||
+        relativeRealCandidate === '..' ||
+        relativeRealCandidate.startsWith('..' + sep) ||
+        isAbsolute(relativeRealCandidate)
+      ) {
+        return null;
+      }
+
+      return realCandidatePath;
+    } catch {
+      return null;
+    }
+  }
+
   // Resolves the total byte size of the media without loading it into memory:
   // a HEAD request for remote URLs, statSync for local files.
   private async youtubeMediaSize(path: string): Promise<number> {
+    const localUploadPath = this.youtubeLocalUploadPath(path);
+    if (localUploadPath) {
+      return statSync(localUploadPath).size;
+    }
+
     if (path.indexOf('http') === 0) {
       // the media path is user-influenced, keep the SSRF-safe dispatcher that
       // this.fetch applies to every other outbound request. identity encoding
@@ -452,13 +535,23 @@ export class YoutubeProvider extends SocialAbstract implements SocialProvider {
       return Number(length);
     }
 
-    return statSync(path).size;
+    throw new BadBody(
+      this.identifier,
+      '{}',
+      '{}',
+      'YouTube media must be an HTTP(S) URL or a same-origin /uploads/ URL'
+    );
   }
 
   // Returns a streaming body for the [start, end] byte range of the media so we
   // never hold the whole file in memory: a ranged GET for remote URLs, a ranged
   // read stream for local files.
   private async youtubeChunkStream(path: string, start: number, end: number) {
+    const localUploadPath = this.youtubeLocalUploadPath(path);
+    if (localUploadPath) {
+      return createReadStream(localUploadPath, { start, end });
+    }
+
     if (path.indexOf('http') === 0) {
       // identity encoding so the store keeps content-length and can answer
       // with the requested range: a transformed (compressed) response loses
@@ -488,7 +581,12 @@ export class YoutubeProvider extends SocialAbstract implements SocialProvider {
       return response.body;
     }
 
-    return createReadStream(path, { start, end });
+    throw new BadBody(
+      this.identifier,
+      '{}',
+      '{}',
+      'YouTube media must be an HTTP(S) URL or a same-origin /uploads/ URL'
+    );
   }
 
   // Asks the upload session for the truth: the created video when the upload

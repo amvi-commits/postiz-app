@@ -8,10 +8,13 @@ import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import { ThreadsWorkspace } from '@gitroom/frontend/components/sns-studio/threads/threads-workspace';
-import { useAddProvider } from '@gitroom/frontend/components/launches/add.provider.component';
+import { AddProviderComponent, useAddProvider } from '@gitroom/frontend/components/launches/add.provider.component';
+import { useModals } from '@gitroom/frontend/components/layout/new-modal';
+import { useIntegrationList } from '@gitroom/frontend/components/launches/helpers/use.integration.list';
 import { CommonDeliveryWorkspace } from '@gitroom/frontend/components/sns-studio/common-delivery-workspace';
+import { navigationForTab, platforms, platformSections, type Platform, type Tab } from './studio-navigation';
 
-type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Threads' | 'Common Queue' | 'Common History' | 'Common Analytics' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
+type ProviderIntegration = { id: string; name: string; identifier: string; display?: string | null; disabled?: boolean; refreshNeeded?: boolean };
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
 type TikTokAccount = {
   id: string; // Integration.id
@@ -36,7 +39,6 @@ type PublishRecord = { id: string; publishType: string; status: string; postUrl?
 type ReelPreflightProbe = { kind?: string; sizeBytes?: number; durationSeconds?: number; video?: { codec?: string; width?: number; height?: number }; hasAudio?: boolean };
 type ReelPreflightResult = { ready: boolean; errors: string[]; warnings: string[]; account: { id: string; username: string; status: string }; media: ReelPreflightProbe | null; thumbnail?: ReelPreflightProbe | null; trialEligible: boolean | null };
 
-const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Common Queue', 'Common History', 'Common Analytics', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field = 'w-full rounded-lg border border-blockSeparator bg-newBgColorInner px-3 py-2 text-newTextColor outline-none focus:border-[#7774ff]';
 const primaryButton = 'rounded-lg bg-[#5145ff] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
@@ -52,7 +54,23 @@ export const SnsStudio = () => {
   const fetch = useFetch();
   const { backendUrl } = useVariables();
   const user = useUser();
+  const modal = useModals();
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
+  const [activePlatform, setActivePlatform] = useState<Platform>('common');
+  const [activeSection, setActiveSection] = useState('Dashboard');
+  const activateSection = (platform: Platform, label: string) => {
+    const section = platformSections[platform].find((item) => item.label === label);
+    if (!section) return;
+    setActivePlatform(platform);
+    setActiveSection(label);
+    setActiveTab(section.tab);
+  };
+  useEffect(() => {
+    if (platformSections[activePlatform].some((item) => item.tab === activeTab && item.label === activeSection)) return;
+    const next = navigationForTab(activeTab, activePlatform);
+    setActivePlatform(next.platform);
+    setActiveSection(next.section);
+  }, [activeTab, activePlatform, activeSection]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '' });
@@ -131,10 +149,27 @@ export const SnsStudio = () => {
   const [tiktokAccountEdits, setTikTokAccountEdits] = useState<Record<string, Partial<TikTokAccount>>>({});
   // Reusable Postiz Add Provider modal (for TikTok OAuth)
   const connectTikTok = useAddProvider(refreshTikTokAccounts);
+  const { data: providerIntegrations, error: providerIntegrationsError, mutate: refreshProviderIntegrations } = useIntegrationList();
+  const youtubeIntegrations = ((providerIntegrations || []) as ProviderIntegration[]).filter((integration) => integration.identifier === 'youtube');
+  const openYoutubeConnect = useCallback(async () => {
+    setMessage('');
+    try {
+      const providers = await request('/integrations');
+      const youtube = (providers?.social || []).filter((provider: { identifier: string }) => provider.identifier === 'youtube');
+      if (!youtube.length) return setMessage('PostizのSocial Integration一覧にYouTubeがありません。');
+      modal.openModal({
+        title: 'YouTubeチャンネルを接続',
+        withCloseButton: true,
+        children: <AddProviderComponent social={youtube} article={providers?.article || []} invite={false} update={() => void refreshProviderIntegrations()} />,
+      });
+    } catch {
+      setMessage('PostizのSocial Integration一覧を取得できませんでした。');
+    }
+  }, [modal, request, refreshProviderIntegrations]);
 
   const refresh = useCallback(async () => {
-    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts()]);
-  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts]);
+    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts(), refreshProviderIntegrations()]);
+  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts, refreshProviderIntegrations]);
 
   const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -451,15 +486,96 @@ export const SnsStudio = () => {
         <button className={secondaryButton} onClick={() => void refresh()} disabled={busy}>更新</button>
       </header>
 
-      <nav className="flex flex-wrap gap-2 rounded-xl border border-blockSeparator bg-newBgColorInner p-2" aria-label="SNS Studio navigation">
-        {tabs.map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>
-            {tab === 'Common Queue' ? '共通Queue' : tab === 'Common History' ? '共通History' : tab === 'Common Analytics' ? '共通Analytics' : tab === 'Queue' ? '制作Queue' : tab === 'Analytics' ? 'Instagram Analytics' : tab}
-          </button>
-        ))}
-      </nav>
+      <div className="rounded-xl border border-blockSeparator bg-newBgColorInner p-2">
+        <nav className="flex flex-wrap gap-2 border-b border-blockSeparator pb-2" aria-label="SNS Studio platforms">
+          {platforms.map((platform) => <button key={platform.id} type="button" aria-pressed={activePlatform === platform.id} onClick={() => activateSection(platform.id, platformSections[platform.id][0].label)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activePlatform === platform.id ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>{platform.label}</button>)}
+        </nav>
+        <nav className="flex flex-wrap gap-2 pt-2" aria-label={`${platforms.find((platform) => platform.id === activePlatform)?.label} sections`}>
+          {platformSections[activePlatform].map((section) => <button key={section.label} type="button" aria-pressed={activeSection === section.label} onClick={() => activateSection(activePlatform, section.label)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activeSection === section.label ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>{section.label}</button>)}
+        </nav>
+      </div>
 
       {message && <div role="status" className="rounded-lg border border-[#7774ff]/40 bg-[#5145ff]/10 px-4 py-3 text-sm">{message}</div>}
+
+      {activeTab === 'Calendar' && <section className={card}>
+        <h2 className="text-lg font-bold">Calendar</h2>
+        <p className="mt-2 text-sm text-textItemBlur">投稿カレンダーはPostizで確認できます。</p>
+        <a className={`${primaryButton} mt-4 inline-block`} href="/launches">Postiz Calendarを開く</a>
+      </section>}
+
+      {activeTab === 'Instagram Overview' && <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Instagram Overview">
+        <Metric title="Instagram Accounts" value={accounts.length} detail="保存済みアカウント" />
+        <Metric title="Story Pools" value={pools.length} detail="共有素材プール" />
+        <Metric title="Content Inbox" value={inbox.length} detail="確認できる素材" />
+        <Metric title="Recent publishing" value={records.filter((row) => row.status === 'PUBLISHED').length} detail="公開済み" />
+      </section>}
+
+      {activeTab === 'TikTok Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">TikTok Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">{tiktokAccounts.length}件のTikTokアカウント。共通投稿と既存のTikTok設定を利用できます。</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className={primaryButton} onClick={() => activateSection('tiktok', 'Videos')}>TikTok投稿を開く</button>
+          <button type="button" className={secondaryButton} onClick={() => activateSection('tiktok', 'Accounts')}>TikTok Accountsを開く</button>
+        </div>
+      </section>}
+
+      {activeTab === 'Threads Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">Threads Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">Threadsの投稿、カレンダー、Inbox、リサーチ、分析、アカウント設定を開きます。</p>
+        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', 'Workspace')}>Threads Workspaceを開く</button>
+      </section>}
+
+      {activeTab === 'YouTube Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">YouTube Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">YouTubeの投稿送信APIはこのSNS Studio buildには接続されていません。投稿先の選択と配信には既存のPostiz composerを使用してください。</p>
+        <a className={`${secondaryButton} mt-4 inline-block`} href="/launches">Postiz composerを開く</a>
+      </section>}
+
+      {(activeTab === 'YouTube Video Composer' || activeTab === 'Shorts Composer') && <section className="grid gap-5 xl:grid-cols-2">
+        <div className={card}>
+          <h2 className="text-lg font-bold">{activeTab === 'Shorts Composer' ? 'Shorts Composer' : '通常動画 Composer'}</h2>
+          <p className="mt-2 text-sm text-textItemBlur">この画面はSNS StudioのYouTubeメニューに接続されています。YouTubeへの投稿送信は既存のPostiz composerで行います。</p>
+          <div className="mt-4 grid gap-3">
+            <Field label="動画素材"><input className={field} placeholder="/uploads/video.mp4" /></Field>
+            <Field label="タイトル"><input className={field} maxLength={100} /></Field>
+            <Field label="説明"><textarea className={`${field} min-h-24`} maxLength={5000} /></Field>
+          </div>
+          <div role="status" className="mt-4 rounded-lg border border-blockSeparator p-3 text-sm text-textItemBlur">SNS StudioからのYouTube投稿APIは未接続です。下書き保存・投稿は実行されません。</div>
+          <a className={`${primaryButton} mt-4 inline-block`} href="/launches">既存のPostiz composerを開く</a>
+        </div>
+        <div className={card}>
+          <h3 className="font-semibold">投稿先</h3>
+          <p className="mt-2 text-sm text-textItemBlur">チャンネル接続後、Postiz composerの投稿先一覧からYouTubeを選択してください。</p>
+          <a className="mt-3 inline-block text-sm text-[#9e9aff] underline" href="/third-party">Integrationsを確認</a>
+        </div>
+      </section>}
+
+      {activeTab === 'Channels' && <section className={card} aria-label="YouTube Channels">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold">YouTube Channels</h2>
+            <p className="mt-2 text-sm text-textItemBlur">接続状態はPostizのSocial Integrationから読み込みます。</p>
+          </div>
+          <button type="button" className={primaryButton} onClick={() => void openYoutubeConnect()}>YouTubeチャンネルを接続</button>
+        </div>
+        <div className="mt-4 grid gap-3">
+          {youtubeIntegrations.map((integration) => (
+            <div key={integration.id} className="rounded-lg border border-blockSeparator p-4">
+              <div className="font-semibold">{integration.display || integration.name}</div>
+              <div className="mt-1 text-sm text-textItemBlur">{integration.disabled ? '無効' : integration.refreshNeeded ? '再接続が必要' : '接続済み'}</div>
+            </div>
+          ))}
+          {!youtubeIntegrations.length && providerIntegrations && <p className="text-sm text-textItemBlur">YouTubeチャンネルはまだ接続されていません。</p>}
+          {providerIntegrationsError && <p role="status" className="text-sm text-textItemBlur">接続状態を取得できませんでした。PostizのSocial Integrationを確認してください。</p>}
+          {!providerIntegrations && !providerIntegrationsError && <p className="text-sm text-textItemBlur">接続状態を読み込んでいます…</p>}
+        </div>
+      </section>}
+
+      {activeTab === 'Playlists' && <section className={card}>
+        <h2 className="text-lg font-bold">Playlists</h2>
+        <p className="mt-2 text-sm text-textItemBlur">プレイリスト情報はまだ同期されていません。YouTubeチャンネルの接続状態はPostiz Social Integrationを利用します。</p>
+        <button type="button" className={`${secondaryButton} mt-4`} onClick={() => activateSection('youtube', 'Channels')}>Channelsを開く</button>
+      </section>}
 
       {activeTab === 'Dashboard' && <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Metric title="Accounts" value={accounts.length} detail={`${dashboard?.accounts?.reduce((n: number, row: any) => n + row._count._all, 0) || 0} saved`} />
