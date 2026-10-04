@@ -208,7 +208,11 @@ describe('SnsStudioController.preflightStory read-only behavior', () => {
       kind: 'video', sizeBytes: 123381, durationSeconds: 3.675,
       video: { width: 1080, height: 1920, codec: 'h264' }, hasAudio: true,
     });
-    const worker = jest.fn().mockResolvedValue({ status: healthStatus, session: 'VALID' });
+    const worker = jest.fn((path: string) => Promise.resolve(
+      path === '/media/preflight/story'
+        ? { ready: true, errors: [], warnings: [], visual: { text: 'OPEN LINK\nexample.com', decode: 'PASS' } }
+        : { status: healthStatus, session: 'VALID' },
+    ));
     const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
     (controller as any).mediaWorker = mediaWorker;
     (controller as any).worker = worker;
@@ -225,6 +229,8 @@ describe('SnsStudioController.preflightStory read-only behavior', () => {
     expect(result.account).toEqual({ id: 'account-1', username: 'lovenight_8r', status: 'GREEN' });
     expect(mediaWorker).toHaveBeenCalledWith('/probe', 'POST', { path: body.mediaPath });
     expect(worker).toHaveBeenCalledWith('/accounts/account-1/health');
+    expect(worker).toHaveBeenCalledWith('/media/preflight/story', 'POST', body);
+    expect(result.visual?.text).toBe('OPEN LINK\nexample.com');
     expect(worker.mock.calls.map(([path]) => path)).not.toContain('/publish/story');
     expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
     expect(prisma.snsPublishRecord.update).not.toHaveBeenCalled();
@@ -238,8 +244,27 @@ describe('SnsStudioController.preflightStory read-only behavior', () => {
 
     expect(result.ready).toBe(false);
     expect(result.errors).toContain('INSTAGRAM_SESSION_NOT_HEALTHY');
-    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/accounts/account-1/health']);
+    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/media/preflight/story', '/accounts/account-1/health']);
     expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
     expect(prisma.snsInstagramAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('stops on visual render failure or invalid hostname without creating a publish record', async () => {
+    const { controller, prisma, worker } = createController();
+    worker.mockImplementation((path: string) => Promise.resolve(
+      path === '/media/preflight/story'
+        ? { ready: false, errors: ['IG_STORY_VISUAL_RENDER_FAILED'], warnings: [], visual: null }
+        : { status: 'GREEN', session: 'VALID' },
+    ) as any);
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+    expect(result.ready).toBe(false);
+    expect(result.errors).toContain('IG_STORY_VISUAL_RENDER_FAILED');
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/media/preflight/story']);
+
+    worker.mockClear();
+    const invalid = await controller.preflightStory({ id: 'org-1' } as any, { ...body, linkUrl: 'https:///' } as any);
+    expect(invalid.errors).toContain('STORY_LINK_URL_INVALID');
+    expect(worker).not.toHaveBeenCalled();
   });
 });

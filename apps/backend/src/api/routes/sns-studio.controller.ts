@@ -777,10 +777,14 @@ export class SnsStudioController {
     } catch (error) {
       errors.push(error instanceof HttpException ? String((error.getResponse() as any)?.code || 'MEDIA_INVALID') : 'MEDIA_WORKER_UNAVAILABLE');
     }
-    const health = await this.worker(`/accounts/${encodeURIComponent(account.id)}/health`).catch(() => ({ status: 'UNAVAILABLE' }));
-    if (account.status !== 'ACTIVE' || health.status !== 'GREEN') errors.push('INSTAGRAM_SESSION_NOT_HEALTHY');
     if (!['image', 'video'].includes(body.mediaType || '')) errors.push('STORY_MEDIA_TYPE_INVALID');
     if (!body.linkUrl) errors.push('STORY_LINK_REQUIRED');
+    else {
+      try {
+        const url = new URL(body.linkUrl);
+        if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) errors.push('STORY_LINK_URL_INVALID');
+      } catch { errors.push('STORY_LINK_URL_INVALID'); }
+    }
     if (!body.sticker) errors.push('STORY_STICKER_SETTINGS_REQUIRED');
     if (media && body.mediaType && media.kind !== body.mediaType) errors.push('STORY_MEDIA_TYPE_MISMATCH');
     if (media && (!media.video?.width || !media.video?.height)) errors.push('STORY_MEDIA_DIMENSIONS_INVALID');
@@ -789,7 +793,28 @@ export class SnsStudioController {
     if (media?.kind === 'video' && media.video?.codec && !['h264', 'avc1'].includes(media.video.codec)) warnings.push('STORY_VIDEO_CODEC_MAY_NOT_BE_SUPPORTED');
     const ratio = media?.video?.width && media?.video?.height ? media.video.width / media.video.height : 0;
     if (ratio && Math.abs(ratio - 9 / 16) > 0.1) warnings.push('MEDIA_IS_NOT_9_16');
-    return { ready: errors.length === 0, errors, warnings, account: { id: account.id, username: account.username, status: health.status }, media: media || null };
+    if (account.status !== 'ACTIVE') errors.push('INSTAGRAM_SESSION_NOT_HEALTHY');
+    let visual: any = null;
+    if (body.mediaType === 'video' && errors.length === 0) {
+      try {
+        const check = await this.worker('/media/preflight/story', 'POST', {
+          accountId: account.id, mediaPath: body.mediaPath, mediaType: body.mediaType,
+          linkUrl: body.linkUrl, sticker: body.sticker,
+        });
+        if (!check.ready) errors.push(...(check.errors?.length ? check.errors : ['IG_STORY_VISUAL_RENDER_FAILED']));
+        warnings.push(...(check.warnings || []));
+        visual = check.visual || null;
+      } catch (error) {
+        errors.push(error instanceof HttpException ? String((error.getResponse() as any)?.code || 'IG_STORY_VISUAL_RENDER_FAILED') : 'INSTAGRAM_WORKER_UNAVAILABLE');
+      }
+    }
+    // Finish local validation/rendering before any Instagram session request.
+    let health = { status: 'NOT_CHECKED' };
+    if (errors.length === 0) {
+      health = await this.worker(`/accounts/${encodeURIComponent(account.id)}/health`).catch(() => ({ status: 'UNAVAILABLE' }));
+      if (health.status !== 'GREEN') errors.push('INSTAGRAM_SESSION_NOT_HEALTHY');
+    }
+    return { ready: errors.length === 0, errors, warnings, account: { id: account.id, username: account.username, status: health.status }, media: media || null, visual };
   }
 
   @Post('/media/render')

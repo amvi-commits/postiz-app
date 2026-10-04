@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from .crypto_store import CredentialStore, CredentialStoreError
+from .story_visual import StoryVisualInputError, render_story_link_video
 from .schemas import (
     LoginRequest,
     LoginCodeRequest,
@@ -22,10 +23,12 @@ from .schemas import (
     PublishResponse,
     PublishStoryRequest,
     ProxyTestRequest,
+    StickerPosition,
 )
 
 ClientFactory = Callable[[], Any]
 ThumbnailGenerator = Callable[[Path, Path], None]
+StoryVisualRenderer = Callable[[Path, Path, str, StickerPosition], dict[str, Any]]
 logger = logging.getLogger("sns-instagram-worker")
 ACTION_REQUIRED_CODES = {"IG_LOGIN_REQUIRED", "IG_2FA_REQUIRED", "IG_CHALLENGE_REQUIRED"}
 _SAFE_DIAGNOSTIC_VALUE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
@@ -301,6 +304,10 @@ def _story_error_code(exc: Exception, stage: str) -> tuple[str, str, int]:
     """Map Story adapter failures without losing the shared auth/network classifications."""
     name = exc.__class__.__name__.lower()
     message = str(exc).lower()
+    if stage == "visual_render":
+        if isinstance(exc, StoryVisualInputError):
+            return exc.code, str(exc), 422
+        return "IG_STORY_VISUAL_RENDER_FAILED", "The visible Story link video could not be prepared.", 422
     if stage == "story_link_build" or (
         any(token in name for token in ("storylink", "urlvalidation", "invalidurl"))
         or ("url" in message and any(token in message for token in ("invalid", "unsupported", "not allowed")))
@@ -328,7 +335,7 @@ def _story_error_code(exc: Exception, stage: str) -> tuple[str, str, int]:
 
 
 def _story_failure_category(error_code: str, stage: str) -> str:
-    if stage == "thumbnail_generation" or error_code == "IG_MEDIA_PROCESSING_FAILED":
+    if stage in {"thumbnail_generation", "visual_render"} or error_code == "IG_MEDIA_PROCESSING_FAILED":
         return "media"
     if error_code == "IG_STORY_LINK_INVALID":
         return "story_link"
@@ -368,11 +375,13 @@ def create_app(
     client_factory: ClientFactory = _default_client_factory,
     media_root: Path | None = None,
     thumbnail_generator: ThumbnailGenerator = _generate_video_thumbnail,
+    story_visual_renderer: StoryVisualRenderer = render_story_link_video,
 ) -> FastAPI:
     app = FastAPI(title="SNS Studio Instagram Worker", version="1.0.0")
     app.state.store = store or CredentialStore(Path(os.getenv("IG_DATA_DIR", "./data")))
     app.state.client_factory = client_factory
     app.state.thumbnail_generator = thumbnail_generator
+    app.state.story_visual_renderer = story_visual_renderer
     app.state.media_root = (
         media_root or Path(os.getenv("IG_MEDIA_ROOT", "./uploads"))
     ).resolve()
@@ -686,6 +695,29 @@ def create_app(
             mediaType="TRIAL_REEL" if body.trialReel else "REEL",
         )
 
+    @app.post("/media/preflight/story")
+    def preflight_story_visual(body: PublishStoryRequest):
+        """Local media/StoryLink check: no credentials, client, or publish calls."""
+        from instagrapi.types import StoryLink
+
+        media = media_path(body.mediaPath)
+        try:
+            link = StoryLink(
+                webUri=str(body.linkUrl), x=body.sticker.x, y=body.sticker.y,
+                width=body.sticker.width, height=body.sticker.height, rotation=body.sticker.rotation,
+            )
+            visual = None
+            if body.mediaType == "video":
+                with tempfile.TemporaryDirectory(prefix="sns-instagram-story-") as directory:
+                    visual = app.state.story_visual_renderer(
+                        media, Path(directory) / "story-visible-link.mp4", str(body.linkUrl), body.sticker,
+                    )
+            return {"ready": True, "errors": [], "warnings": [], "visual": visual,
+                    "link": link.model_dump(mode="json")}
+        except Exception as exc:
+            code, message, _ = _story_error_code(exc, "visual_render")
+            return {"ready": False, "errors": [code], "warnings": [], "message": message, "visual": None}
+
     @app.post("/publish/story", response_model=PublishResponse)
     def publish_story(body: PublishStoryRequest):
         from instagrapi.types import StoryLink
@@ -707,12 +739,15 @@ def create_app(
                 stage = "photo_upload_to_story"
                 published = client.photo_upload_to_story(media, links=[link])
             else:
-                stage = "thumbnail_generation"
                 with tempfile.TemporaryDirectory(prefix="sns-instagram-story-") as thumbnail_directory:
+                    stage = "visual_render"
+                    visible_video = Path(thumbnail_directory) / "story-visible-link.mp4"
+                    app.state.story_visual_renderer(media, visible_video, str(body.linkUrl), sticker)
+                    stage = "thumbnail_generation"
                     thumbnail = Path(thumbnail_directory) / "story-thumbnail.jpg"
-                    app.state.thumbnail_generator(media, thumbnail)
+                    app.state.thumbnail_generator(visible_video, thumbnail)
                     stage = "video_upload_to_story"
-                    published = client.video_upload_to_story(media, thumbnail=thumbnail, links=[link])
+                    published = client.video_upload_to_story(visible_video, thumbnail=thumbnail, links=[link])
         except Exception as exc:
             code, message, status = _story_error_code(exc, stage)
             _log_publish_exception(

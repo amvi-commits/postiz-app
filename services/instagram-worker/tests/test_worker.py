@@ -51,6 +51,13 @@ class FakeClient:
         return {"pk": media_id, "metrics": {"views": 20}}
 
 
+def copy_test_story_video(source: Path, output: Path, url, sticker):
+    from app.story_visual import story_link_text
+
+    output.write_bytes(source.read_bytes())
+    return {"text": story_link_text(url), "decode": "PASS", "sizeBytes": output.stat().st_size}
+
+
 def test_missing_video_thumbnail_dependency_has_specific_error_code():
     error = RuntimeError(
         "Could not generate video thumbnail. Pass thumbnail=... or install MoviePy 2.2.1."
@@ -73,6 +80,7 @@ def make_client(tmp_path: Path):
         client_factory=FakeClient,
         media_root=tmp_path / "uploads",
         thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
     )
     (tmp_path / "uploads").mkdir(exist_ok=True)
     (tmp_path / "uploads" / "reel.mp4").write_bytes(b"mock video")
@@ -428,7 +436,8 @@ def test_local_mock_reel_story_health_and_insights_are_credential_free(tmp_path,
     def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
         thumbnail_path.write_bytes(b"test-thumbnail")
 
-    app = create_app(store=store, media_root=upload_root, thumbnail_generator=write_test_thumbnail)
+    app = create_app(store=store, media_root=upload_root, thumbnail_generator=write_test_thumbnail,
+                     story_visual_renderer=copy_test_story_video)
     headers = {"Authorization": f"Bearer {app.state.token}"} if app.state.token else {}
     client = TestClient(app, headers=headers)
 
@@ -470,7 +479,9 @@ def test_story_video_upload_uses_temporary_thumbnail_and_serializes_story_link_o
         def video_upload_to_story(self, path, **kwargs):
             thumbnail = kwargs["thumbnail"]
             assert thumbnail.is_file()
-            assert thumbnail.parent != path.parent
+            assert thumbnail.parent == path.parent
+            assert path.parent != upload_root
+            assert path.is_file()
             calls.append((path, kwargs))
             return FakeMedia()
 
@@ -488,6 +499,7 @@ def test_story_video_upload_uses_temporary_thumbnail_and_serializes_story_link_o
         client_factory=TrackingClient,
         media_root=upload_root,
         thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
     )
     client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
     assert client.post("/accounts/login", json={"accountId": "story-video", "username": "u", "password": "p"}).status_code == 200
@@ -507,7 +519,10 @@ def test_story_video_upload_uses_temporary_thumbnail_and_serializes_story_link_o
     assert response.json()["mediaType"] == "STORY"
     assert len(calls) == 1
     uploaded_video, options = calls[0]
-    assert uploaded_video == video.resolve()
+    assert uploaded_video == generated[0][0]
+    assert uploaded_video != video.resolve()
+    assert not uploaded_video.exists()
+    assert video.read_bytes() == b"mock video"
     assert options["thumbnail"] == generated[0][1]
     assert not options["thumbnail"].exists()
     assert len(options["links"]) == 1
@@ -631,6 +646,7 @@ def test_story_upload_logs_sanitized_diagnostics_and_never_retries(tmp_path, cap
         client_factory=FailingClient,
         media_root=upload_root,
         thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
     )
     client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
     login = client.post(
