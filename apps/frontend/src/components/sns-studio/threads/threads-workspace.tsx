@@ -1111,6 +1111,20 @@ export const ThreadsWorkspace: FC<{
       {/* 4. Sub-tab: Research (Official API keyword_search) */}
       {activeSubTab === 'Research' && (
         <div className="grid gap-6">
+          <div className="rounded-md border border-blockSeparator px-4 py-3 text-xs text-textColor">
+            <p>
+              Threads公式リサーチを利用するには、Meta Threads APIの認証と{' '}
+              <code>threads_keyword_search</code> 権限が必要です。未接続または権限不足の場合、検索は利用できません。
+            </p>
+            <p className="mt-1 text-textItemBlur">
+              現在のMeta側の権限状態はMeta Developersで確認してください。
+            </p>
+            {!effectiveAccountId && (
+              <p role="status" className="mt-2 text-textItemBlur">
+                Threadsアカウントを選択してください。
+              </p>
+            )}
+          </div>
           <div className={card}>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
@@ -1170,7 +1184,7 @@ export const ThreadsWorkspace: FC<{
               <button
                 type="button"
                 className={primaryButton}
-                disabled={busy || !searchQuery.trim()}
+                disabled={busy || !effectiveAccountId || !searchQuery.trim()}
                 onClick={() =>
                   void runAction(searchThreads, 'Threads検索を実行しました。')
                 }
@@ -1679,34 +1693,37 @@ export const ThreadsWorkspace: FC<{
           {/* Feature Flags & API Scopes Overview */}
           <div className={clsx(card, 'xl:col-span-2')}>
             <h3 className="font-bold text-xs text-textColor mb-2 flex items-center gap-1.5">
-              <span>🛡️</span> Threads API v1.0 Feature Flags & Scopes 診断
+              <span>🛡️</span> Threads API 必要Scope
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_basic</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_content_publish</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_manage_replies</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_read_replies</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_manage_insights</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
               <div className="rounded border border-blockSeparator p-2 flex items-center justify-between">
                 <span>threads_keyword_search</span>
-                <span className="text-green-400 font-bold">有効</span>
+                <span className="text-textItemBlur font-semibold">必要</span>
               </div>
             </div>
+            <p className="mt-2 text-[11px] text-textItemBlur">
+              この一覧はSNS Studioが利用する必要Scopeです。Meta Appで実際に付与済みかどうかを示すものではありません。
+            </p>
           </div>
         </div>
       )}
