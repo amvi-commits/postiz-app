@@ -98,7 +98,7 @@ describe('SnsStudioController.publishStory failure handling', () => {
         update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
     const body = {
       accountId: 'account-1',
       mediaPath: '/uploads/story.mp4',
