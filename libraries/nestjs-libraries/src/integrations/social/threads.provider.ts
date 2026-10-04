@@ -11,6 +11,7 @@ import { timer } from '@gitroom/helpers/utils/timer';
 import dayjs from 'dayjs';
 import {
   BadBody,
+  RefreshToken,
   SocialAbstract,
 } from '@gitroom/nestjs-libraries/integrations/social.abstract';
 import { capitalize, chunk } from 'lodash';
@@ -1065,6 +1066,53 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     } catch (err) {
       console.error('Error fetching Threads post analytics:', err);
       return [];
+    }
+  }
+
+  /** Single explicit cleanup call; not connected to publishing or workflows. */
+  async deleteThread(accessToken: string, threadId: string): Promise<Response> {
+    const id = typeof threadId === 'string' ? threadId.trim() : '';
+    if (!id || id === '.' || id === '..') {
+      throw new BadBody(
+        this.identifier,
+        '{}',
+        '{}',
+        'A valid Threads post ID is required for deletion.'
+      );
+    }
+
+    try {
+      return await this.fetch(
+        `${THREADS_BASE_GRAPH_URL}/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          redirect: 'error',
+        },
+        this.identifier,
+        // Starting past the existing retry limit makes this one request only
+        // and bypasses handleErrors, which logs the raw provider response.
+        3
+      );
+    } catch (error) {
+      const json =
+        error instanceof BadBody
+          ? (error.details?.[0] as { json?: string })?.json
+          : undefined;
+      let mapped = mapThreadsApiError(json);
+      if (
+        mapped.category === 'publish_failed' &&
+        json?.includes('threads_delete')
+      ) {
+        mapped = mapThreadsApiError('Missing permission: threads_delete');
+      }
+      // Do not retain raw response bodies, URLs or transport errors: they may
+      // echo the token. Only the mapper's fixed user message/code is exposed.
+      const message = `${mapped.userMessage} (${mapped.code})`;
+      if (mapped.category === 'auth' || mapped.category === 'token_expired') {
+        throw new RefreshToken(this.identifier, '{}', '{}', message);
+      }
+      throw new BadBody(this.identifier, '{}', '{}', message);
     }
   }
 
