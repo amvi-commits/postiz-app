@@ -8,9 +8,9 @@ services:
     restart: always
     environment:
       # === Required Settings
-      MAIN_URL: 'http://localhost:4007'
-      FRONTEND_URL: 'http://localhost:4007'
-      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:4007/api'
+      MAIN_URL: 'http://localhost:4017'
+      FRONTEND_URL: 'http://localhost:4017'
+      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:4017/api'
       JWT_SECRET: '${JWT_SECRET:?Set JWT_SECRET in .env}'
       DATABASE_URL: 'postgresql://postiz-user:postiz-password@postiz-postgres:5432/postiz-db-local'
       REDIS_URL: 'redis://postiz-redis:6379'
@@ -118,7 +118,7 @@ services:
       SNS_STUDIO_GOOGLE_DRIVE_MOCK: '${SNS_STUDIO_GOOGLE_DRIVE_MOCK:-false}'
       GOOGLE_DRIVE_CLIENT_ID: '${GOOGLE_DRIVE_CLIENT_ID:-}'
       GOOGLE_DRIVE_CLIENT_SECRET: '${GOOGLE_DRIVE_CLIENT_SECRET:-}'
-      GOOGLE_DRIVE_REDIRECT_URI: '${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:4007/api/sns-studio/drive/callback}'
+      GOOGLE_DRIVE_REDIRECT_URI: '${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:4017/api/sns-studio/drive/callback}'
       GOOGLE_DRIVE_TOKEN_KEY: '${GOOGLE_DRIVE_TOKEN_KEY:-}'
 
       # === Short Link Service Settings (Optional - leave blank if unused)
@@ -139,7 +139,7 @@ services:
       - sns-studio-data:/sns-studio-data
       - ./.env:/app/.env:ro
     ports:
-      - '127.0.0.1:4007:5000'
+      - '127.0.0.1:4017:5000'
     networks:
       - postiz-network
       - temporal-network

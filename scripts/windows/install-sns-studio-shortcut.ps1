@@ -1,8 +1,17 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿param(
+    [Parameter(Mandatory = $true)][string]$IntegrationRuntimeDirectory,
+    [string]$PreviousLauncherPath
+)
+
+$ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $launcherPath = Join-Path $PSScriptRoot 'start-sns-studio.ps1'
 if (-not (Test-Path -LiteralPath $launcherPath)) { throw "SNS Studio launcher is missing: $launcherPath" }
+$runtimeDirectory = (Resolve-Path -LiteralPath $IntegrationRuntimeDirectory).Path
+foreach ($requiredFile in @('compose.integration-4017.yaml', '.env.integration', 'start-local-safe.lf.sh')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $runtimeDirectory $requiredFile))) { throw "4017 runtime file is missing: $requiredFile" }
+}
 
 $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
 if (-not $desktopPath -or -not (Test-Path -LiteralPath $desktopPath)) { throw 'Windows Desktop folder could not be resolved.' }
@@ -17,7 +26,8 @@ foreach ($file in $sameNameFiles) {
         $existingTarget = [string]$existing.TargetPath
         $existingArguments = [string]$existing.Arguments
         $pointsToThisLauncher = ($existingTarget -match 'powershell(\.exe)?$' -and $existingArguments.Contains($launcherPath))
-        if (-not $pointsToThisLauncher) {
+        $pointsToVerifiedPrevious = ($PreviousLauncherPath -and $existingTarget -match 'powershell(\.exe)?$' -and $existingArguments.Contains($PreviousLauncherPath))
+        if (-not $pointsToThisLauncher -and -not $pointsToVerifiedPrevious) {
             throw "An existing 'SNS Studio' shortcut points elsewhere. It was not replaced: $shortcutPath"
         }
     }
@@ -29,13 +39,13 @@ foreach ($file in $sameNameFiles) {
 $powerShellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $powerShellExe
-$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -IntegrationRuntimeDirectory `"$runtimeDirectory`""
 $shortcut.WorkingDirectory = $repoRoot
 $shortcut.Description = 'Start SNS Studio using the safe local Docker Compose configuration.'
 $shortcut.Save()
 
 $check = $shell.CreateShortcut($shortcutPath)
-if ($check.TargetPath -ne $powerShellExe -or $check.WorkingDirectory -ne $repoRoot -or -not $check.Arguments.Contains($launcherPath)) {
+if ($check.TargetPath -ne $powerShellExe -or $check.WorkingDirectory -ne $repoRoot -or -not $check.Arguments.Contains($launcherPath) -or -not $check.Arguments.Contains($runtimeDirectory)) {
     throw 'SNS Studio shortcut verification failed.'
 }
 
@@ -55,18 +65,19 @@ foreach ($oneDriveDesktop in $oneDriveDesktopPaths) {
     $legacyArguments = [string]$legacyShortcut.Arguments
     $alreadySafe = ($legacyTarget -match 'powershell(\.exe)?$' -and $legacyArguments.Contains($launcherPath))
     $verifiedOldLauncher = ($legacyTarget -match 'powershell(\.exe)?$' -and $legacyArguments.Contains($legacyPathFragment))
-    if (-not $alreadySafe -and -not $verifiedOldLauncher) {
+    $verifiedPreviousLauncher = ($PreviousLauncherPath -and $legacyTarget -match 'powershell(\.exe)?$' -and $legacyArguments.Contains($PreviousLauncherPath))
+    if (-not $alreadySafe -and -not $verifiedOldLauncher -and -not $verifiedPreviousLauncher) {
         throw "An existing OneDrive Desktop item named 'SNS Studio' points elsewhere. It was not changed: $legacyShortcutPath"
     }
 
     $legacyShortcut.TargetPath = $powerShellExe
-    $legacyShortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $legacyShortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -IntegrationRuntimeDirectory `"$runtimeDirectory`""
     $legacyShortcut.WorkingDirectory = $repoRoot
     $legacyShortcut.Description = 'Start SNS Studio using the safe local Docker Compose configuration.'
     $legacyShortcut.Save()
 
     $legacyCheck = $shell.CreateShortcut($legacyShortcutPath)
-    if ($legacyCheck.TargetPath -ne $powerShellExe -or $legacyCheck.WorkingDirectory -ne $repoRoot -or -not $legacyCheck.Arguments.Contains($launcherPath)) {
+    if ($legacyCheck.TargetPath -ne $powerShellExe -or $legacyCheck.WorkingDirectory -ne $repoRoot -or -not $legacyCheck.Arguments.Contains($launcherPath) -or -not $legacyCheck.Arguments.Contains($runtimeDirectory)) {
         throw "OneDrive Desktop shortcut verification failed: $legacyShortcutPath"
     }
     Write-Host "Updated verified SNS Studio shortcut: $legacyShortcutPath"
