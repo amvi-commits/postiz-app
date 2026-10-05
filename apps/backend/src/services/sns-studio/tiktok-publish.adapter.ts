@@ -34,6 +34,7 @@ export interface TikTokPublishInput {
   media: TikTokPublishMediaItem[];
   settings?: Partial<TikTokDto>;
   mode?: 'now' | 'draft';
+  publishDate?: string;
   mediaDurationSeconds?: number;
 }
 
@@ -412,6 +413,9 @@ export class TikTokPublishAdapter {
             organizationId: orgId,
             integrationId: integration.id,
             media: input.media,
+            ...(input.publishDate
+              ? { now: new Date(input.publishDate) }
+              : {}),
           });
 
     return {

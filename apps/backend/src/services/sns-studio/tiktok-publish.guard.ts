@@ -258,4 +258,22 @@ export class TikTokPublishGuard {
       }
     });
   }
+
+  withIntegrationLocks<T>(
+    organizationId: string,
+    integrationIds: string[],
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const orderedIntegrationIds = Array.from(new Set(integrationIds)).sort();
+    const acquire = (index: number): Promise<T> => {
+      if (index >= orderedIntegrationIds.length) return operation();
+      return this.withIntegrationLock(
+        organizationId,
+        orderedIntegrationIds[index],
+        () => acquire(index + 1)
+      );
+    };
+
+    return acquire(0);
+  }
 }
