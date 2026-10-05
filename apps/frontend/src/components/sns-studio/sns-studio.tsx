@@ -176,9 +176,67 @@ export const SnsStudio = () => {
     }
   }, [modal, request, refreshProviderIntegrations]);
 
+  const { data: mediaAssets = [], mutate: refreshMediaAssets } = useSWR<any[]>('/sns-studio/media-assets', load);
+  const [reelPreviewError, setReelPreviewError] = useState(false);
+  const [storyPreviewError, setStoryPreviewError] = useState(false);
+
+  const availableVideoAssets = useMemo(() => {
+    const list: Array<{ storageKey: string; label: string }> = [];
+    const seen = new Set<string>();
+    for (const a of mediaAssets) {
+      if (a.storageKey && !seen.has(a.storageKey) && (a.mimeType?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(a.storageKey))) {
+        seen.add(a.storageKey);
+        list.push({ storageKey: a.storageKey, label: a.fileName || a.storageKey });
+      }
+    }
+    for (const item of (inbox || [])) {
+      const key = item.mediaAsset?.storageKey;
+      if (key && !seen.has(key) && item.mediaType === 'video') {
+        seen.add(key);
+        list.push({ storageKey: key, label: item.fileName || key });
+      }
+    }
+    for (const q of (queue || [])) {
+      const key = q.output?.mediaPath;
+      if (key && !seen.has(key) && (q.output?.mediaType === 'video' || /\.(mp4|mov|webm)$/i.test(key))) {
+        seen.add(key);
+        list.push({ storageKey: key, label: `Queue: ${q.recipe?.name || 'Rendered'} (${key.split('/').pop()})` });
+      }
+    }
+    return list;
+  }, [mediaAssets, inbox, queue]);
+
+  const availableStoryAssets = useMemo(() => {
+    const list: Array<{ storageKey: string; label: string; mediaType: 'image' | 'video' }> = [];
+    const seen = new Set<string>();
+    for (const a of mediaAssets) {
+      if (a.storageKey && !seen.has(a.storageKey)) {
+        seen.add(a.storageKey);
+        const isVideo = a.mimeType?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(a.storageKey);
+        list.push({ storageKey: a.storageKey, label: a.fileName || a.storageKey, mediaType: isVideo ? 'video' : 'image' });
+      }
+    }
+    for (const item of (inbox || [])) {
+      const key = item.mediaAsset?.storageKey;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push({ storageKey: key, label: item.fileName || key, mediaType: item.mediaType === 'video' ? 'video' : 'image' });
+      }
+    }
+    for (const q of (queue || [])) {
+      const key = q.output?.mediaPath;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        const isVideo = q.output?.mediaType === 'video' || /\.(mp4|mov|webm)$/i.test(key);
+        list.push({ storageKey: key, label: `Queue: ${q.recipe?.name || 'Rendered'} (${key.split('/').pop()})`, mediaType: isVideo ? 'video' : 'image' });
+      }
+    }
+    return list;
+  }, [mediaAssets, inbox, queue]);
+
   const refresh = useCallback(async () => {
-    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts(), refreshProviderIntegrations()]);
-  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts, refreshProviderIntegrations]);
+    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshMediaAssets(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts(), refreshProviderIntegrations()]);
+  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshMediaAssets, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts, refreshProviderIntegrations]);
 
   const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -796,8 +854,58 @@ export const SnsStudio = () => {
           <p className="mb-4 mt-1 text-sm text-textItemBlur">投稿前にアカウント、共有メディア、Trial Reel資格を確認してください。</p>
           <div className="grid gap-3">
             <AccountSelect accounts={accounts} value={reelForm.accountId || defaultAccount} onChange={(accountId) => setReelForm({ ...reelForm, accountId })} />
-            <Field label="Video path (inside shared uploads)"><input className={field} value={reelForm.videoPath} onChange={(e) => setReelForm({ ...reelForm, videoPath: e.target.value })} placeholder="/uploads/reel.mp4" required /></Field>
-            {reelForm.videoPath && <video className="max-h-96 w-full rounded-lg bg-black" controls preload="metadata" src={previewUrl(reelForm.videoPath)} />}
+            <Field label="Video asset (Workspace Media)">
+              <select
+                aria-label="Reel video asset"
+                className={field}
+                value={reelForm.videoPath}
+                onChange={(e) => {
+                  setReelPreviewError(false);
+                  setReelForm({ ...reelForm, videoPath: e.target.value, pipelineRunId: '' });
+                }}
+              >
+                <option value="">Media素材を選択してください...</option>
+                {availableVideoAssets.map((asset) => (
+                  <option key={asset.storageKey} value={asset.storageKey}>
+                    {asset.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <details className="text-xs text-textItemBlur">
+              <summary className="cursor-pointer hover:underline">高度な設定: パスを手動入力</summary>
+              <div className="mt-2">
+                <Field label="Video path (inside shared uploads)">
+                  <input
+                    className={field}
+                    value={reelForm.videoPath}
+                    onChange={(e) => {
+                      setReelPreviewError(false);
+                      setReelForm({ ...reelForm, videoPath: e.target.value });
+                    }}
+                    placeholder="/uploads/reel.mp4"
+                    required
+                  />
+                </Field>
+              </div>
+            </details>
+            {reelForm.videoPath && (
+              <div>
+                <video
+                  className="max-h-96 w-full rounded-lg bg-black"
+                  controls
+                  preload="metadata"
+                  src={previewUrl(reelForm.videoPath)}
+                  onError={() => setReelPreviewError(true)}
+                  onLoadedData={() => setReelPreviewError(false)}
+                />
+                {reelPreviewError && (
+                  <div className="mt-2 rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+                    このワークスペースでは利用できないメディアです。Mediaから選び直してください。
+                  </div>
+                )}
+              </div>
+            )}
             {reelForm.pipelineRunId && <div className="text-xs text-textItemBlur">承認済みPipeline: {reelForm.pipelineRunId}</div>}
             <Field label="Caption"><textarea className={`${field} min-h-24`} maxLength={2200} value={reelForm.caption} onChange={(e) => setReelForm({ ...reelForm, caption: e.target.value })} /></Field>
             <Field label="AI Caption用の素材メモ"><textarea className={`${field} min-h-16`} maxLength={12000} value={captionPrompt} onChange={(e) => setCaptionPrompt(e.target.value)} placeholder="動画の内容、伝えたい要点など" /></Field><button type="button" className={secondaryButton} disabled={busy || !captionPrompt.trim() || !accounts.find((account) => account.id === (reelForm.accountId || defaultAccount))?.captionAIEnabled} onClick={() => void run(generateCaption, 'AI Captionを作成しました。内容を確認して編集してください。')}>AI Captionを生成</button>
@@ -822,9 +930,78 @@ export const SnsStudio = () => {
           <p className="mb-4 mt-1 text-sm text-textItemBlur">Storyリンクスタンプの描画結果は、Instagramアプリで確認してください。</p>
           <div className="grid gap-3">
             <AccountSelect accounts={accounts} value={storyForm.accountId || defaultAccount} onChange={(accountId) => setStoryForm({ ...storyForm, accountId })} />
-            <Field label="Media path (inside shared uploads)"><input className={field} value={storyForm.mediaPath} onChange={(e) => setStoryForm({ ...storyForm, mediaPath: e.target.value })} placeholder="/uploads/story.jpg" required /></Field>
+            <Field label="Media asset (Workspace Media)">
+              <select
+                aria-label="Story media asset"
+                className={field}
+                value={storyForm.mediaPath}
+                onChange={(e) => {
+                  setStoryPreviewError(false);
+                  const selected = availableStoryAssets.find((a) => a.storageKey === e.target.value);
+                  setStoryForm({
+                    ...storyForm,
+                    mediaPath: e.target.value,
+                    mediaType: selected ? selected.mediaType : storyForm.mediaType,
+                    pipelineRunId: '',
+                  });
+                }}
+              >
+                <option value="">Media素材を選択してください...</option>
+                {availableStoryAssets.map((asset) => (
+                  <option key={asset.storageKey} value={asset.storageKey}>
+                    [{asset.mediaType.toUpperCase()}] {asset.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <details className="text-xs text-textItemBlur">
+              <summary className="cursor-pointer hover:underline">高度な設定: パスを手動入力</summary>
+              <div className="mt-2">
+                <Field label="Media path (inside shared uploads)">
+                  <input
+                    className={field}
+                    value={storyForm.mediaPath}
+                    onChange={(e) => {
+                      setStoryPreviewError(false);
+                      setStoryForm({ ...storyForm, mediaPath: e.target.value });
+                    }}
+                    placeholder="/uploads/story.jpg"
+                    required
+                  />
+                </Field>
+              </div>
+            </details>
             <Field label="Media type"><select className={field} value={storyForm.mediaType} onChange={(e) => setStoryForm({ ...storyForm, mediaType: e.target.value })}><option value="image">Image</option><option value="video">Video</option></select></Field>
-            {storyForm.mediaPath && <div className="relative mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[293px] overflow-hidden rounded-lg bg-black">{storyForm.mediaType === 'video' ? <video className="absolute inset-0 h-full w-full object-contain" controls preload="metadata" src={previewUrl(storyForm.mediaPath)} /> : <img className="absolute inset-0 h-full w-full object-contain" src={previewUrl(storyForm.mediaPath)} alt="Story preview" />}{storyForm.linkUrl && <div className="pointer-events-none absolute flex items-center justify-center rounded-full bg-white/90 px-2 text-center text-xs font-semibold text-black" style={{ left: `${storyForm.x * 100}%`, top: `${storyForm.y * 100}%`, width: `${Math.max(10, storyForm.width * 100)}%`, height: `${Math.max(4, storyForm.height * 100)}%`, transform: `translate(-50%, -50%) rotate(${storyForm.rotation}deg)` }}>Link Sticker</div>}</div>}
+            {storyForm.mediaPath && (
+              <div>
+                <div className="relative mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[293px] overflow-hidden rounded-lg bg-black">
+                  {storyForm.mediaType === 'video' ? (
+                    <video
+                      className="absolute inset-0 h-full w-full object-contain"
+                      controls
+                      preload="metadata"
+                      src={previewUrl(storyForm.mediaPath)}
+                      onError={() => setStoryPreviewError(true)}
+                      onLoadedData={() => setStoryPreviewError(false)}
+                    />
+                  ) : (
+                    <img
+                      className="absolute inset-0 h-full w-full object-contain"
+                      src={previewUrl(storyForm.mediaPath)}
+                      alt="Story preview"
+                      onError={() => setStoryPreviewError(true)}
+                      onLoad={() => setStoryPreviewError(false)}
+                    />
+                  )}
+                  {storyForm.linkUrl && <div className="pointer-events-none absolute flex items-center justify-center rounded-full bg-white/90 px-2 text-center text-xs font-semibold text-black" style={{ left: `${storyForm.x * 100}%`, top: `${storyForm.y * 100}%`, width: `${Math.max(10, storyForm.width * 100)}%`, height: `${Math.max(4, storyForm.height * 100)}%`, transform: `translate(-50%, -50%) rotate(${storyForm.rotation}deg)` }}>Link Sticker</div>}
+                </div>
+                {storyPreviewError && (
+                  <div className="mx-auto mt-2 max-w-[293px] rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+                    このワークスペースでは利用できないメディアです。Mediaから選び直してください。
+                  </div>
+                )}
+              </div>
+            )}
             {storyForm.pipelineRunId && <div className="text-xs text-textItemBlur">承認済みPipeline: {storyForm.pipelineRunId}</div>}
             <Field label="Link URL"><input className={field} type="url" value={storyForm.linkUrl} onChange={(e) => setStoryForm({ ...storyForm, linkUrl: e.target.value })} placeholder="https://example.com" required /></Field>
             <StickerFields values={storyForm} onChange={(key, value) => setStoryForm({ ...storyForm, [key]: value })} />

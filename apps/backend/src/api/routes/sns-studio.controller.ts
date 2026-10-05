@@ -1276,6 +1276,28 @@ export class SnsStudioController {
     });
   }
 
+  @Get('/media-assets')
+  async listMediaAssets(@GetOrgFromRequest() org: Organization) {
+    const assets = await this.prisma.snsMediaAsset.findMany({
+      where: { organizationId: org.id },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        fileName: true,
+        storageKey: true,
+        mimeType: true,
+        sizeBytes: true,
+        source: true,
+        createdAt: true,
+      },
+    });
+    return assets.map((asset) => ({
+      ...asset,
+      sizeBytes: asset.sizeBytes?.toString() ?? null,
+    }));
+  }
+
   @Post('/media-assets/:id/post-media')
   async createPostMedia(
     @GetOrgFromRequest() org: Organization,
