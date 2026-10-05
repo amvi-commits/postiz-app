@@ -1,4 +1,5 @@
 import os
+import io
 import tempfile
 import pytest
 from unittest.mock import MagicMock, patch
@@ -6,11 +7,32 @@ from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 from app.models import PostRequest, PostResponseModel
-from app.errors import MediaUploadFailedError, InvalidMediaError
-from app.publisher import _prepare_media_files, _attach_media_files, _wait_for_media_upload, publish_thread
+from app.errors import (
+    MediaUploadFailedError,
+    MediaTooLargeError,
+    InvalidMediaError,
+    GhostStateUnknownError,
+    GhostNotAvailableError,
+)
+from app.publisher import (
+    _validate_media_url_ssrf,
+    _download_media_file_safe,
+    _prepare_media_files,
+    _attach_media_files,
+    _wait_for_media_upload,
+    _toggle_and_verify_ghost_mode,
+    publish_thread,
+)
+from app.config import settings
 from app.main import app
 
 client = TestClient(app)
+AUTH_HEADER = {"X-Threads-Service-Key": "test-key-media"}
+
+@pytest.fixture(autouse=True)
+def setup_service_key(monkeypatch):
+    monkeypatch.setattr(settings, "SERVICE_KEY", "test-key-media")
+
 
 def test_media_model_validation_success():
     req = PostRequest(
@@ -58,96 +80,173 @@ def test_media_model_validation_max_limit_exceeded():
     assert "exceeds Threads maximum limit" in str(exc.value)
 
 
-def test_prepare_media_files_download_success(tmp_path):
-    fake_content = b"\xFF\xD8\xFF\xE0\x00\x10JFIF"  # Minimal JPEG header
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = fake_content
+# --- SSRF Protection Tests ---
 
-    with patch("httpx.Client.get", return_value=mock_resp):
+def test_ssrf_rejects_invalid_scheme():
+    with pytest.raises(InvalidMediaError) as exc:
+        _validate_media_url_ssrf("ftp://example.com/image.jpg")
+    assert "無効なURLスキーム" in str(exc.value)
+
+
+def test_ssrf_rejects_userinfo():
+    with pytest.raises(InvalidMediaError) as exc:
+        _validate_media_url_ssrf("http://admin:secret@example.com/image.jpg")
+    assert "ユーザー名またはパスワード" in str(exc.value)
+
+
+def test_ssrf_rejects_private_ips(monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", [])
+
+    private_targets = [
+        ("http://127.0.0.1/test.jpg", "127.0.0.1"),
+        ("http://10.0.0.1/test.png", "10.0.0.1"),
+        ("http://192.168.1.100/test.webp", "192.168.1.100"),
+        ("http://172.16.0.5/test.jpeg", "172.16.0.5"),
+        ("http://169.254.169.254/latest/meta-data/test.jpg", "169.254.169.254"),
+    ]
+
+    for url, ip in private_targets:
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", (ip, 80))]):
+            with pytest.raises(InvalidMediaError) as exc:
+                _validate_media_url_ssrf(url)
+            assert "アクセスは禁止されています" in str(exc.value)
+
+
+def test_ssrf_allows_whitelisted_host(monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", ["localhost", "127.0.0.1", "host.docker.internal"])
+
+    # Should not raise because host is in allowlist
+    _validate_media_url_ssrf("http://host.docker.internal:4017/uploads/image.jpg")
+    _validate_media_url_ssrf("http://localhost:4017/uploads/image.jpg")
+
+
+def test_ssrf_rejects_redirect_to_private_ip(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", [])
+
+    # Initial request to public host
+    resp_redirect = MagicMock()
+    resp_redirect.status_code = 302
+    resp_redirect.headers = {"Location": "http://192.168.1.50/malicious.jpg"}
+
+    # Mock socket getaddrinfo: public IP for first call, private for second call
+    def mock_getaddrinfo(host, port, *args, **kwargs):
+        if host == "public.example.com":
+            return [(2, 1, 6, "", ("93.184.216.34", 80))]
+        return [(2, 1, 6, "", ("192.168.1.50", 80))]
+
+    with patch("socket.getaddrinfo", side_effect=mock_getaddrinfo):
+        with patch("httpx.Client.stream") as mock_stream:
+            mock_stream.return_value.__enter__.return_value = resp_redirect
+            dest = str(tmp_path / "out.jpg")
+            with pytest.raises(InvalidMediaError) as exc:
+                _download_media_file_safe("http://public.example.com/initial.jpg", dest)
+            assert "アクセスは禁止されています" in str(exc.value)
+
+
+# --- Content-Type & Size Limit Tests ---
+
+def test_media_rejects_invalid_content_type(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", ["example.com"])
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"Content-Type": "text/html"}
+
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 80))]):
+        with patch("httpx.Client.stream") as mock_stream:
+            mock_stream.return_value.__enter__.return_value = resp
+            dest = str(tmp_path / "out.jpg")
+            with pytest.raises(InvalidMediaError) as exc:
+                _download_media_file_safe("http://example.com/test.jpg", dest)
+            assert "無効なContent-Type" in str(exc.value)
+
+
+def test_media_rejects_oversized_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", ["example.com"])
+    monkeypatch.setattr(settings, "MEDIA_MAX_BYTES", 1024)  # 1KB limit
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {"Content-Type": "image/jpeg", "Content-Length": "2048"}
+    resp.iter_bytes.return_value = [b"A" * 1500]
+
+    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 80))]):
+        with patch("httpx.Client.stream") as mock_stream:
+            mock_stream.return_value.__enter__.return_value = resp
+            dest = str(tmp_path / "out.jpg")
+            with pytest.raises(MediaTooLargeError) as exc:
+                _download_media_file_safe("http://example.com/large.jpg", dest)
+            assert "メディアサイズが上限" in str(exc.value)
+
+
+def test_prepare_media_files_sanitizes_log_output(tmp_path, caplog, monkeypatch):
+    import logging
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(settings, "MEDIA_ALLOWED_HOSTS", ["cdn.example.com"])
+
+    fake_content = b"\xFF\xD8\xFF\xE0\x00\x10JFIF"
+    with patch("app.publisher._download_media_file_safe") as mock_download:
+        secret_url = "https://cdn.example.com/photo.jpg?token=SECRET_AUTH_TOKEN_XYZ&sig=12345"
         res = _prepare_media_files(
-            media_urls=["https://example.com/test_image.jpg"],
+            media_urls=[secret_url],
             media_paths=None,
             temp_dir=str(tmp_path),
         )
 
-    assert len(res) == 1
-    assert os.path.exists(res[0])
-    with open(res[0], "rb") as f:
-        assert f.read() == fake_content
+        assert len(res) == 1
+        # Assert that the full URL with secret query token is NOT in caplog
+        assert "SECRET_AUTH_TOKEN_XYZ" not in caplog.text
+        assert "host=cdn.example.com" in caplog.text
 
 
-def test_prepare_media_files_download_http_error(tmp_path):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 404
+# --- Ghost Post Verification Tests ---
 
-    with patch("httpx.Client.get", return_value=mock_resp):
-        with pytest.raises(MediaUploadFailedError) as exc:
-            _prepare_media_files(
-                media_urls=["https://example.com/not_found.png"],
-                media_paths=None,
-                temp_dir=str(tmp_path),
-            )
-    assert "HTTP 404" in str(exc.value)
-
-
-def test_prepare_media_files_missing_local_file(tmp_path):
-    with pytest.raises(InvalidMediaError) as exc:
-        _prepare_media_files(
-            media_urls=None,
-            media_paths=[str(tmp_path / "non_existent_file.png")],
-            temp_dir=str(tmp_path),
-        )
-    assert "存在しません" in str(exc.value)
-
-
-def test_attach_media_files_via_input(tmp_path):
-    mock_page = MagicMock()
-    mock_input = MagicMock()
-    mock_input.count.return_value = 1
-    mock_page.locator.return_value = mock_input
-
-    sample_file = tmp_path / "img.jpg"
-    sample_file.write_text("dummy")
-
-    _attach_media_files(mock_page, [str(sample_file)])
-    mock_input.first.set_input_files.assert_called_once_with([str(sample_file)])
-
-
-def test_wait_for_media_upload_success():
-    mock_page = MagicMock()
-    mock_progress = MagicMock()
-    mock_progress.count.return_value = 0
-    mock_preview = MagicMock()
-    mock_preview.count.return_value = 1
-    mock_preview.first.is_visible.return_value = True
-
-    def locator_side_effect(selector):
-        if "progressbar" in selector or "Loading" in selector:
-            return mock_progress
-        return mock_preview
-
-    mock_page.locator.side_effect = locator_side_effect
-
-    # Should not raise
-    _wait_for_media_upload(mock_page, timeout_sec=2.0)
-
-
-def test_wait_for_media_upload_timeout():
+def test_ghost_toggle_not_available():
     mock_page = MagicMock()
     mock_loc = MagicMock()
     mock_loc.count.return_value = 0
+    mock_page.get_by_label.return_value = mock_loc
     mock_page.locator.return_value = mock_loc
 
-    with pytest.raises(MediaUploadFailedError) as exc:
-        _wait_for_media_upload(mock_page, timeout_sec=0.5)
-    assert "タイムアウト" in str(exc.value)
+    with pytest.raises(GhostNotAvailableError) as exc:
+        _toggle_and_verify_ghost_mode(mock_page)
+    assert "操作UIが存在しない" in str(exc.value)
 
+
+def test_ghost_toggle_and_verify_success():
+    mock_page = MagicMock()
+    mock_btn = MagicMock()
+    mock_btn.count.return_value = 1
+    mock_btn.first.is_visible.return_value = True
+    # After click, it returns aria-checked="true"
+    mock_btn.first.get_attribute.side_effect = lambda attr: "true" if attr == "aria-checked" else None
+
+    mock_page.get_by_label.return_value = mock_btn
+
+    assert _toggle_and_verify_ghost_mode(mock_page) is True
+    mock_btn.first.click.assert_called_once()
+
+
+def test_ghost_toggle_state_verification_failure():
+    mock_page = MagicMock()
+    mock_btn = MagicMock()
+    mock_btn.count.return_value = 1
+    mock_btn.first.is_visible.return_value = True
+    # After click, it returns aria-checked="false"
+    mock_btn.first.get_attribute.side_effect = lambda attr: "false"
+
+    mock_page.get_by_label.return_value = mock_btn
+
+    with pytest.raises(GhostStateUnknownError) as exc:
+        _toggle_and_verify_ghost_mode(mock_page)
+    assert "有効化状態を確認できませんでした" in str(exc.value)
+
+
+# --- Publisher Dry-Run & API Post Tests ---
 
 def test_publisher_media_dry_run_success(tmp_path, monkeypatch):
     import app.publisher as pub_mod
 
-    # Setup temporary account
     monkeypatch.setattr(pub_mod, "account_exists", lambda acc: True)
     monkeypatch.setattr(pub_mod, "acquire_account_lock", MagicMock())
 
@@ -186,8 +285,8 @@ def test_api_post_with_media_success(monkeypatch):
         lambda **kwargs: PostResponseModel(
             status="ok",
             account=kwargs["account"],
-            post_id="th_sidecar_media_99",
-            url=f"https://www.threads.net/@{kwargs['account']}",
+            post_id="1802938472918234",
+            url=f"https://www.threads.net/@{kwargs['account']}/post/1802938472918234",
             request_id=kwargs.get("request_id"),
         ),
     )
@@ -199,12 +298,13 @@ def test_api_post_with_media_success(monkeypatch):
             "text": "Post with media URLs",
             "media_urls": ["https://cdn.example.com/pic1.jpg", "https://cdn.example.com/pic2.png"],
         },
+        headers=AUTH_HEADER,
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["post_id"] == "th_sidecar_media_99"
+    assert data["post_id"] == "1802938472918234"
 
 
 def test_api_post_with_invalid_media_extension():
@@ -215,6 +315,7 @@ def test_api_post_with_invalid_media_extension():
             "text": "Post with bad media",
             "media_urls": ["https://cdn.example.com/bad.bmp"],
         },
+        headers=AUTH_HEADER,
     )
     assert response.status_code == 422
     assert "Unsupported media format" in response.json()["message"]

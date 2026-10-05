@@ -1,11 +1,14 @@
 import os
+import re
 import shutil
+import socket
+import ipaddress
 import tempfile
 import time
 import uuid
 import logging
 from typing import Optional, List
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import httpx
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
@@ -18,9 +21,11 @@ from app.errors import (
     ComposerNotFoundError,
     PostButtonNotFoundError,
     GhostNotAvailableError,
+    GhostStateUnknownError,
     PostSubmitFailedError,
     PostStatusUnknownError,
     MediaUploadFailedError,
+    MediaTooLargeError,
     InvalidMediaError,
     TimeoutError as CustomTimeoutError,
 )
@@ -34,7 +39,9 @@ from app.selectors import (
     COMPOSER_TEXTBOX_SELECTORS,
     POST_SUBMIT_BUTTON_NAMES,
     POST_SUBMIT_SELECTORS,
-    GHOST_UI_KEYWORDS,
+    GHOST_TOGGLE_LABELS,
+    GHOST_TOGGLE_SELECTORS,
+    POST_VIEW_LINK_SELECTORS,
     SUCCESS_TOAST_SELECTORS,
     ATTACH_MEDIA_LABELS,
     ATTACH_MEDIA_SELECTORS,
@@ -44,6 +51,120 @@ from app.selectors import (
 )
 
 logger = logging.getLogger(__name__)
+
+def _validate_media_url_ssrf(url: str) -> None:
+    """Validate URL scheme, host, and resolved IP against SSRF attacks."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise InvalidMediaError(f"無効なURLスキームです: '{scheme}'. http または https のみ許可されています。")
+
+    if parsed.username or parsed.password:
+        raise InvalidMediaError("URLにユーザー名またはパスワードを含めることはできません。")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise InvalidMediaError("URLにホスト名が含まれていません。")
+
+    port = parsed.port or (443 if scheme == "https" else 80)
+    host_with_port = f"{hostname}:{port}"
+
+    # Check allowed local hosts allowlist
+    allowed_hosts = [h.lower() for h in settings.MEDIA_ALLOWED_HOSTS]
+    if hostname.lower() in allowed_hosts or host_with_port.lower() in allowed_hosts:
+        return
+
+    # Resolve DNS to check IP addresses
+    try:
+        addr_info = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise InvalidMediaError(f"ホスト名を解決できませんでした: {hostname} ({e})")
+
+    for family, socktype, proto, canonname, sockaddr in addr_info:
+        ip_str = sockaddr[0]
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        ):
+            raise InvalidMediaError(
+                f"プライベートまたは制限されたIPアドレス範囲へのアクセスは禁止されています: {hostname} ({ip_str})"
+            )
+
+
+def _download_media_file_safe(url: str, dest_path: str) -> None:
+    """Download media URL safely with SSRF validation on redirects, MIME check, and size limit."""
+    current_url = url
+    redirect_count = 0
+    MAX_REDIRECTS = 3
+
+    while redirect_count <= MAX_REDIRECTS:
+        _validate_media_url_ssrf(current_url)
+
+        with httpx.Client(timeout=30.0, follow_redirects=False) as client:
+            try:
+                with client.stream("GET", current_url, headers={"User-Agent": "PostizThreadsSidecar/1.0"}) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location")
+                        if not location:
+                            raise MediaUploadFailedError("リダイレクト先にLocationヘッダーがありません。")
+                        current_url = urljoin(current_url, location)
+                        redirect_count += 1
+                        if redirect_count > MAX_REDIRECTS:
+                            raise MediaUploadFailedError("リダイレクト回数が上限 (3回) を超えました。")
+                        continue
+
+                    if resp.status_code != 200:
+                        raise MediaUploadFailedError(
+                            f"メディアURLのダウンロードに失敗しました (HTTP {resp.status_code})"
+                        )
+
+                    headers_lower = {k.lower(): v for k, v in resp.headers.items()}
+                    content_type = headers_lower.get("content-type", "").split(";")[0].strip().lower()
+                    if content_type not in ("image/jpeg", "image/png", "image/webp"):
+                        raise InvalidMediaError(
+                            f"無効なContent-Typeです: '{content_type}'. 許可されているMIMEタイプ: image/jpeg, image/png, image/webp"
+                        )
+
+                    content_length = headers_lower.get("content-length")
+                    if content_length and int(content_length) > settings.MEDIA_MAX_BYTES:
+                        raise MediaTooLargeError(
+                            f"メディアサイズが上限 ({settings.MEDIA_MAX_BYTES} bytes) を超えています。"
+                        )
+
+                    total_downloaded = 0
+                    with open(dest_path, "wb") as f:
+                        for chunk in resp.iter_bytes(chunk_size=65536):
+                            total_downloaded += len(chunk)
+                            if total_downloaded > settings.MEDIA_MAX_BYTES:
+                                raise MediaTooLargeError(
+                                    f"メディアサイズが上限 ({settings.MEDIA_MAX_BYTES} bytes) を超えています。"
+                                )
+                            f.write(chunk)
+                    return
+            except (InvalidMediaError, MediaTooLargeError, MediaUploadFailedError):
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except OSError:
+                        pass
+                raise
+            except Exception as e:
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except OSError:
+                        pass
+                raise MediaUploadFailedError(f"メディアURLのダウンロード中に通信エラーが発生しました: {e}")
+
 
 def _find_and_open_composer(page: Page) -> bool:
     """Attempt to locate and click the thread composer button using prioritize locator strategies."""
@@ -70,6 +191,7 @@ def _find_and_open_composer(page: Page) -> bool:
 
     return False
 
+
 def _find_composer_textbox(page: Page):
     """Find the active editable textbox inside the thread composer."""
     # 1. Try role textbox with candidate names
@@ -86,6 +208,7 @@ def _find_composer_textbox(page: Page):
 
     return None
 
+
 def _find_post_submit_button(page: Page):
     """Find the submit button in the composer."""
     for name in POST_SUBMIT_BUTTON_NAMES:
@@ -99,6 +222,7 @@ def _find_post_submit_button(page: Page):
             return loc.first
 
     return None
+
 
 def _prepare_media_files(
     media_urls: Optional[List[str]],
@@ -116,30 +240,17 @@ def _prepare_media_files(
                 raise InvalidMediaError(f"指定されたメディアファイルが存在しません: {p}")
             prepared_files.append(abs_p)
 
-    # 2. Download media URLs
+    # 2. Download media URLs with SSRF protection and sanitized logging
     if media_urls:
         for idx, url in enumerate(media_urls):
-            logger.info(f"Downloading media item {idx + 1}/{len(media_urls)}: {url}...")
             parsed = urlparse(url)
-            ext = os.path.splitext(parsed.path)[1].lower()
-            if not ext:
-                ext = ".jpg"
+            host = parsed.hostname or "unknown"
+            ext = os.path.splitext(parsed.path)[1].lower() or ".jpg"
+            # Sanitize log output (no query tokens/credentials)
+            logger.info(f"Downloading media item {idx + 1}/{len(media_urls)}: host={host}, ext={ext}")
 
             dest_path = os.path.join(temp_dir, f"media_upload_{idx}_{uuid.uuid4().hex[:6]}{ext}")
-            try:
-                with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                    resp = client.get(url)
-                    if resp.status_code != 200:
-                        raise MediaUploadFailedError(
-                            f"メディアURLのダウンロードに失敗しました (HTTP {resp.status_code}): {url}"
-                        )
-                    with open(dest_path, "wb") as f:
-                        f.write(resp.content)
-            except Exception as e:
-                if isinstance(e, MediaUploadFailedError):
-                    raise
-                raise MediaUploadFailedError(f"メディアURLのダウンロード中に通信エラーが発生しました: {url} ({e})")
-
+            _download_media_file_safe(url, dest_path)
             prepared_files.append(os.path.abspath(dest_path))
 
     return prepared_files
@@ -218,6 +329,56 @@ def _wait_for_media_upload(page: Page, timeout_sec: float = 15.0) -> None:
         raise MediaUploadFailedError("メディアのアップロード処理がタイムアウトしました（プレビュー未確認）。")
 
 
+def _toggle_and_verify_ghost_mode(page: Page) -> bool:
+    """Locate Ghost Post toggle in composer, click it, and verify that it entered ghost mode."""
+    toggle_el = None
+    # 1. Search by label
+    for label in GHOST_TOGGLE_LABELS:
+        loc = page.get_by_label(label)
+        if loc.count() > 0 and loc.first.is_visible():
+            toggle_el = loc.first
+            break
+
+    # 2. Search by selectors
+    if not toggle_el:
+        for sel in GHOST_TOGGLE_SELECTORS:
+            loc = page.locator(sel)
+            if loc.count() > 0 and loc.first.is_visible():
+                toggle_el = loc.first
+                break
+
+    if not toggle_el:
+        raise GhostNotAvailableError("Threads Web UI上にGhost Postの操作UIが存在しないため、送信できません。")
+
+    # Click the toggle
+    toggle_el.click()
+    page.wait_for_timeout(500)
+
+    # Verify toggle state changed to active/checked
+    is_verified = False
+    try:
+        aria_checked = toggle_el.get_attribute("aria-checked")
+        aria_pressed = toggle_el.get_attribute("aria-pressed")
+        data_state = toggle_el.get_attribute("data-state")
+        class_attr = toggle_el.get_attribute("class") or ""
+        if (
+            aria_checked in ("true", "1")
+            or aria_pressed in ("true", "1")
+            or data_state == "checked"
+            or "checked" in class_attr
+            or "active" in class_attr
+        ):
+            is_verified = True
+    except Exception:
+        pass
+
+    if not is_verified:
+        raise GhostStateUnknownError("Ghost Postトグルをクリックしましたが、有効化状態を確認できませんでした。")
+
+    logger.info("Ghost post mode toggled and verified on composer.")
+    return True
+
+
 def publish_thread(
     account: str,
     text: str,
@@ -282,27 +443,19 @@ def publish_thread(
                     _wait_for_media_upload(page, timeout_sec=15.0)
                     page.wait_for_timeout(500)
 
-                # 7. Dry run check
+                # 7. Ghost post toggle and verification
+                if is_ghost:
+                    logger.info(f"[{account}] Activating and verifying Ghost post mode...")
+                    _toggle_and_verify_ghost_mode(page)
+
+                # 8. Dry run check
                 if dry_run:
-                    logger.info(f"[{account}] dry_run=True: Text and media verified, skipping post button click.")
+                    logger.info(f"[{account}] dry_run=True: Text, media, and ghost state verified, skipping post button click.")
                     return PostResponseModel(
                         status="dry_run_ok",
                         account=account,
                         request_id=request_id,
                     )
-
-                # 8. Ghost post verification
-                if is_ghost:
-                    ghost_found = False
-                    for keyword in GHOST_UI_KEYWORDS:
-                        if page.locator(f"text={keyword}").count() > 0:
-                            ghost_found = True
-                            break
-                    if not ghost_found:
-                        save_diagnostic(page, account, "ghost_not_available")
-                        raise GhostNotAvailableError(
-                            "Threads Web UI上にGhost Postのネイティブ操作UIが存在しないため、送信できません。"
-                        )
 
                 # 9. Submit Post
                 submit_btn = _find_post_submit_button(page)
@@ -336,17 +489,45 @@ def publish_thread(
                     save_diagnostic(page, account, "post_status_unknown")
                     raise PostStatusUnknownError("投稿ボタンを押下しましたが、完了シグナル（モーダル消去・通知）を確認できませんでした。")
 
-                post_id = f"th_sidecar_{uuid.uuid4().hex[:12]}"
-                release_url = f"https://www.threads.net/@{account}"
-                logger.info(f"[{account}] Successfully published thread. ID: {post_id}")
+                # 11. Extract real permalink / identifier if present in UI
+                real_url: Optional[str] = None
+                real_post_id: Optional[str] = None
 
-                return PostResponseModel(
-                    status="ok",
-                    account=account,
-                    post_id=post_id,
-                    url=release_url,
-                    request_id=request_id,
-                )
+                for sel in POST_VIEW_LINK_SELECTORS:
+                    link_loc = page.locator(sel)
+                    if link_loc.count() > 0:
+                        try:
+                            href = link_loc.first.get_attribute("href")
+                            if href and ("threads.net" in href or href.startswith("/")):
+                                full_href = href if href.startswith("http") else f"{THREADS_BASE_URL}{href}"
+                                match = re.search(r"/(?:post|t)/([A-Za-z0-9_-]+)", full_href)
+                                if match:
+                                    real_url = full_href
+                                    real_post_id = match.group(1)
+                                    break
+                        except Exception:
+                            pass
+
+                if real_post_id and real_url:
+                    logger.info(f"[{account}] Successfully published thread with real ID: {real_post_id}, URL: {real_url}")
+                    return PostResponseModel(
+                        status="ok",
+                        account=account,
+                        post_id=real_post_id,
+                        url=real_url,
+                        request_id=request_id,
+                    )
+                else:
+                    # Success verified via modal closing / toast, but specific permalink could not be scraped from UI.
+                    # DO NOT generate fake IDs or fake profile permalinks!
+                    logger.info(f"[{account}] Thread submission confirmed in UI, but specific permalink not exposed. Returning status='submitted' without synthetic IDs.")
+                    return PostResponseModel(
+                        status="submitted",
+                        account=account,
+                        post_id=None,
+                        url=None,
+                        request_id=request_id,
+                    )
 
             except PlaywrightTimeoutError as e:
                 if page:
@@ -356,8 +537,16 @@ def publish_thread(
                 if page:
                     save_diagnostic(page, account, "media_upload_failed")
                 raise
+            except GhostStateUnknownError:
+                if page:
+                    save_diagnostic(page, account, "ghost_state_unknown")
+                raise
+            except GhostNotAvailableError:
+                if page:
+                    save_diagnostic(page, account, "ghost_not_available")
+                raise
             except Exception as e:
-                if page and not isinstance(e, (AccountNotFoundError, AuthRequiredError, ComposerNotFoundError, PostButtonNotFoundError, GhostNotAvailableError, PostStatusUnknownError, CustomTimeoutError, MediaUploadFailedError, InvalidMediaError)):
+                if page and not isinstance(e, (AccountNotFoundError, AuthRequiredError, ComposerNotFoundError, PostButtonNotFoundError, GhostNotAvailableError, GhostStateUnknownError, PostStatusUnknownError, CustomTimeoutError, MediaUploadFailedError, MediaTooLargeError, InvalidMediaError)):
                     save_diagnostic(page, account, "internal_failure")
                 raise
             finally:

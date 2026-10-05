@@ -1257,21 +1257,34 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
+    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+    if (!serviceKey) {
+      throw new BadBody(
+        this.identifier,
+        '{}',
+        '{}',
+        '[CONFIGURATION_ERROR] THREADS_BROWSER_SERVICE_KEY must be configured when THREADS_PUBLISH_TRANSPORT is "browser".'
+      );
+    }
+
     const [firstPost] = postDetails;
     const sidecarUrl =
       process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
-    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+
     const accountName =
+      (firstPost?.settings as any)?.browserAccount ||
       (firstPost?.settings as any)?.account ||
       integration.name?.replace(/[^A-Za-z0-9_-]/g, '_') ||
       'main';
 
+    console.log(
+      `[ThreadsBrowserTransport] Routing post to browser profile alias '${accountName}' (integration: ${integration.name || integration.id})`
+    );
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'X-Threads-Service-Key': serviceKey,
     };
-    if (serviceKey) {
-      headers['X-Threads-Service-Key'] = serviceKey;
-    }
 
     const mediaUrls = (firstPost.media || [])
       .map((m) => m.path)
@@ -1307,18 +1320,17 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       );
     }
 
-    const releaseURL =
-      data?.url ||
-      (integration.name
-        ? `https://www.threads.net/@${integration.name}`
-        : 'https://www.threads.net');
+    const realPostId = data?.post_id || undefined;
+    const realReleaseUrl = data?.url || undefined;
+    const responseStatus =
+      data?.status === 'ok' && realPostId ? 'completed' : 'submitted';
 
     return [
       {
-        id: data?.post_id || firstPost.id,
-        postId: data?.post_id || makeSecureId(16),
-        releaseURL,
-        status: 'completed',
+        id: firstPost.id,
+        postId: realPostId,
+        releaseURL: realReleaseUrl,
+        status: responseStatus,
       },
     ];
   }

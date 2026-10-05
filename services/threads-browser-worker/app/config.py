@@ -14,6 +14,10 @@ class Settings:
     HEADLESS: bool = os.getenv("THREADS_BROWSER_HEADLESS", "true").lower() in ("true", "1", "yes")
     TIMEOUT_MS: int = int(os.getenv("THREADS_BROWSER_TIMEOUT_MS", "60000"))
     SERVICE_KEY: str | None = os.getenv("THREADS_BROWSER_SERVICE_KEY") or None
+    MEDIA_ALLOWED_HOSTS: list[str] = [
+        h.strip().lower() for h in os.getenv("THREADS_MEDIA_ALLOWED_HOSTS", "localhost,127.0.0.1,host.docker.internal").split(",") if h.strip()
+    ]
+    MEDIA_MAX_BYTES: int = int(os.getenv("THREADS_MEDIA_MAX_BYTES", str(20 * 1024 * 1024)))  # 20MB default
 
     SESSIONS_DIR: Path = Path(os.getenv("THREADS_BROWSER_SESSIONS_DIR", str(BASE_DIR / "sessions"))).resolve()
     DIAGNOSTICS_DIR: Path = Path(os.getenv("THREADS_BROWSER_DIAGNOSTICS_DIR", str(BASE_DIR / "diagnostics"))).resolve()

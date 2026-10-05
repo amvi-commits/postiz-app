@@ -134,3 +134,30 @@ class InvalidMediaError(ThreadsWorkerError):
             message=message,
             status_code=400,
         )
+
+
+class MediaTooLargeError(ThreadsWorkerError):
+    def __init__(self, message: str = "メディアサイズが上限を超えています。"):
+        super().__init__(
+            code="MEDIA_TOO_LARGE",
+            message=message,
+            status_code=400,
+        )
+
+
+class GhostStateUnknownError(ThreadsWorkerError):
+    def __init__(self, message: str = "Ghost Post状態の有効化を確認できませんでした。"):
+        super().__init__(
+            code="GHOST_STATE_UNKNOWN",
+            message=message,
+            status_code=409,
+        )
+
+
+class ServiceKeyNotConfiguredError(ThreadsWorkerError):
+    def __init__(self, message: str = "THREADS_BROWSER_SERVICE_KEY が設定されていません。"):
+        super().__init__(
+            code="SERVICE_KEY_NOT_CONFIGURED",
+            message=message,
+            status_code=500,
+        )

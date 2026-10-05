@@ -6,6 +6,26 @@ SNS Studioの共通投稿基盤（`SnsContent`, `SnsDelivery`など）や公式A
 
 ---
 
+## 実行アーキテクチャ構成
+
+### 1. 推奨構成: Windows Host-Native Worker（Recommended）
+- ユーザーの日常的なブラウザ操作（Headfulでの手動ログイン）と同じ Windows ホスト上で Sidecar を直接実行する構成です。
+- **メリット**: OSごとのChromiumプロファイル互換性問題が発生せず、ブラウザセッションの破損リスクが最も低くなります。
+- **Postizコンテナからの接続**:
+  Postiz（Docker）から Windows ホスト側で起動している Sidecar（ポート 8017）へリクエストを送る場合、Postiz側の `.env` に以下を設定します：
+  ```env
+  THREADS_PUBLISH_TRANSPORT=browser
+  THREADS_BROWSER_SERVICE_URL=http://host.docker.internal:8017
+  THREADS_BROWSER_SERVICE_KEY=YOUR_SECURE_SERVICE_KEY
+  ```
+
+### 2. オプション構成: Linux Docker Worker（Optional）
+- `docker-compose.yaml` を使用し、`threads-browser-worker` を Linux コンテナ（`mcr.microsoft.com/playwright/python:v1.40.0-jammy`）として稼働させる構成です。
+- **【重要】OS環境境界の厳守（Profile Creation OS Match）**:
+  Chromium のプロファイル内部データ（Local State, Preferences, IndexedDB など）は OS プラットフォーム固有のパスやデータ構造に依存します。**Windows ホスト上で生成したプロファイルディレクトリを Linux Docker コンテナにマウントして共有することは避けてください。** Linux Docker Worker を使用する場合は、プロファイルの初期ログイン・生成も同一の Linux 環境または Docker コンテナ内で実行してください。
+
+---
+
 ## 主な特徴とセキュリティ設計
 
 1. **Persistent Profile管理**:
@@ -14,14 +34,28 @@ SNS Studioの共通投稿基盤（`SnsContent`, `SnsDelivery`など）や公式A
    - パス・トラバーサル防止（`^[A-Za-z0-9_-]{1,64}$` の厳格な正規表現とcanonical path検証）。
 2. **アカウント単位プロセス排他制御**:
    - `filelock` によるアカウント単位の排他ロックを実装。同一アカウントへの多重並行操作によるプロファイル破損（`ACCOUNT_BUSY`, 409）を防止。
-3. **セキュリティとプライバシー保護**:
+3. **セキュリティとプライバシー保護（Fail-Closed）**:
    - ユーザー名・パスワード・2FA/OTP情報の取得・保存は一切行いません。
    - Cookieやアクセストークン、認証ヘッダーのログ出力およびファイル保存は禁止。
-   - `X-Threads-Service-Key` によるAPIキー照合保護（`/health` を除く全エンドポイント）。
+   - `X-Threads-Service-Key` によるAPIキー照合保護（`/health` を除く全エンドポイント）。キー未設定時は 500、キー不一致時は 401（デフォルト固定キーやフォールバックは完全廃止）。
    - デフォルトで `127.0.0.1` のみにバインド（外部公開防止）。
-4. **フォールバックと診断機能**:
-   - UIセレクター失敗時、機密情報を除外した状態（URL、タイトル、スクリーンショット）を `diagnostics/` へ安全に保存。
-   - Ghost PostはWeb UIにネイティブ機能が存在しない場合、擬似実装（投稿後24h削除）を行わず `GHOST_NOT_AVAILABLE` (409) で安全に拒絶。
+4. **メディアURLダウンロード時の SSRF 防御**:
+   - `http` / `https` スキーム限定、ユーザー認証情報埋め込みURLの拒絶。
+   - DNS名前解決によるプライベートIP、ループバックIP、リンクローカルIP、マルチキャスト等の拒絶。
+   - リダイレクト時（最大3ホップ）の宛先再検証。
+   - MIMEタイプ検証（`image/jpeg`, `image/png`, `image/webp`）およびサイズ上限（デフォルト20MB）強制。
+   - ローカル開発環境向けのホワイトリスト（`THREADS_MEDIA_ALLOWED_HOSTS`、デフォルト: `localhost,127.0.0.1,host.docker.internal`）。
+   - ログ出力時のサニタイズ（クエリパラメータやトークンを除外し、ホスト名と拡張子のみ記録）。
+5. **ステルス・UA設定の正常化**:
+   - 不自然な固定User-Agent偽装や `--disable-blink-features=AutomationControlled` 等のボット検出対策引数を撤廃し、Playwright Chromium 標準の振る舞いを使用。
+   - Sandbox設定はLinuxコンテナ環境のみ `--no-sandbox` を適用し、Windowsホスト実行時はネイティブのセキュリティサンドボックスを維持。
+6. **Ghost Post状態の物理検証**:
+   - Web UI上にネイティブトグルが存在しない場合は `GHOST_NOT_AVAILABLE` (409) で拒絶。
+   - トグル操作後に `aria-checked` 等の属性で有効化状態を確認できない場合は `GHOST_STATE_UNKNOWN` (409) を返却し、未検証状態での投稿を防止。
+7. **架空ID・パーマリンクの完全排除（Zero Fake IDs）**:
+   - UI上のトースト通知やリンクから正規パーマリンク（`/post/<id>` または `/t/<id>`）が取得できた場合のみ `status="ok"`, `post_id`, `url` を返却。
+   - 取得できなかった場合は `status="submitted"`, `post_id=null`, `url=null` を返却し、Postiz DBに架空のID（`th_sidecar_...` 等）を一切保存しない。
+   - Postiz側のTemporalワークフローでは、エラー発生時（`POST_STATUS_UNKNOWN` 等）に non-retryable な `BadBody` を送出することで二重投稿リトライを防止。
 
 ---
 
@@ -39,7 +73,7 @@ python -m venv .venv
 # 仮想環境有効化 (Windows PowerShell)
 .venv\Scripts\Activate.ps1
 
-# パッケージインストール
+# パッケージインストール (playwright==1.40.0)
 pip install -r requirements.txt
 
 # Playwright Chromiumブラウザのインストール
@@ -60,6 +94,8 @@ THREADS_BROWSER_SERVICE_PORT=8017
 THREADS_BROWSER_HEADLESS=true
 THREADS_BROWSER_TIMEOUT_MS=60000
 THREADS_BROWSER_SERVICE_KEY=YOUR_SECURE_KEY_HERE
+THREADS_MEDIA_ALLOWED_HOSTS=localhost,127.0.0.1,host.docker.internal
+THREADS_MEDIA_MAX_BYTES=20971520
 ```
 
 ---
@@ -233,7 +269,7 @@ docker compose up -d threads-browser-worker
 ```
 
 ### ボリュームマウントと永続化
-- `./services/threads-browser-worker/sessions:/app/sessions`: ホスト上のセッションプロファイルを保持し、コンテナ再起動後もログイン状態が維持されます。
+- `./services/threads-browser-worker/sessions:/app/sessions`: コンテナ内のセッションプロファイルを保持。
 - `./services/threads-browser-worker/diagnostics:/app/diagnostics`: 障害発生時のスクリーンショットと診断ログをホスト側で確認可能。
 
 ### SNS Studio（Postiz）とのコンテナ間通信設定
@@ -242,7 +278,8 @@ docker compose up -d threads-browser-worker
 ```env
 THREADS_PUBLISH_TRANSPORT=browser
 THREADS_BROWSER_SERVICE_URL=http://threads-browser-worker:8017
-THREADS_BROWSER_SERVICE_KEY=secret-key
+THREADS_BROWSER_SERVICE_KEY=YOUR_SECURE_SERVICE_KEY
 ```
 
 ※ `THREADS_PUBLISH_TRANSPORT=official_api`（または未指定）に設定すると、既存のMeta公式API経由での投稿動作が100%維持されます。
+

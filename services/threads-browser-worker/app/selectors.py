@@ -102,14 +102,41 @@ LOGGED_OUT_INDICATORS = [
     'text=Log in to see what',
 ]
 
-# Ghost Post native UI search keywords (for checking whether Threads web supports it)
-GHOST_UI_KEYWORDS = [
+# Ghost Post native UI candidates (switches, toggles, buttons for 24h / ephemeral / ghost post)
+GHOST_TOGGLE_LABELS = [
+    "Ghost post",
     "Ghost",
+    "ゴースト投稿",
     "ゴースト",
     "24時間で消滅",
-    "自動アーカイブ",
-    "24h限定",
+    "24hで消滅",
+    "24時間",
+    "Ephemeral",
     "消滅ポスト",
+]
+
+GHOST_TOGGLE_SELECTORS = [
+    'button[aria-label*="Ghost"]',
+    'button[aria-label*="ゴースト"]',
+    'div[role="switch"][aria-label*="Ghost"]',
+    'div[role="switch"][aria-label*="ゴースト"]',
+    'div[role="switch"][aria-label*="24時間"]',
+    'div[role="button"][aria-label*="Ghost"]',
+    'div[role="button"][aria-label*="ゴースト"]',
+    'div[role="button"]:has(svg[aria-label*="Ghost"])',
+    'div[role="button"]:has(svg[aria-label*="ゴースト"])',
+    'button:has-text("Ghost")',
+    'button:has-text("ゴースト")',
+]
+
+# Real post permalink extraction candidates from toast / success notification
+POST_VIEW_LINK_SELECTORS = [
+    'a[href*="/post/"]',
+    'a[href*="/t/"]',
+    '[role="alert"] a',
+    '[role="status"] a',
+    'div:has-text("投稿しました") a',
+    'div:has-text("Posted") a',
 ]
 
 # Success signals

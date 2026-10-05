@@ -12,13 +12,8 @@ from app.selectors import (
     LOGGED_OUT_INDICATORS,
 )
 
+import sys
 logger = logging.getLogger(__name__)
-
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/128.0.0.0 Safari/537.36"
-)
 
 def launch_persistent_browser(
     account: str,
@@ -28,19 +23,19 @@ def launch_persistent_browser(
     profile_dir = get_account_profile_dir(account, create=True)
     is_headless = settings.HEADLESS if headless is None else headless
 
+    browser_args: list[str] = []
+    # Only use --no-sandbox under Linux environments (e.g. Docker container)
+    if sys.platform.startswith("linux"):
+        browser_args.append("--no-sandbox")
+
     pw = sync_playwright().start()
     try:
         context = pw.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             headless=is_headless,
-            user_agent=USER_AGENT,
             locale="ja-JP",
             viewport={"width": 1280, "height": 800},
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-infobars",
-            ],
+            args=browser_args,
             timeout=settings.TIMEOUT_MS,
         )
         return pw, context

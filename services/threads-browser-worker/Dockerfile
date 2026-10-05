@@ -17,9 +17,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source code
 COPY . .
 
-# Ensure sessions and diagnostics directories exist with proper write permissions
+# Ensure sessions and diagnostics directories exist with proper write permissions for pwuser
 RUN mkdir -p /app/sessions /app/diagnostics && \
-    chmod -R 777 /app/sessions /app/diagnostics
+    chown -R pwuser:pwuser /app && \
+    chmod 750 /app/sessions /app/diagnostics
+
+USER pwuser
 
 EXPOSE 8017
 

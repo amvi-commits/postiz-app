@@ -39,17 +39,25 @@ app = FastAPI(
 
 # Authentication dependency using X-Threads-Service-Key
 def verify_service_key(x_threads_service_key: Optional[str] = Header(default=None)):
-    """Enforce X-Threads-Service-Key header authentication when THREADS_BROWSER_SERVICE_KEY is configured."""
-    if settings.SERVICE_KEY:
-        if not x_threads_service_key or x_threads_service_key != settings.SERVICE_KEY:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "status": "error",
-                    "code": "AUTH_REQUIRED",
-                    "message": "有効な X-Threads-Service-Key が指定されていません。",
-                },
-            )
+    """Enforce X-Threads-Service-Key header authentication fail-closed."""
+    if not settings.SERVICE_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": "error",
+                "code": "SERVICE_KEY_NOT_CONFIGURED",
+                "message": "THREADS_BROWSER_SERVICE_KEY が設定されていません。保護されたAPIは認証キー設定時のみ利用可能です。",
+            },
+        )
+    if not x_threads_service_key or x_threads_service_key != settings.SERVICE_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "status": "error",
+                "code": "AUTH_REQUIRED",
+                "message": "有効な X-Threads-Service-Key が指定されていません。",
+            },
+        )
     return True
 
 # Exception Handlers
