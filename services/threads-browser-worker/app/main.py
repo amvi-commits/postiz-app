@@ -113,7 +113,7 @@ async def get_accounts():
     response_model=SessionCheckResponse,
     dependencies=[Depends(verify_service_key)],
 )
-async def check_session(req: SessionCheckRequest):
+def check_session(req: SessionCheckRequest):
     """Check whether the persistent profile for the given account is authenticated with Threads."""
     if not account_exists(req.account):
         raise AccountNotFoundError(req.account)
@@ -139,7 +139,7 @@ async def check_session(req: SessionCheckRequest):
     response_model=PostResponseModel,
     dependencies=[Depends(verify_service_key)],
 )
-async def create_post(req: PostRequest):
+def create_post(req: PostRequest):
     """Publish a post to Threads using the account's persistent browser profile."""
     start_time = time.time()
     logger.info(f"POST /api/threads/post: account={req.account}, dry_run={req.dry_run}, req_id={req.request_id}")

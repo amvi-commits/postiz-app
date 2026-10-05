@@ -272,3 +272,76 @@ def test_post_auth_required(tmp_path, monkeypatch):
         )
         assert res.status_code == 401
         assert res.json()["code"] == "AUTH_REQUIRED"
+
+
+def test_endpoints_playwright_sync_safety():
+    """Verify that endpoints invoking Playwright Sync API are synchronous (def) functions, not coroutines (async def)."""
+    import inspect
+    from app.main import check_session, create_post
+    assert not inspect.iscoroutinefunction(check_session), "check_session must be a synchronous def to run on threadpool"
+    assert not inspect.iscoroutinefunction(create_post), "create_post must be a synchronous def to run on threadpool"
+
+
+def test_session_check_executes_outside_asyncio_event_loop(tmp_path, monkeypatch):
+    """Verify that when /api/threads/session/check is invoked through FastAPI routing,
+    the handler execution thread has NO active asyncio event loop, allowing Playwright Sync API."""
+    import asyncio
+    monkeypatch.setattr(settings, "SESSIONS_DIR", tmp_path)
+    get_account_profile_dir("main", create=True)
+
+    verified_no_loop = False
+
+    def spy_launch_persistent_browser(*args, **kwargs):
+        nonlocal verified_no_loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        assert loop is None, "launch_persistent_browser was called inside an active asyncio event loop!"
+        verified_no_loop = True
+        mock_pw = MagicMock()
+        mock_context = MagicMock()
+        mock_context.pages = []
+        return mock_pw, mock_context
+
+    with patch("app.main.launch_persistent_browser", side_effect=spy_launch_persistent_browser), \
+         patch("app.main.check_login_state", return_value="SESSION_OK"):
+        res = client.post(
+            "/api/threads/session/check",
+            json={"account": "main"},
+            headers=AUTH_HEADER,
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "SESSION_OK"
+        assert verified_no_loop is True, "spy_launch_persistent_browser was not called"
+
+
+def test_post_executes_outside_asyncio_event_loop(tmp_path, monkeypatch):
+    """Verify that when /api/threads/post is invoked through FastAPI routing,
+    the handler execution thread has NO active asyncio event loop, allowing Playwright Sync API."""
+    import asyncio
+    monkeypatch.setattr(settings, "SESSIONS_DIR", tmp_path)
+    get_account_profile_dir("main", create=True)
+
+    verified_no_loop = False
+
+    def spy_publish_thread(*args, **kwargs):
+        nonlocal verified_no_loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        assert loop is None, "publish_thread was called inside an active asyncio event loop!"
+        verified_no_loop = True
+        return PostResponseModel(status="dry_run_ok", account="main", post_id=None, url=None)
+
+    with patch("app.main.publish_thread", side_effect=spy_publish_thread):
+        res = client.post(
+            "/api/threads/post",
+            json={"account": "main", "text": "Testing threadpool execution", "dry_run": True},
+            headers=AUTH_HEADER,
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "dry_run_ok"
+        assert verified_no_loop is True, "spy_publish_thread was not called"
+
