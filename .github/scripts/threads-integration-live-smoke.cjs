@@ -459,8 +459,16 @@ async function runBrowserSmoke(database, testFixture) {
   addBrowserMonitors(page);
 
   await page.goto(FRONTEND_URL + '/sns-studio', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.getByRole('button', { name: 'Threads', exact: true }).waitFor({ state: 'visible', timeout: 60000 });
-  await page.getByRole('button', { name: 'Threads', exact: true }).click();
+  const platformNav = page.getByRole('navigation', { name: 'SNS Studio platforms' });
+  await platformNav.getByRole('button', { name: 'Threads', exact: true }).waitFor({ state: 'visible', timeout: 60000 });
+  await platformNav.getByRole('button', { name: 'Threads', exact: true }).click();
+  // Current navigation contract: top-level Threads opens "Threads Overview";
+  // the "Workspace" sub-section opens Threads Studio.
+  const threadsSectionsNav = page.getByRole('navigation', { name: 'Threads sections' });
+  await threadsSectionsNav.waitFor({ state: 'visible', timeout: 30000 });
+  await threadsSectionsNav.getByRole('button', { name: 'Overview', exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByRole('heading', { name: 'Threads Overview', exact: true }).waitFor({ state: 'visible', timeout: 30000 });
+  await threadsSectionsNav.getByRole('button', { name: 'Workspace', exact: true }).click();
   await page.getByRole('heading', { name: 'Threads Studio' }).waitFor({ state: 'visible', timeout: 30000 });
 
   const calendarPath = '/threads-studio/calendar';

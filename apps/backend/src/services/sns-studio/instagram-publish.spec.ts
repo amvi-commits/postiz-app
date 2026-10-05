@@ -240,7 +240,9 @@ describe('SnsStudioController.preflightStory read-only behavior', () => {
         ? { ready: true, errors: [], warnings: [], visual: { text: 'OPEN LINK\nexample.com', decode: 'PASS' } }
         : { status: healthStatus, session: 'VALID' },
     ));
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    // prisma, googleDrive, generationProvider, mediaService, accountProtection,
+    // captionProvider, tiktokPublishAdapter, tiktokAnalyticsAdapter, tiktokStatusAdapter
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     (controller as any).mediaWorker = mediaWorker;
     (controller as any).worker = worker;
     return { controller, prisma, mediaWorker, worker };
