@@ -51,13 +51,79 @@ function Test-DockerEngine {
     return ($result.ExitCode -eq 0)
 }
 
+# Runtime identity SSOT: image tags and the canonical uploads volume are read
+# only from the dedicated runtime's .env.integration (the same file Compose
+# receives via --env-file). No literal fallback exists in this launcher.
+$runtimeIdentityKeys = [ordered]@{
+    IntegrationImage = 'SNS_STUDIO_INTEGRATION_IMAGE'
+    MediaWorkerImage = 'SNS_STUDIO_MEDIA_WORKER_IMAGE'
+    UploadsVolume    = 'SNS_STUDIO_UPLOADS_VOLUME'
+}
+
+function Get-RuntimeIdentity {
+    $values = @{}
+    foreach ($line in (Get-Content -LiteralPath $envFile)) {
+        if ($line -match '^\s*(SNS_STUDIO_INTEGRATION_IMAGE|SNS_STUDIO_MEDIA_WORKER_IMAGE|SNS_STUDIO_UPLOADS_VOLUME)\s*=\s*(.*?)\s*$') {
+            $values[$Matches[1]] = $Matches[2].Trim('"').Trim("'")
+        }
+    }
+    $identity = [ordered]@{}
+    foreach ($entry in $runtimeIdentityKeys.GetEnumerator()) {
+        $value = [string]$values[$entry.Value]
+        if (-not $value) { throw "Runtime identity SSOT is incomplete: $($entry.Value) is not set in .env.integration. See scripts/windows/integration-runtime-identity.example.env. No fallback value is used." }
+        $identity[$entry.Key] = $value
+    }
+    foreach ($key in @('IntegrationImage', 'MediaWorkerImage')) {
+        if ($identity[$key] -notmatch '^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$') { throw "Runtime identity SSOT has an invalid image reference for $($runtimeIdentityKeys[$key])." }
+    }
+    if ($identity.UploadsVolume -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw 'Runtime identity SSOT has an invalid SNS_STUDIO_UPLOADS_VOLUME.' }
+    return [pscustomobject]$identity
+}
+
+function Test-RuntimeIdentityPrerequisites {
+    $volumes = Get-DockerVolumeNames
+    if ($volumes -notcontains $runtimeIdentity.UploadsVolume) {
+        throw "Canonical uploads volume missing: $($runtimeIdentity.UploadsVolume). No volume was created and no legacy volume was used. Restore the canonical volume or correct SNS_STUDIO_UPLOADS_VOLUME in .env.integration."
+    }
+    foreach ($image in @($runtimeIdentity.IntegrationImage, $runtimeIdentity.MediaWorkerImage)) {
+        $inspection = Invoke-DockerQuiet -Arguments @('image', 'inspect', '--format', '{{.Id}}', $image)
+        if ($inspection.ExitCode -ne 0) {
+            throw "Canonical image missing: $image. No older tag was substituted. Build/tag the image for the current Integration HEAD and update the runtime identity SSOT (see scripts/windows/integration-runtime-identity.example.env)."
+        }
+    }
+}
+
+function Get-ContainerInspection([string]$Name) {
+    $inspection = Invoke-DockerQuiet -Arguments @('inspect', $Name)
+    if ($inspection.ExitCode -ne 0) { throw "Required existing container is missing: $Name. No replacement was created." }
+    return ([string]::Join("`n", @($inspection.Output)) | ConvertFrom-Json)[0]
+}
+
+function Test-UploadsMount($Container, [string]$Name) {
+    $mounts = @($Container.Mounts | Where-Object { $_.Destination.TrimEnd('/') -eq '/uploads' })
+    if ($mounts.Count -ne 1 -or $mounts[0].Type -ne 'volume' -or $mounts[0].Name -ne $runtimeIdentity.UploadsVolume) {
+        throw "Running container $Name does not mount the canonical uploads volume at /uploads (expected the SSOT volume)."
+    }
+}
+
+function Test-WorkerContainerIdentity {
+    $mediaWorker = Get-ContainerInspection -Name 'sns-media-worker'
+    if ($mediaWorker.Config.Image -ne $runtimeIdentity.MediaWorkerImage) {
+        throw 'STALE media worker: sns-media-worker runs an image that differs from SNS_STUDIO_MEDIA_WORKER_IMAGE. Recreate it from the SSOT image in a controlled step; the launcher does not substitute images.'
+    }
+    Test-UploadsMount -Container $mediaWorker -Name 'sns-media-worker'
+    $instagramWorker = Get-ContainerInspection -Name 'sns-instagram-worker'
+    Test-UploadsMount -Container $instagramWorker -Name 'sns-instagram-worker'
+}
+
 function Get-ConfigurationFingerprint {
     $paths = @($composeFile, $safeComposeFile, $mediaComposeFile, $containerStartupScript, $launcherScript, $runtimeComposeFile, $runtimeStartupScript)
     $parts = foreach ($path in $paths) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required launcher file is missing: $path" }
         (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
     }
-    $combined = [string]::Join(':', $parts)
+    $identityParts = foreach ($entry in $runtimeIdentityKeys.GetEnumerator()) { "$($entry.Value)=$($runtimeIdentity.($entry.Key))" }
+    $combined = [string]::Join(':', @($parts) + @($identityParts))
     $bytes = [Text.Encoding]::UTF8.GetBytes($combined)
     $sha = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '') }
@@ -115,12 +181,14 @@ function Test-IntegrationComposeConfiguration {
         $expected = if ($key -eq 'NEXT_PUBLIC_BACKEND_URL') { 'http://localhost:4017/api' } else { 'http://localhost:4017' }
         if ($service.environment.$key -ne $expected) { throw "4017 runtime URL is incorrect: $key" }
     }
-    if ($service.image -ne 'sns-studio/integration-4017:unified-38c86ef') { throw '4017 runtime must retain the verified Unified image.' }
+    if ($service.image -ne $runtimeIdentity.IntegrationImage) { throw "4017 runtime Compose must resolve to the verified integration image ($($runtimeIdentity.IntegrationImage))." }
+    $mediaConf = $configuration.services.'sns-media-worker'
+    if ($mediaConf -and $mediaConf.image -ne $runtimeIdentity.MediaWorkerImage) { throw "4017 runtime Compose must resolve to the verified media worker image ($($runtimeIdentity.MediaWorkerImage))." }
     foreach ($name in @($postizService, 'sns-media-worker', 'sns-instagram-worker')) {
         $uploadMount = @($configuration.services.$name.volumes | Where-Object { $_.target.TrimEnd('/') -eq '/uploads' })
         if ($uploadMount.Count -ne 1 -or $uploadMount[0].type -ne 'volume') { throw "Shared uploads mount is incorrect: $name" }
         $uploadVolume = $configuration.volumes.($uploadMount[0].source)
-        if (-not $uploadVolume.external -or $uploadVolume.name -ne 'sns-studio-v1_postiz-uploads') { throw "Existing shared uploads volume is required: $name" }
+        if (-not $uploadVolume.external -or $uploadVolume.name -ne $runtimeIdentity.UploadsVolume) { throw "Existing canonical shared uploads volume ($($runtimeIdentity.UploadsVolume)) is required: $name" }
     }
     $sourceStartup = (Get-Content -LiteralPath $containerStartupScript -Raw).Replace("`r`n", "`n")
     $runtimeStartup = (Get-Content -LiteralPath $runtimeStartupScript -Raw).Replace("`r`n", "`n")
@@ -215,10 +283,11 @@ function Test-PostizContainerConfiguration {
     if ($inspection.ExitCode -ne 0) { throw '4017 runtime identity could not be inspected.' }
     $container = ([string]::Join("`n", @($inspection.Output)) | ConvertFrom-Json)[0]
     if ($container.Name -ne '/sns-studio-integration-4017' -or $container.Config.Labels.'com.docker.compose.project' -ne $projectName) { throw 'Resolved container is not the dedicated 4017 runtime.' }
+    if ($container.Config.Image -ne $runtimeIdentity.IntegrationImage) { throw "4017 Postiz container image does not match the runtime identity SSOT image ($($runtimeIdentity.IntegrationImage))." }
     $port = @($container.HostConfig.PortBindings.'5000/tcp')
     if ($port.Count -ne 1 -or $port[0].HostPort -ne '4017' -or $port[0].HostIp -ne '127.0.0.1') { throw 'Existing runtime host binding is incorrect.' }
     $mountedVolumes = @($container.Mounts | Where-Object { $_.Type -eq 'volume' } | ForEach-Object { $_.Name })
-    foreach ($volume in @('sns-studio-integration-4017-config', 'sns-studio-integration-4017-data', 'sns-studio-v1_postiz-uploads')) {
+    foreach ($volume in @('sns-studio-integration-4017-config', 'sns-studio-integration-4017-data', $runtimeIdentity.UploadsVolume)) {
         if ($mountedVolumes -notcontains $volume) { throw "Dedicated 4017 volume is missing: $volume" }
     }
 }
@@ -248,6 +317,8 @@ try {
         throw 'Docker CLI is unavailable. Install or repair Docker Desktop before starting SNS Studio.'
     }
 
+    $runtimeIdentity = Get-RuntimeIdentity
+
     Set-Location -LiteralPath $repoRoot
 
     Write-Stage 1 'Docker確認'
@@ -270,8 +341,10 @@ try {
     }
 
     $volumesBefore = Get-DockerVolumeNames
+    Test-RuntimeIdentityPrerequisites
     Test-IntegrationComposeConfiguration
     Test-PostizContainerConfiguration
+    Test-WorkerContainerIdentity
 
     Write-Stage 2 'Infrastructure起動'
     Start-ExistingContainers -Names @('postiz-postgres', 'sns-studio-voicevox', 'sns-instagram-worker', 'sns-media-worker')
