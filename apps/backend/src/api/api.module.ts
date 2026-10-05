@@ -69,8 +69,13 @@ import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studi
 import { AccountProtectionController } from '@gitroom/backend/api/routes/account-protection.controller';
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 import { TikTokPublishGuard } from '@gitroom/backend/services/sns-studio/tiktok-publish.guard';
+import { TikTokCommonPublishPreCreateHook } from '@gitroom/backend/services/sns-studio/tiktok-common-publish-pre-create.hook';
 import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 import { TikTokStatusAdapter } from '@gitroom/backend/services/sns-studio/tiktok-status.adapter';
+import {
+  PROVIDER_PUBLISH_PRE_CREATE_HOOKS,
+  ProviderPublishPreCreateProtection,
+} from '@gitroom/backend/services/posts/provider-publish-pre-create-protection.service';
 
 const authenticatedController = [
   UsersController,
@@ -153,6 +158,13 @@ const authenticatedController = [
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
     TikTokPublishAdapter,
     TikTokPublishGuard,
+    TikTokCommonPublishPreCreateHook,
+    ProviderPublishPreCreateProtection,
+    {
+      provide: PROVIDER_PUBLISH_PRE_CREATE_HOOKS,
+      useFactory: (tiktokHook: TikTokCommonPublishPreCreateHook) => [tiktokHook],
+      inject: [TikTokCommonPublishPreCreateHook],
+    },
     TikTokAnalyticsAdapter,
     TikTokStatusAdapter,
   ],

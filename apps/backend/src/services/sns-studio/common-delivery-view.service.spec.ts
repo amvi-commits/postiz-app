@@ -263,6 +263,49 @@ describe('CommonDeliveryViewService', () => {
     });
   });
 
+  it('confirms delivery status semantics: SnsDelivery.status=QUEUED with Post.state=PUBLISHED resolves to status=published and deliveryStatus=QUEUED in History, and is excluded from Queue', async () => {
+    const { prisma, service } = setup();
+    prisma.snsDelivery.findMany.mockResolvedValue([
+      makeDelivery({
+        id: 'delivery-completed',
+        integrationId: 'integration-one',
+        status: 'QUEUED',
+        postId: 'post-completed',
+        resolvedContent: 'Real published post',
+      }),
+    ]);
+    prisma.post.findMany.mockResolvedValue([
+      {
+        id: 'post-completed',
+        state: State.PUBLISHED,
+        publishDate: scheduledAt,
+        content: 'Real published post',
+        releaseId: 'release-123',
+        releaseURL: 'https://example.test/post/123',
+        settings: '{}',
+        error: null,
+        deletedAt: null,
+      },
+    ]);
+
+    // 1. History: derived status is 'published', raw deliveryStatus is 'QUEUED'
+    const history = await service.listHistory(organizationId);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      deliveryId: 'delivery-completed',
+      status: 'published',
+      deliveryStatus: 'QUEUED',
+      postState: State.PUBLISHED,
+      postId: 'post-completed',
+      providerPostId: 'release-123',
+      postUrl: 'https://example.test/post/123',
+    });
+
+    // 2. Queue: delivery with derived status 'published' is excluded from Queue
+    const queue = await service.listQueue(organizationId);
+    expect(queue).toHaveLength(0);
+  });
+
   it('fetches provider analytics through Postiz and leaves unavailable normalized values null', async () => {
     const { prisma, posts, service } = setup();
     prisma.snsDelivery.findMany.mockResolvedValue([

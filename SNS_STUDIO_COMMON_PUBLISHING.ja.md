@@ -276,6 +276,38 @@ account override
 - 失敗情報はCommon Historyで確認する。再試行処理はPostiz / Temporalの既存実行責務に残し、Common側から独自投稿jobや再送ボタンを作らない。これにより部分成功したdeliveryの二重投稿を避ける。
 - Phase 6ではschema / migrationの変更なし。
 
+#### 配信ステータス設計（Status Semantics: COMMON_DELIVERY_QUEUED_BY_DESIGN）
+
+共通投稿基盤における各状態の責務とステータス導出ルール：
+
+1. **実行状態のSSOT（Single Source of Truth）**:
+   - Postiz `Post.state`（`QUEUE` / `PUBLISHED` / `ERROR`）が投稿実行の唯一のSSOTである。Temporalワークフローが非同期に進行・完了を更新する。
+2. **配信計画・投入時の物理状態**:
+   - `SnsDelivery.status` はSNS StudioからPostizへ投稿・予約投入した時点の物理状態（`QUEUED` / `SCHEDULED` / `POSTIZ_DRAFT` / `PLANNED` 等）を保持する列であり、Postiz側の実行完了（PUBLISHED等）をwrite-backしてmirrorするものではない。
+   - 同様に `SnsContent.status` もコンテンツ計画全体の投入状態（`DRAFT` / `READY` / `POSTIZ_DRAFT` / `QUEUED` / `SCHEDULED` 等）であり、Postiz完了を追跡するものではない。
+3. **導出される実効状態（UI・API利用者向け）**:
+   - `CommonDeliveryView.status`（APIレスポンスの `status`）は、`CommonDeliveryViewService.stateFor()` により、Postiz `Post.state` ＋ Provider Publication Detail（UPLOAD判定等）＋ Delivery情報から動的に導出される。
+   - 画面表示（CommonDeliveryWorkspace等）は常にこの導出 `status` を表示ラベルに使用する。
+4. **診断・監査用フィールド**:
+   - APIレスポンスの `deliveryStatus` は、DB上の `SnsDelivery.status` 物理値をそのまま返却するフィールドであり、トラブルシューティングや監査・トレーサビリティの診断情報として提供される。
+5. **整合性評価（COMMON_DELIVERY_QUEUED_BY_DESIGN）**:
+   - 投稿完了時に観測される：
+     ```text
+     Post.state = PUBLISHED
+     Common History.status = published
+     SnsDelivery.status = QUEUED
+     deliveryStatus = QUEUED
+     Common Queue = 0
+     ```
+     はギャップや不具合ではなく、**設計通りの正常な振る舞い（COMMON_DELIVERY_QUEUED_BY_DESIGN）**である。
+6. **Queue / History の判定基準**:
+   - Queue / History の一覧分類は、動的に導出された `status` を基準に行われる。
+   - `queued` / `scheduled` / `draft` / `planned` はQueueに含まれ、`published` / `uploaded` / `failed` / `link_missing` はHistoryに含まれる。
+   - `SnsDelivery.status` 物理値では分類しないため、Postiz側で `PUBLISHED` となった配信は自動的にQueueから除外され（Queue = 0）、History側で `status = published` として表示される。
+7. **全SNS共通設計**:
+   - 本設計はTikTok固有の特殊仕様ではなく、全SNS（Instagram, TikTok, YouTube, Threads, X）共通のアーキテクチャである。
+   - Postiz / Temporal 実行基盤との疎結合を保ち、GET時の副作用（Read-Time Lazy Sync / DB更新）や、Postiz/Temporal側からSNS Studioへの逆方向依存、ポーリング用バックグラウンドリコンサイラー等の不要な複雑性を排除している。
+
 Phase 5/6のAccount Policyと配信一覧は共通基盤で管理し、provider-specific validation、analytics詳細、UPLOAD / public publishの判定だけをadapterへ委譲する。
 
 ## 非目標
