@@ -816,6 +816,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       return [];
     }
 
+    if (process.env.THREADS_PUBLISH_TRANSPORT === 'browser') {
+      return this.postViaBrowser(postDetails, integration);
+    }
+
     const [firstPost] = postDetails;
     const [response] = await this.postPending(
       userId,
@@ -1248,5 +1252,68 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     );
     return res.json();
   }
+
+  private async postViaBrowser(
+    postDetails: PostDetails<ThreadsSettingsData>[],
+    integration: Integration
+  ): Promise<PostResponse[]> {
+    const [firstPost] = postDetails;
+    const sidecarUrl =
+      process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+    const accountName =
+      (firstPost?.settings as any)?.account ||
+      integration.name?.replace(/[^A-Za-z0-9_-]/g, '_') ||
+      'main';
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (serviceKey) {
+      headers['X-Threads-Service-Key'] = serviceKey;
+    }
+
+    const payload = {
+      account: accountName,
+      text: firstPost.message,
+      is_ghost: Boolean((firstPost.settings as any)?.isGhostPost),
+      request_id: makeSecureId(16),
+      dry_run: false,
+    };
+
+    const res = await this.fetch(`${sidecarUrl}/api/threads/post`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.status === 'error') {
+      const errCode = data?.code || 'POST_SUBMIT_FAILED';
+      const errMsg = data?.message || 'Threadsブラウザ投稿に失敗しました。';
+      throw new BadBody(
+        this.identifier,
+        JSON.stringify(payload),
+        JSON.stringify(data),
+        `[${errCode}] ${errMsg}`
+      );
+    }
+
+    const releaseURL =
+      data?.url ||
+      (integration.name
+        ? `https://www.threads.net/@${integration.name}`
+        : 'https://www.threads.net');
+
+    return [
+      {
+        id: data?.post_id || firstPost.id,
+        postId: data?.post_id || makeSecureId(16),
+        releaseURL,
+        status: 'completed',
+      },
+    ];
+  }
 }
+
 
