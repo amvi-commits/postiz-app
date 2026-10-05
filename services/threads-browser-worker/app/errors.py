@@ -46,6 +46,15 @@ class AuthRequiredError(ThreadsWorkerError):
         )
 
 
+class AuthStateUnknownError(ThreadsWorkerError):
+    def __init__(self, message: str = "Threadsのログイン状態を特定できませんでした。画面構造が変わったか、セッションが不安定です。"):
+        super().__init__(
+            code="AUTH_STATE_UNKNOWN",
+            message=message,
+            status_code=401,
+        )
+
+
 class InvalidAccountNameError(ThreadsWorkerError):
     def __init__(self, account: str):
         super().__init__(

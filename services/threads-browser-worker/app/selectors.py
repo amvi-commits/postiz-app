@@ -78,29 +78,68 @@ POST_SUBMIT_SELECTORS = [
     'button:has-text("Post")',
 ]
 
-# Logged-in indicators (present when authenticated)
-LOGGED_IN_INDICATORS = [
-    'svg[aria-label="プロフィール"]',
-    'svg[aria-label="Profile"]',
-    'svg[aria-label="ホーム"]',
-    'svg[aria-label="Home"]',
-    'svg[aria-label="アクティビティ"]',
-    'svg[aria-label="Activity"]',
-    'svg[aria-label="検索"]',
-    'svg[aria-label="Search"]',
-    'a[href*="/@"]',
-    'a[href*="/activity"]',
+# Priority 1: Guest / Login modal dialogs (top priority - blocks UI interaction)
+LOGGED_OUT_MODAL_SELECTORS = [
+    '[role="dialog"]:has-text("ログイン")',
+    '[role="dialog"]:has-text("Log in")',
+    '[role="dialog"]:has-text("Threadsでもっと発信しよう")',
+    '[role="dialog"]:has-text("Instagramでログイン")',
+    '[role="dialog"]:has-text("Log in with Instagram")',
+    '[role="dialog"]:has-text("サインアップ")',
+    '[role="dialog"]:has-text("Sign up")',
+    'div[aria-modal="true"]:has-text("ログイン")',
+    'div[aria-modal="true"]:has-text("Log in")',
+    'div[aria-modal="true"]:has-text("Threadsでもっと発信しよう")',
 ]
 
-# Logged-out / Auth required indicators
+# Priority 4: Explicit unauthenticated prompts / CTAs anywhere on page
 LOGGED_OUT_INDICATORS = [
-    'input[name="password"]',
-    'button:has-text("Instagramでログイン")',
-    'button:has-text("Log in with Instagram")',
+    ':has-text("Threadsでもっと発信しよう")',
+    ':has-text("Instagramでログイン")',
+    ':has-text("Log in with Instagram")',
+    ':has-text("Threadsにログインするかサインアップ")',
+    ':has-text("Log in or sign up for Threads")',
+    ':has-text("代わりにユーザーネームでログイン")',
+    ':has-text("Log in with username instead")',
+    ':has-text("Log in to Threads")',
+    ':has-text("Threadsを利用するにはログインしてください")',
+    ':has-text("Log in to see what")',
     'a[href*="/login"]',
-    'text=Threadsを利用するにはログインしてください',
-    'text=Log in to see what',
+    'svg[aria-label="ログイン"]',
+    'svg[aria-label="Log in"]',
+    'input[name="password"]',
+    'input[type="password"]',
+    'input[name="username"]',
 ]
+
+# Priority 5: Strong authenticated-only indicators (MUST NOT match guest/logged-out states)
+# NEVER include generic navigation icons (Home, Search, Activity, Profile icon) which exist on public guest feeds.
+AUTHENTICATED_INDICATORS = [
+    # Active, visible composer entry points (only available when authenticated)
+    'div[role="button"]:has(svg[aria-label="新しいスレッド"])',
+    'div[role="button"]:has(svg[aria-label="新規投稿"])',
+    'div[role="button"]:has(svg[aria-label="Create"])',
+    'div[role="button"]:has(svg[aria-label="New thread"])',
+    'div[role="button"]:has(svg[aria-label="スレッドを開始"])',
+    'svg[aria-label="新しいスレッド"]',
+    'svg[aria-label="新規投稿"]',
+    'svg[aria-label="Create a thread"]',
+    'svg[aria-label="New thread"]',
+    # Inline feed composer textbox (only present when logged in)
+    'div[contenteditable="true"][role="textbox"]',
+    # Logged-in user menus & actions
+    'svg[aria-label="ピン留め"]',
+    'svg[aria-label="Pin"]',
+    'svg[aria-label="下書き"]',
+    'svg[aria-label="Drafts"]',
+    ':has-text("アカウントを切り替え")',
+    ':has-text("Switch accounts")',
+    ':has-text("ログアウト")',
+    ':has-text("Log out")',
+]
+
+# Alias for backwards compatibility
+LOGGED_IN_INDICATORS = AUTHENTICATED_INDICATORS
 
 # Ghost Post native UI candidates (switches, toggles, buttons for 24h / ephemeral / ghost post)
 GHOST_TOGGLE_LABELS = [

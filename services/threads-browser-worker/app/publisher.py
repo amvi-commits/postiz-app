@@ -18,6 +18,7 @@ from app.browser import launch_persistent_browser, check_login_state, save_diagn
 from app.errors import (
     AccountNotFoundError,
     AuthRequiredError,
+    AuthStateUnknownError,
     ComposerNotFoundError,
     PostButtonNotFoundError,
     GhostNotAvailableError,
@@ -418,6 +419,9 @@ def publish_thread(
                 if login_state == "AUTH_REQUIRED":
                     save_diagnostic(page, account, "auth_required")
                     raise AuthRequiredError("Threadsへの再ログインが必要です。セッションが切断されています。")
+                if login_state == "SESSION_UNKNOWN":
+                    save_diagnostic(page, account, "auth_state_unknown")
+                    raise AuthStateUnknownError("Threadsのログイン状態を特定できませんでした。セッションが有効か確認してください。")
 
                 # 4. Open Composer
                 logger.info(f"[{account}] Opening post composer...")
