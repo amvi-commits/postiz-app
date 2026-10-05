@@ -162,7 +162,27 @@ curl -X POST http://127.0.0.1:8017/api/threads/post \
 }
 ```
 
-### 5. 本番実投稿（ユーザー明示実行）
+### 5. メディア添付投稿（画像・カルーセル）
+
+`media_urls`（公開画像URL）または `media_paths`（ローカル/ボリューム上のファイルパス）を指定して投稿できます。
+- 対応拡張子: `.jpg`, `.jpeg`, `.png`, `.webp`
+- 最大添付枚数: 10枚（カルーセル対応）
+
+```bash
+curl -X POST http://127.0.0.1:8017/api/threads/post \
+  -H "Content-Type: application/json" \
+  -H "X-Threads-Service-Key: YOUR_SECURE_KEY_HERE" \
+  -d '{
+    "account": "main",
+    "text": "メディア添付テストです。",
+    "media_urls": [
+      "https://images.unsplash.com/photo-1579783902614-a3fb3927b675.jpg"
+    ],
+    "dry_run": true
+  }'
+```
+
+### 6. 本番実投稿（ユーザー明示実行）
 
 ※ 注意: `dry_run: false` を指定すると、実際にThreadsへ公開されます。
 
@@ -180,20 +200,49 @@ curl -X POST http://127.0.0.1:8017/api/threads/post \
 
 ---
 
-## SNS Studio（Postiz）との連携設定
+## 実機検証用サポートCLI (`verify_post.py`)
 
-### ホスト上でBackendが動作している場合
-```env
-THREADS_PUBLISH_TRANSPORT=browser
-THREADS_BROWSER_SERVICE_URL=http://127.0.0.1:8017
-THREADS_BROWSER_SERVICE_KEY=YOUR_SECURE_KEY_HERE
+CLIから安全にセッション認証状態の確認やテキスト・メディア添付投稿（デフォルトで安全な `dry_run` モード）をテストできます。
+
+```bash
+# ヘルプ確認
+python verify_post.py --help
+
+# 1. 安全なドライラン検証（テキストのみ）
+python verify_post.py --account main --text "テスト投稿です"
+
+# 2. メディア添付ドライラン検証（画像URLまたはローカルパス、複数指定可）
+python verify_post.py --account main --text "写真添付テスト" --media "https://example.com/photo.jpg"
+
+# 3. 実投稿（--real フラグを明示した場合のみ実際に投稿）
+python verify_post.py --account main --text "本番投稿" --real
 ```
 
-### Dockerコンテナ内でBackendが動作している場合
-```env
-THREADS_PUBLISH_TRANSPORT=browser
-THREADS_BROWSER_SERVICE_URL=http://host.docker.internal:8017
-THREADS_BROWSER_SERVICE_KEY=YOUR_SECURE_KEY_HERE
+- セッションが切れている（`AUTH_REQUIRED`）場合は、自動的に `cli_login.py` の実行を促して安全に終了します。
+- 失敗時は `diagnostics/` 内に保存されたスクリーンショット等のパスを案内します。
+
+---
+
+## Docker および Docker Compose 統合
+
+ルートの `docker-compose.yaml` に `threads-browser-worker` が統合されています。
+
+### 起動方法
+```bash
+docker compose up -d threads-browser-worker
 ```
 
-- `THREADS_PUBLISH_TRANSPORT=official_api`（デフォルト）を指定すると、既存のMeta公式API経由での投稿動作がそのまま維持されます。
+### ボリュームマウントと永続化
+- `./services/threads-browser-worker/sessions:/app/sessions`: ホスト上のセッションプロファイルを保持し、コンテナ再起動後もログイン状態が維持されます。
+- `./services/threads-browser-worker/diagnostics:/app/diagnostics`: 障害発生時のスクリーンショットと診断ログをホスト側で確認可能。
+
+### SNS Studio（Postiz）とのコンテナ間通信設定
+同一 Docker ネットワーク（`postiz-network`）内で自動疎通します。
+
+```env
+THREADS_PUBLISH_TRANSPORT=browser
+THREADS_BROWSER_SERVICE_URL=http://threads-browser-worker:8017
+THREADS_BROWSER_SERVICE_KEY=secret-key
+```
+
+※ `THREADS_PUBLISH_TRANSPORT=official_api`（または未指定）に設定すると、既存のMeta公式API経由での投稿動作が100%維持されます。

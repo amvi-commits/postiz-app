@@ -122,3 +122,50 @@ SUCCESS_TOAST_SELECTORS = [
     'div:has-text("スレッドを投稿しました")',
     'div:has-text("Your thread was posted")',
 ]
+
+# Media attachment buttons
+ATTACH_MEDIA_LABELS = [
+    "Attach media",
+    "メディアを添付",
+    "メディアの添付",
+    "Add media",
+    "画像を添付",
+    "写真や動画を追加",
+    "写真を添付",
+]
+
+ATTACH_MEDIA_SELECTORS = [
+    'svg[aria-label="Attach media"]',
+    'svg[aria-label="メディアを添付"]',
+    'svg[aria-label="画像を添付"]',
+    'div[role="button"]:has(svg[aria-label="Attach media"])',
+    'div[role="button"]:has(svg[aria-label="メディアを添付"])',
+    'div[role="button"]:has(svg[aria-label="画像を添付"])',
+]
+
+FILE_INPUT_SELECTORS = [
+    'input[type="file"][accept*="image"]',
+    'input[type="file"]',
+]
+
+# Media preview indicators (present after image upload attached to composer)
+MEDIA_PREVIEW_SELECTORS = [
+    'div[role="dialog"] img:not([alt*="profile"]):not([alt*="avatar"])',
+    'img[alt*="Uploaded"]',
+    'img[alt*="Media preview"]',
+    'img[alt*="メディアプレビュー"]',
+    'div[aria-label*="Media preview"]',
+    'div[aria-label*="メディアプレビュー"]',
+    'div[aria-label*="Attachment"]',
+    'div[data-pressable-container="true"] img',
+    'img[src^="blob:"]',
+]
+
+# Media upload in-progress indicators (should disappear when complete)
+MEDIA_UPLOAD_PROGRESS_SELECTORS = [
+    'div[role="progressbar"]',
+    '[aria-label*="Loading"]',
+    '[aria-label*="読み込み中"]',
+    '[aria-label*="アップロード中"]',
+    'svg[aria-label*="Loading"]',
+]

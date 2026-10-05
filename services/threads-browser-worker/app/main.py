@@ -139,6 +139,8 @@ async def create_post(req: PostRequest):
     res = publish_thread(
         account=req.account,
         text=req.text,
+        media_urls=req.media_urls,
+        media_paths=req.media_paths,
         is_ghost=req.is_ghost,
         dry_run=req.dry_run,
         request_id=req.request_id,

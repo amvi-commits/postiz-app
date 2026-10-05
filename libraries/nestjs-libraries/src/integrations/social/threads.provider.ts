@@ -1273,13 +1273,21 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       headers['X-Threads-Service-Key'] = serviceKey;
     }
 
-    const payload = {
+    const mediaUrls = (firstPost.media || [])
+      .map((m) => m.path)
+      .filter((p): p is string => Boolean(p));
+
+    const payload: Record<string, any> = {
       account: accountName,
       text: firstPost.message,
       is_ghost: Boolean((firstPost.settings as any)?.isGhostPost),
       request_id: makeSecureId(16),
       dry_run: false,
     };
+
+    if (mediaUrls.length > 0) {
+      payload.media_urls = mediaUrls;
+    }
 
     const res = await this.fetch(`${sidecarUrl}/api/threads/post`, {
       method: 'POST',

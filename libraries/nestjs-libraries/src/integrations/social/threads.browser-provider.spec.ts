@@ -118,4 +118,79 @@ describe('Threads Browser Publish Transport', () => {
       provider.post('user_1', 'token_1', samplePostDetails, mockIntegration)
     ).rejects.toThrow(BadBody);
   });
+
+  it('includes single media URL in sidecar payload when media is attached', async () => {
+    process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+    process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+
+    const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ok',
+          account: 'threads_user',
+          post_id: 'th_sidecar_media_1',
+          url: 'https://www.threads.net/@threads_user',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+
+    const postWithSingleMedia = [
+      {
+        id: 'post_single_media',
+        message: 'Post with image',
+        media: [{ type: 'image' as const, path: 'https://cdn.example.com/image1.jpg' }],
+        settings: {} as any,
+      },
+    ];
+
+    const result = await provider.post('user_1', 'token_1', postWithSingleMedia, mockIntegration);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:8017/api/threads/post',
+      expect.objectContaining({
+        body: expect.stringContaining('"media_urls":["https://cdn.example.com/image1.jpg"]'),
+      })
+    );
+    expect(result[0].id).toBe('th_sidecar_media_1');
+  });
+
+  it('includes multiple media URLs for carousel in sidecar payload', async () => {
+    process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+    process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+
+    const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ok',
+          account: 'threads_user',
+          post_id: 'th_sidecar_carousel_1',
+          url: 'https://www.threads.net/@threads_user',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+
+    const postWithMultipleMedia = [
+      {
+        id: 'post_carousel',
+        message: 'Post with carousel',
+        media: [
+          { type: 'image' as const, path: 'https://cdn.example.com/img1.png' },
+          { type: 'image' as const, path: 'https://cdn.example.com/img2.webp' },
+        ],
+        settings: {} as any,
+      },
+    ];
+
+    const result = await provider.post('user_1', 'token_1', postWithMultipleMedia, mockIntegration);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:8017/api/threads/post',
+      expect.objectContaining({
+        body: expect.stringContaining('"media_urls":["https://cdn.example.com/img1.png","https://cdn.example.com/img2.webp"]'),
+      })
+    );
+    expect(result[0].id).toBe('th_sidecar_carousel_1');
+  });
 });

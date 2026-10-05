@@ -113,6 +113,9 @@ services:
       # SNS Studio local workers
       INSTAGRAM_WORKER_URL: 'http://sns-instagram-worker:8000'
       MEDIA_WORKER_URL: 'http://sns-media-worker:8001'
+      THREADS_PUBLISH_TRANSPORT: '${THREADS_PUBLISH_TRANSPORT:-official_api}'
+      THREADS_BROWSER_SERVICE_URL: '${THREADS_BROWSER_SERVICE_URL:-http://threads-browser-worker:8017}'
+      THREADS_BROWSER_SERVICE_KEY: '${THREADS_BROWSER_SERVICE_KEY:-secret-key}'
       SNS_STUDIO_SERVICE_TOKEN: '${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}'
       SNS_STUDIO_DATA_DIR: '/sns-studio-data'
       SNS_STUDIO_GOOGLE_DRIVE_MOCK: '${SNS_STUDIO_GOOGLE_DRIVE_MOCK:-false}'
@@ -193,6 +196,28 @@ services:
       - voicevox
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  threads-browser-worker:
+    build:
+      context: ./services/threads-browser-worker
+    container_name: threads-browser-worker
+    restart: unless-stopped
+    ports:
+      - '8017:8017'
+    volumes:
+      - ./services/threads-browser-worker/sessions:/app/sessions
+      - ./services/threads-browser-worker/diagnostics:/app/diagnostics
+    environment:
+      THREADS_BROWSER_SERVICE_HOST: '0.0.0.0'
+      THREADS_BROWSER_SERVICE_PORT: '8017'
+      THREADS_BROWSER_SERVICE_KEY: '${THREADS_BROWSER_SERVICE_KEY:-secret-key}'
+    networks:
+      - postiz-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8017/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 10

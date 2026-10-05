@@ -116,3 +116,21 @@ class InternalError(ThreadsWorkerError):
             message=message,
             status_code=500,
         )
+
+
+class MediaUploadFailedError(ThreadsWorkerError):
+    def __init__(self, message: str = "メディアのアップロード・添付に失敗しました。"):
+        super().__init__(
+            code="MEDIA_UPLOAD_FAILED",
+            message=message,
+            status_code=500,
+        )
+
+
+class InvalidMediaError(ThreadsWorkerError):
+    def __init__(self, message: str = "メディアファイルの形式または指定が無効です。"):
+        super().__init__(
+            code="INVALID_MEDIA",
+            message=message,
+            status_code=400,
+        )
