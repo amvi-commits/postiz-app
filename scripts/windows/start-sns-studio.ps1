@@ -9,6 +9,7 @@ $ProgressPreference = 'SilentlyContinue'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $composeFile = Join-Path $repoRoot 'docker-compose.yaml'
 $safeComposeFile = Join-Path $repoRoot 'docker-compose.sns-studio-local-safe.yaml'
+$mediaComposeFile = Join-Path $repoRoot 'docker-compose.sns-studio-integration-media.yaml'
 $containerStartupScript = Join-Path $repoRoot 'scripts\sns-studio\start-local-safe.sh'
 $launcherScript = Join-Path $PSScriptRoot 'start-sns-studio.ps1'
 $runtimeDirectory = if ($IntegrationRuntimeDirectory) { [IO.Path]::GetFullPath($IntegrationRuntimeDirectory) } else { Join-Path $repoRoot '.sns-studio-data\integration-runtime' }
@@ -51,7 +52,7 @@ function Test-DockerEngine {
 }
 
 function Get-ConfigurationFingerprint {
-    $paths = @($composeFile, $safeComposeFile, $containerStartupScript, $launcherScript, $runtimeComposeFile, $runtimeStartupScript)
+    $paths = @($composeFile, $safeComposeFile, $mediaComposeFile, $containerStartupScript, $launcherScript, $runtimeComposeFile, $runtimeStartupScript)
     $parts = foreach ($path in $paths) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required launcher file is missing: $path" }
         (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -80,7 +81,8 @@ function Get-ComposeArguments {
         '--env-file', $envFile,
         '-f', $composeFile,
         '-f', $safeComposeFile,
-        '-f', $runtimeComposeFile
+        '-f', $runtimeComposeFile,
+        '-f', $mediaComposeFile
     )
 }
 
@@ -112,6 +114,13 @@ function Test-IntegrationComposeConfiguration {
     foreach ($key in @('MAIN_URL', 'FRONTEND_URL', 'NEXT_PUBLIC_BACKEND_URL')) {
         $expected = if ($key -eq 'NEXT_PUBLIC_BACKEND_URL') { 'http://localhost:4017/api' } else { 'http://localhost:4017' }
         if ($service.environment.$key -ne $expected) { throw "4017 runtime URL is incorrect: $key" }
+    }
+    if ($service.image -ne 'sns-studio/integration-4017:unified-38c86ef') { throw '4017 runtime must retain the verified Unified image.' }
+    foreach ($name in @($postizService, 'sns-media-worker', 'sns-instagram-worker')) {
+        $uploadMount = @($configuration.services.$name.volumes | Where-Object { $_.target.TrimEnd('/') -eq '/uploads' })
+        if ($uploadMount.Count -ne 1 -or $uploadMount[0].type -ne 'volume') { throw "Shared uploads mount is incorrect: $name" }
+        $uploadVolume = $configuration.volumes.($uploadMount[0].source)
+        if (-not $uploadVolume.external -or $uploadVolume.name -ne 'sns-studio-v1_postiz-uploads') { throw "Existing shared uploads volume is required: $name" }
     }
     $sourceStartup = (Get-Content -LiteralPath $containerStartupScript -Raw).Replace("`r`n", "`n")
     $runtimeStartup = (Get-Content -LiteralPath $runtimeStartupScript -Raw).Replace("`r`n", "`n")
@@ -209,7 +218,7 @@ function Test-PostizContainerConfiguration {
     $port = @($container.HostConfig.PortBindings.'5000/tcp')
     if ($port.Count -ne 1 -or $port[0].HostPort -ne '4017' -or $port[0].HostIp -ne '127.0.0.1') { throw 'Existing runtime host binding is incorrect.' }
     $mountedVolumes = @($container.Mounts | Where-Object { $_.Type -eq 'volume' } | ForEach-Object { $_.Name })
-    foreach ($volume in @('sns-studio-integration-4017-config', 'sns-studio-integration-4017-data', 'sns-studio-integration-4017-uploads')) {
+    foreach ($volume in @('sns-studio-integration-4017-config', 'sns-studio-integration-4017-data', 'sns-studio-v1_postiz-uploads')) {
         if ($mountedVolumes -notcontains $volume) { throw "Dedicated 4017 volume is missing: $volume" }
     }
 }
@@ -225,7 +234,7 @@ function Save-SafeStartupMarker {
 }
 
 try {
-    if (-not (Test-Path -LiteralPath $composeFile) -or -not (Test-Path -LiteralPath $safeComposeFile)) {
+    if (-not (Test-Path -LiteralPath $composeFile) -or -not (Test-Path -LiteralPath $safeComposeFile) -or -not (Test-Path -LiteralPath $mediaComposeFile)) {
         throw 'SNS Studio Compose files are missing from the current repository.'
     }
     if (-not (Test-Path -LiteralPath $containerStartupScript)) {

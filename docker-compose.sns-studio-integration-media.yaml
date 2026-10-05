@@ -1,0 +1,14 @@
+# Apply after the dedicated 4017 runtime compose and its Unified override.
+# Reuse the audited existing media volume; never create or migrate a volume here.
+services:
+  postiz-integration:
+    image: sns-studio/integration-4017:unified-38c86ef
+    volumes:
+      - postiz-uploads:/uploads
+  sns-media-worker:
+    image: sns-studio/media-worker:preview-volume-fix
+
+volumes:
+  postiz-uploads:
+    external: true
+    name: sns-studio-v1_postiz-uploads
