@@ -608,7 +608,8 @@ async function runBrowserSmoke(database, testFixture) {
   summary.settingsApiRoundTrip = true;
   summary.settingsDirectDbVerified = true;
 
-  await page.getByRole('button', { name: 'Threads', exact: true }).click();
+  await platformNav.getByRole('button', { name: 'Threads', exact: true }).click();
+  await threadsSectionsNav.getByRole('button', { name: 'Workspace', exact: true }).click();
   await page.getByRole('heading', { name: 'Threads Studio' }).waitFor({ state: 'visible', timeout: 30000 });
   await page.getByRole('button', { name: /投稿 \(Publish\)/ }).click();
   await page.getByRole('button', { name: /Threadsプリセットで共通投稿を開く/ }).click();
