@@ -53,6 +53,31 @@ function guardInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe('TikTokPublishGuard', () => {
+  describe('account mutex', () => {
+    it('serializes overlapping multi-account locks in stable unique order', async () => {
+      const { guard } = setup();
+      let active = 0;
+      let maxActive = 0;
+      const operation = async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+      };
+
+      await Promise.all([
+        guard.withIntegrationLocks(ORGANIZATION_ID, ['account-b', 'account-a'], operation),
+        guard.withIntegrationLocks(
+          ORGANIZATION_ID,
+          ['account-a', 'account-b', 'account-a'],
+          operation
+        ),
+      ]);
+
+      expect(maxActive).toBe(1);
+    });
+  });
+
   describe('account settings', () => {
     it('uses only the TikTok-specific duplicate window by default', async () => {
       const { guard } = setup();
