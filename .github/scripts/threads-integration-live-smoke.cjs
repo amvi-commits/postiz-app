@@ -716,6 +716,14 @@ async function main() {
     }
   }
 
+  if (page) {
+    await page.close().catch(() => {});
+    page = undefined;
+  }
+  if (browser) await browser.close().catch(() => {});
+  browser = undefined;
+  await new Promise((resolve) => setImmediate(resolve));
+
   try {
     const remaining = await cleanupFixtureData(prisma);
     summary.fixtureCleanup = 'PASS';
@@ -726,9 +734,6 @@ async function main() {
     caught = caught || cleanupError;
   }
 
-  if (browser) await browser.close().catch(() => {});
-  browser = undefined;
-  await new Promise((resolve) => setImmediate(resolve));
 
   try {
     const unexpectedBrowserExternalAttempts = summary.browserExternalAttempts.filter(({ host, path }) =>
