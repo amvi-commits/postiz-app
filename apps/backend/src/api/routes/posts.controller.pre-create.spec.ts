@@ -251,7 +251,12 @@ function createHarness(options?: {
           image: overrides?.media ? [overrides.media] : [testMedia],
         },
       ],
-      settings: { content_posting_method: 'DIRECT_POST' },
+      settings: {
+        content_posting_method: 'DIRECT_POST',
+        privacy_level: 'PUBLIC_TO_EVERYONE',
+        consentConfirmed: true,
+        consentConfirmedAt: new Date().toISOString(),
+      },
     })),
   });
 
@@ -593,5 +598,40 @@ describe('PostsController TikTok Personal pre-create protection', () => {
         publishDate: requestedSchedule.toISOString(),
       })
     );
+  });
+
+  it('rejects scheduled TikTok Personal DIRECT_POST when explicit consent is missing (TIKTOK_CONSENT_REQUIRED)', async () => {
+    const harness = createHarness();
+    const body = harness.postBody([tiktokIntegrationId], { type: 'schedule' });
+    // Remove consent
+    body.posts[0].settings = {
+      content_posting_method: 'DIRECT_POST',
+      privacy_level: 'PUBLIC_TO_EVERYONE',
+      consentConfirmed: false,
+    };
+
+    await expect(
+      harness.controller.createPost({ id: organizationId } as any, body)
+    ).rejects.toMatchObject({
+      response: { code: 'TIKTOK_CONSENT_REQUIRED' },
+    });
+    expect(harness.postsService.createPost).not.toHaveBeenCalled();
+  });
+
+  it('rejects scheduled TikTok Personal DIRECT_POST when privacy_level is missing (TIKTOK_PRIVACY_SELECTION_REQUIRED)', async () => {
+    const harness = createHarness();
+    const body = harness.postBody([tiktokIntegrationId], { type: 'schedule' });
+    // Remove privacy_level
+    body.posts[0].settings = {
+      content_posting_method: 'DIRECT_POST',
+      consentConfirmed: true,
+    };
+
+    await expect(
+      harness.controller.createPost({ id: organizationId } as any, body)
+    ).rejects.toMatchObject({
+      response: { code: 'TIKTOK_PRIVACY_SELECTION_REQUIRED' },
+    });
+    expect(harness.postsService.createPost).not.toHaveBeenCalled();
   });
 });

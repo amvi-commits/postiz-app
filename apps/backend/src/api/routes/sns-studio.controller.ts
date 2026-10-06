@@ -1006,6 +1006,17 @@ export class SnsStudioController {
   }
 
   /**
+   * Fetch TikTok Creator Info for a Personal account.
+   */
+  @Get('/tiktok/accounts/:integrationId/creator-info')
+  async tiktokCreatorInfo(
+    @GetOrgFromRequest() org: Organization,
+    @Param('integrationId') integrationId: string
+  ) {
+    return this.tiktokPublishAdapter.getCreatorInfo(org.id, integrationId);
+  }
+
+  /**
    * Preflight checks for a TikTok post before submission.
    */
   @Post('/tiktok/preflight')

@@ -11,6 +11,7 @@ import { PostsService } from '@gitroom/nestjs-libraries/database/prisma/posts/po
 import { IntegrationManager } from '@gitroom/nestjs-libraries/integrations/integration.manager';
 import { RefreshIntegrationService } from '@gitroom/nestjs-libraries/integrations/refresh.integration.service';
 import { TikTokDto } from '@gitroom/nestjs-libraries/dtos/posts/providers-settings/tiktok.dto';
+import { TikTokCreatorInfo } from '@gitroom/nestjs-libraries/integrations/social/tiktok.provider';
 import { CreatePostDto } from '@gitroom/nestjs-libraries/dtos/posts/create.post.dto';
 import { CreationMethod, Integration } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
@@ -51,6 +52,7 @@ export interface TikTokPreflightResult {
   accountType: 'personal' | 'business';
   resolvedSettings: Record<string, any>;
   maxDurationSeconds?: number;
+  creatorInfo?: TikTokCreatorInfo;
   warnings: TikTokPreflightWarning[];
   errors: Array<{ code: string; message: string }>;
   guard?: TikTokPublishGuardResult;
@@ -70,10 +72,10 @@ export interface TikTokPublishResult {
 export class TikTokPublishAdapter {
   private readonly DEFAULT_TIKTOK_SETTINGS: Partial<TikTokDto> = {
     content_posting_method: 'DIRECT_POST',
-    privacy_level: 'PUBLIC_TO_EVERYONE',
+    // privacy_level has no default - must be explicitly selected
     duet: false,
     stitch: false,
-    comment: true,
+    comment: false,
     autoAddMusic: 'no',
     brand_content_toggle: false,
     brand_organic_toggle: false,
@@ -207,7 +209,43 @@ export class TikTokPublishAdapter {
       }
     }
 
-    // 2. UPLOAD method warning
+    // 2. Commercial content disclosure rules
+    if (merged.disclose === true) {
+      if (!merged.brand_organic_toggle && !merged.brand_content_toggle) {
+        throw new BadRequestException({
+          code: 'TIKTOK_COMMERCIAL_DISCLOSURE_SELECTION_REQUIRED',
+          message:
+            'When commercial content disclosure is enabled, at least one of Your Brand or Branded Content must be selected.',
+        });
+      }
+    }
+    if (merged.brand_content_toggle === true && merged.privacy_level === 'SELF_ONLY') {
+      throw new BadRequestException({
+        code: 'TIKTOK_BRANDED_CONTENT_PRIVACY_INVALID',
+        message: 'Branded content visibility cannot be set to Self Only.',
+      });
+    }
+
+    // 3. DIRECT_POST validation: privacy level selection & affirmative consent
+    if (merged.content_posting_method === 'DIRECT_POST') {
+      if (!merged.privacy_level) {
+        throw new BadRequestException({
+          code: 'TIKTOK_PRIVACY_SELECTION_REQUIRED',
+          message: 'TikTok privacy level must be explicitly selected for DIRECT_POST.',
+        });
+      }
+      if (providerIdentifier === 'tiktok' && !merged.consentConfirmed) {
+        throw new BadRequestException({
+          code: 'TIKTOK_CONSENT_REQUIRED',
+          message: 'Explicit user consent to TikTok Music Usage Confirmation is required for DIRECT_POST.',
+        });
+      }
+      if (merged.consentConfirmed && !merged.consentConfirmedAt) {
+        merged.consentConfirmedAt = new Date().toISOString();
+      }
+    }
+
+    // 4. UPLOAD method warning
     if (merged.content_posting_method === 'UPLOAD') {
       warnings.push({
         code: 'TIKTOK_UPLOAD_LIMITED_SETTINGS',
@@ -216,7 +254,7 @@ export class TikTokPublishAdapter {
       });
     }
 
-    // 3. Validation via Postiz TikTokDto
+    // 5. Validation via Postiz TikTokDto
     const dtoInstance = plainToInstance(TikTokDto, merged, {
       enableImplicitConversion: true,
     });
@@ -238,7 +276,77 @@ export class TikTokPublishAdapter {
   }
 
   /**
-   * Check Creator Info / max video duration for Personal TikTok DIRECT_POST with video.
+   * Dedicated read endpoint logic for TikTok Personal Creator Info.
+   */
+  async getCreatorInfo(
+    orgId: string,
+    integrationId: string
+  ): Promise<TikTokCreatorInfo> {
+    const integration = await this.validateIntegration(orgId, integrationId);
+    if (integration.providerIdentifier !== 'tiktok') {
+      throw new BadRequestException({
+        code: 'TIKTOK_CREATOR_INFO_PERSONAL_ONLY',
+        message: 'Creator Info is only available for TikTok Personal accounts.',
+      });
+    }
+
+    let accessToken = integration.token;
+    const now = new Date();
+    if (integration.tokenExpiration && integration.tokenExpiration < now) {
+      const refreshed = await this.refreshIntegrationService.refresh(
+        integration,
+        'creator_info'
+      );
+      if (!refreshed || !refreshed.accessToken) {
+        throw new BadRequestException({
+          code: 'TIKTOK_REAUTH_REQUIRED',
+          message: 'TikTok token expired and refresh failed. Please re-authorize.',
+        });
+      }
+      accessToken = refreshed.accessToken;
+    }
+
+    try {
+      const provider = this.integrationManager.getSocialIntegration('tiktok') as any;
+      if (!provider) {
+        throw new Error('TikTok provider not found');
+      }
+      if (typeof provider.creatorInfo === 'function') {
+        return await provider.creatorInfo(accessToken);
+      }
+      if (typeof provider.maxVideoLength === 'function') {
+        const lengthRes = await provider.maxVideoLength(accessToken);
+        return {
+          creator_avatar_url: '',
+          creator_username: '',
+          creator_nickname: '',
+          privacy_level_options: [
+            'PUBLIC_TO_EVERYONE',
+            'MUTUAL_FOLLOW_FRIENDS',
+            'FOLLOWER_OF_CREATOR',
+            'SELF_ONLY',
+          ],
+          comment_disabled: false,
+          duet_disabled: false,
+          stitch_disabled: false,
+          max_video_post_duration_sec: lengthRes.maxDurationSeconds || 600,
+        };
+      }
+      throw new Error('TikTok provider creatorInfo method not found');
+    } catch (err: any) {
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException({
+        code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
+        message:
+          err?.message ||
+          'TikTok Creator Infoを取得できませんでした。再度ログインするか、しばらく待ってからお試しください。',
+      });
+    }
+  }
+
+  /**
+   * Check Creator Info / max video duration / interaction controls / privacy for Personal TikTok DIRECT_POST.
+   * Fail-closed on missing Creator Info during DIRECT_POST.
    */
   async checkCreatorInfo(
     integration: Integration,
@@ -247,26 +355,23 @@ export class TikTokPublishAdapter {
     mediaDurationSeconds?: number
   ): Promise<{
     maxDurationSeconds?: number;
-    warning?: TikTokPreflightWarning;
+    creatorInfo?: TikTokCreatorInfo;
   }> {
-    // Only Personal TikTok with DIRECT_POST and video media checks creator_info
+    if (
+      integration.providerIdentifier !== 'tiktok' ||
+      resolvedSettings.content_posting_method !== 'DIRECT_POST'
+    ) {
+      return {};
+    }
+
     const hasVideo = (media || []).some(
       (m) =>
         hasExtension(m?.path, 'mp4') || (m?.path?.indexOf?.('mp4') ?? -1) > -1
     );
 
-    if (
-      integration.providerIdentifier !== 'tiktok' ||
-      resolvedSettings.content_posting_method !== 'DIRECT_POST' ||
-      !hasVideo
-    ) {
-      return {};
-    }
-
     let accessToken = integration.token;
     const now = new Date();
     if (integration.tokenExpiration && integration.tokenExpiration < now) {
-      // Token expired; attempt refresh via RefreshIntegrationService
       const refreshed = await this.refreshIntegrationService.refresh(
         integration,
         'creator_info_preflight'
@@ -280,38 +385,95 @@ export class TikTokPublishAdapter {
       accessToken = refreshed.accessToken;
     }
 
+    let creatorInfo: TikTokCreatorInfo;
     try {
       const provider = this.integrationManager.getSocialIntegration('tiktok') as any;
-      if (!provider || typeof provider.maxVideoLength !== 'function') {
-        return {};
+      if (!provider) {
+        throw new Error('TikTok provider not found');
       }
-
-      const creatorInfo = await provider.maxVideoLength(accessToken);
-      const maxDuration = creatorInfo?.maxDurationSeconds;
-
-      if (
-        maxDuration &&
-        mediaDurationSeconds !== undefined &&
-        mediaDurationSeconds > maxDuration
-      ) {
-        throw new BadRequestException({
-          code: 'TIKTOK_MEDIA_DURATION_EXCEEDED',
-          message: `Video duration (${mediaDurationSeconds}s) exceeds maximum allowed duration (${maxDuration}s) for this TikTok account.`,
-        });
+      if (typeof provider.creatorInfo === 'function') {
+        creatorInfo = await provider.creatorInfo(accessToken);
+      } else if (typeof provider.maxVideoLength === 'function') {
+        const lengthRes = await provider.maxVideoLength(accessToken);
+        creatorInfo = {
+          creator_avatar_url: '',
+          creator_username: '',
+          creator_nickname: '',
+          privacy_level_options: [
+            'PUBLIC_TO_EVERYONE',
+            'MUTUAL_FOLLOW_FRIENDS',
+            'FOLLOWER_OF_CREATOR',
+            'SELF_ONLY',
+          ],
+          comment_disabled: false,
+          duet_disabled: false,
+          stitch_disabled: false,
+          max_video_post_duration_sec: lengthRes.maxDurationSeconds || 600,
+        };
+      } else {
+        throw new Error('TikTok provider does not implement creator info methods');
       }
-
-      return { maxDurationSeconds: maxDuration };
     } catch (err: any) {
       if (err instanceof HttpException) throw err;
-      // Network or API failure querying creator info is treated as non-fatal warning
-      return {
-        warning: {
-          code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
-          message:
-            'TikTok Creator Infoを取得できなかったため、アカウント固有の動画尺上限を事前確認できませんでした。',
-        },
-      };
+      // Fail-closed on missing Creator Info during DIRECT_POST
+      throw new BadRequestException({
+        code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
+        message:
+          'TikTok Creator Infoを取得できなかったため、事前確認を完了できませんでした。再度ログインするか、しばらく待ってからお試しください。',
+      });
     }
+
+    // 1. Dynamic privacy validation against creator's privacy_level_options
+    if (
+      creatorInfo.privacy_level_options &&
+      creatorInfo.privacy_level_options.length > 0 &&
+      resolvedSettings.privacy_level &&
+      !creatorInfo.privacy_level_options.includes(resolvedSettings.privacy_level)
+    ) {
+      throw new BadRequestException({
+        code: 'TIKTOK_PRIVACY_LEVEL_NOT_ALLOWED',
+        message: `Selected privacy level "${resolvedSettings.privacy_level}" is not allowed for this creator account. Available options: ${creatorInfo.privacy_level_options.join(', ')}`,
+      });
+    }
+
+    // 2. Interaction controls validation against creator settings
+    if (creatorInfo.comment_disabled && resolvedSettings.comment) {
+      throw new BadRequestException({
+        code: 'TIKTOK_COMMENT_DISABLED_BY_CREATOR',
+        message: 'Comments are disabled in this creator\'s TikTok account settings.',
+      });
+    }
+    if (creatorInfo.duet_disabled && resolvedSettings.duet) {
+      throw new BadRequestException({
+        code: 'TIKTOK_DUET_DISABLED_BY_CREATOR',
+        message: 'Duet is disabled in this creator\'s TikTok account settings.',
+      });
+    }
+    if (creatorInfo.stitch_disabled && resolvedSettings.stitch) {
+      throw new BadRequestException({
+        code: 'TIKTOK_STITCH_DISABLED_BY_CREATOR',
+        message: 'Stitch is disabled in this creator\'s TikTok account settings.',
+      });
+    }
+
+    // 3. Video duration check
+    const maxDuration = creatorInfo.max_video_post_duration_sec;
+    if (
+      hasVideo &&
+      maxDuration &&
+      mediaDurationSeconds !== undefined &&
+      mediaDurationSeconds > maxDuration
+    ) {
+      throw new BadRequestException({
+        code: 'TIKTOK_MEDIA_DURATION_EXCEEDED',
+        message: `Video duration (${mediaDurationSeconds}s) exceeds maximum allowed duration (${maxDuration}s) for this TikTok account.`,
+      });
+    }
+
+    return {
+      maxDurationSeconds: maxDuration,
+      creatorInfo,
+    };
   }
 
   /**
@@ -331,18 +493,14 @@ export class TikTokPublishAdapter {
         input.settings
       );
 
-    // 3. Creator info duration check (only for Personal video DIRECT_POST)
-    const { maxDurationSeconds, warning: creatorWarning } =
+    // 3. Creator info validation (fail-closed for Personal DIRECT_POST)
+    const { maxDurationSeconds, creatorInfo } =
       await this.checkCreatorInfo(
         integration,
         resolvedSettings,
         input.media,
         input.mediaDurationSeconds
       );
-
-    if (creatorWarning) {
-      warnings.push(creatorWarning);
-    }
 
     // 4. Delegate validation to PostsService.validatePosts()
     const postsValidationPayload = [
@@ -429,6 +587,7 @@ export class TikTokPublishAdapter {
           : 'personal',
       resolvedSettings,
       maxDurationSeconds,
+      ...(creatorInfo ? { creatorInfo } : {}),
       warnings,
       errors: [],
       ...(guard ? { guard } : {}),

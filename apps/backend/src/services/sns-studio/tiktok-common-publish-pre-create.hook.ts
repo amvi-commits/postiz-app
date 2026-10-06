@@ -68,6 +68,14 @@ export class TikTokCommonPublishPreCreateHook
             throw new BadRequestException({ code: 'TIKTOK_INVALID_PROVIDER' });
           }
 
+          if (!preflight.resolvedSettings?.consentConfirmed) {
+            throw new BadRequestException({
+              code: 'TIKTOK_CONSENT_REQUIRED',
+              message:
+                'TikTok Personal auto-publishing requires explicit user consent confirmed during planning/scheduling.',
+            });
+          }
+
           // PostsService must persist the resolved settings that were checked.
           post.settings = preflight.resolvedSettings as any;
         }

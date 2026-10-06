@@ -77,6 +77,7 @@ export class TikTokDto {
   })
   title: string;
 
+  @IsOptional()
   @IsIn([
     'PUBLIC_TO_EVERYONE',
     'MUTUAL_FOLLOW_FRIENDS',
@@ -88,7 +89,7 @@ export class TikTokDto {
     description:
       'Applied only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD.',
   })
-  privacy_level:
+  privacy_level?:
     | 'PUBLIC_TO_EVERYONE'
     | 'MUTUAL_FOLLOW_FRIENDS'
     | 'FOLLOWER_OF_CREATOR'
@@ -175,4 +176,25 @@ export class TikTokDto {
       'Only use "UPLOAD" when the user explicitly asks to review or edit the post inside the TikTok app before publishing.',
   })
   content_posting_method: 'DIRECT_POST' | 'UPLOAD';
+
+  @IsOptional()
+  @IsBoolean()
+  @JSONSchema({
+    description: 'Whether commercial content disclosure is toggled on.',
+  })
+  disclose?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  @JSONSchema({
+    description: 'Affirmative user consent to TikTok Music Usage and Policies.',
+  })
+  consentConfirmed?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @JSONSchema({
+    description: 'Timestamp when explicit consent was confirmed by the user.',
+  })
+  consentConfirmedAt?: string;
 }
