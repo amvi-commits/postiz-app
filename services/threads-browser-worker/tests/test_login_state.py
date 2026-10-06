@@ -124,3 +124,67 @@ def test_publish_guard_session_unknown_blocks_composer(monkeypatch, tmp_path):
 
     # Must NOT have attempted to open composer
     mock_open_composer.assert_not_called()
+
+
+def test_desktop_authenticated_ui_returns_session_ok():
+    """Verify that the actual desktop logged-in DOM layout returns SESSION_OK."""
+    mock_page = _make_mock_page(
+        url="https://www.threads.com/",
+        visible_selectors=(
+            'div:has-text("最近どう？"):has([role="button"]:has-text("投稿"))',
+            'a[href*="/saved"]',
+            'a[href*="/liked"]',
+            'a[href*="/ghost"]',
+            'a[href*="/archive"]',
+            'nav [role="button"]:has-text("新しいスレッド")',
+        ),
+    )
+    state = check_login_state(mock_page)
+    assert state == "SESSION_OK", f"Expected SESSION_OK but got {state}"
+
+
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        'a[href*="/saved"]',
+        'a[href*="/liked"]',
+        'a[href*="/ghost"]',
+        'a[href*="/archive"]',
+        'a[href*="/insights"]',
+        'a[href*="/messages"]',
+        'div[contenteditable="true"]:has-text("最近どう？")',
+        '[placeholder*="最近どう？"]',
+    ],
+)
+def test_individual_authenticated_indicators_return_session_ok(indicator):
+    """Verify that each individual desktop authenticated selector returns SESSION_OK."""
+    mock_page = _make_mock_page(
+        url="https://www.threads.com/",
+        visible_selectors=(indicator,),
+    )
+    state = check_login_state(mock_page)
+    assert state == "SESSION_OK", f"Expected SESSION_OK for {indicator}, got {state}"
+
+
+def test_find_and_open_composer_focuses_existing_inline_textbox():
+    """Verify _find_and_open_composer clicks the inline composer textbox if already visible."""
+    mock_page = MagicMock()
+    mock_textbox = MagicMock()
+    mock_textbox.is_visible.return_value = True
+
+    # _find_composer_textbox will return mock_textbox when checking COMPOSER_TEXTBOX_SELECTORS
+    def mock_locator(sel):
+        loc = MagicMock()
+        if 'div[contenteditable="true"]' in sel:
+            loc.count.return_value = 1
+            loc.first = mock_textbox
+        else:
+            loc.count.return_value = 0
+        return loc
+
+    mock_page.locator.side_effect = mock_locator
+    mock_page.get_by_role.return_value.count.return_value = 0
+
+    assert pub_mod._find_and_open_composer(mock_page) is True
+    mock_textbox.click.assert_called_once()
+

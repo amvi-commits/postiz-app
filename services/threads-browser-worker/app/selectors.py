@@ -16,6 +16,8 @@ THREADS_LOGIN_URL = "https://www.threads.net/login"
 # Composer open triggers (navigation bar or quick post bar)
 COMPOSER_BUTTON_NAMES = [
     "新しいスレッド",
+    "最近どう？",
+    "最近どう?",
     "投稿を作成",
     "スレッドを開始",
     "新規投稿",
@@ -28,6 +30,8 @@ COMPOSER_BUTTON_NAMES = [
 
 COMPOSER_ARIA_LABELS = [
     "新しいスレッド",
+    "最近どう？",
+    "最近どう?",
     "投稿を作成",
     "新規投稿",
     "Create a thread",
@@ -42,22 +46,32 @@ COMPOSER_FALLBACK_SELECTORS = [
     'svg[aria-label="New thread"]',
     'div[role="button"]:has(svg[aria-label="新しいスレッド"])',
     'div[role="button"]:has(svg[aria-label="Create"])',
+    'div[role="button"]:has-text("新しいスレッド")',
+    'div[role="button"]:has-text("最近どう？")',
+    '[role="link"]:has-text("新しいスレッド")',
+    'div:has-text("最近どう？")',
     'a[href*="/create"]',
     'div[contenteditable="true"]',
 ]
 
 # Post composition text input field
 COMPOSER_TEXTBOX_NAMES = [
+    "最近どう？",
+    "最近どう?",
     "スレッドを開始...",
     "スレッドを開始",
     "何が起きてる？",
     "Start a thread...",
     "Start a thread",
     "What's new?",
+    "What's new",
 ]
 
 COMPOSER_TEXTBOX_SELECTORS = [
     'div[contenteditable="true"][role="textbox"]',
+    'div[contenteditable="true"]:has-text("最近どう？")',
+    '[contenteditable="true"][aria-label*="最近どう？"]',
+    '[contenteditable="true"][placeholder*="最近どう？"]',
     'div[contenteditable="true"]',
     'div[role="textbox"]',
     'textarea',
@@ -115,27 +129,80 @@ LOGGED_OUT_INDICATORS = [
 # Priority 5: Strong authenticated-only indicators (MUST NOT match guest/logged-out states)
 # NEVER include generic navigation icons (Home, Search, Activity, Profile icon) which exist on public guest feeds.
 AUTHENTICATED_INDICATORS = [
-    # Active, visible composer entry points (only available when authenticated)
+    # 1. Inline feed composer & prompt (central top of feed when logged in)
+    'div:has-text("最近どう？"):has([role="button"]:has-text("投稿"))',
+    'div:has-text("What\'s new"):has([role="button"]:has-text("Post"))',
+    'div[contenteditable="true"]:has-text("最近どう？")',
+    'div[role="textbox"]:has-text("最近どう？")',
+    '[contenteditable="true"][aria-label*="最近どう？"]',
+    '[role="textbox"][aria-label*="最近どう？"]',
+    '[placeholder*="最近どう？"]',
+    '[contenteditable="true"][placeholder*="What\'s new"]',
+    # 2. Active composer triggers in sidebar / feed
     'div[role="button"]:has(svg[aria-label="新しいスレッド"])',
     'div[role="button"]:has(svg[aria-label="新規投稿"])',
     'div[role="button"]:has(svg[aria-label="Create"])',
     'div[role="button"]:has(svg[aria-label="New thread"])',
     'div[role="button"]:has(svg[aria-label="スレッドを開始"])',
+    'nav [role="button"]:has-text("新しいスレッド")',
+    '[role="navigation"] [role="button"]:has-text("新しいスレッド")',
+    '[role="link"]:has-text("新しいスレッド")',
     'svg[aria-label="新しいスレッド"]',
     'svg[aria-label="新規投稿"]',
     'svg[aria-label="Create a thread"]',
     'svg[aria-label="New thread"]',
-    # Inline feed composer textbox (only present when logged in)
-    'div[contenteditable="true"][role="textbox"]',
-    # Logged-in user menus & actions
-    'svg[aria-label="ピン留め"]',
-    'svg[aria-label="Pin"]',
-    'svg[aria-label="下書き"]',
-    'svg[aria-label="Drafts"]',
+    # 3. Sidebar: Saved posts ("保存済み" / /saved)
+    'a[href*="/saved"]',
+    '[role="button"]:has-text("保存済み")',
+    '[role="link"]:has-text("保存済み")',
+    'svg[aria-label="保存済み"]',
+    'svg[aria-label="Saved"]',
+    # 4. Sidebar: Liked posts ("いいね！済み" / "「いいね！」済み" / /liked)
+    'a[href*="/liked"]',
+    '[role="button"]:has-text("いいね！済み")',
+    '[role="button"]:has-text("「いいね！」済み")',
+    '[role="link"]:has-text("いいね！済み")',
+    '[role="link"]:has-text("「いいね！」済み")',
+    'svg[aria-label*="いいね！済み"]',
+    'svg[aria-label*="Liked"]',
+    # 5. Sidebar: Ghost posts ("ゴースト投稿" / /ghost)
+    'a[href*="/ghost"]',
+    '[role="button"]:has-text("ゴースト投稿")',
+    '[role="link"]:has-text("ゴースト投稿")',
+    'svg[aria-label*="ゴースト"]',
+    # 6. Sidebar: Archive ("アーカイブ" / /archive)
+    'a[href*="/archive"]',
+    '[role="button"]:has-text("アーカイブ")',
+    '[role="link"]:has-text("アーカイブ")',
+    'svg[aria-label="アーカイブ"]',
+    'svg[aria-label="Archive"]',
+    # 7. Sidebar: Insights ("インサイト" / /insights)
+    'a[href*="/insights"]',
+    'nav [role="button"]:has-text("インサイト")',
+    '[role="navigation"] [role="button"]:has-text("インサイト")',
+    '[role="link"]:has-text("インサイト")',
+    'svg[aria-label="インサイト"]',
+    'svg[aria-label="Insights"]',
+    # 8. Sidebar: Messages ("メッセージ" / /messages)
+    'a[href^="/messages"]',
+    'a[href*="/messages"]',
+    'nav [role="button"]:has-text("メッセージ")',
+    '[role="navigation"] [role="button"]:has-text("メッセージ")',
+    '[role="link"]:has-text("メッセージ")',
+    'svg[aria-label="Direct messages"]',
+    # 9. Feed tabs: "フォロー中" / "おすすめ"
+    '[role="tab"]:has-text("フォロー中")',
+    '[role="tab"]:has-text("Following")',
+    'a[href*="/following"]',
+    # 10. User settings / session menu
     ':has-text("アカウントを切り替え")',
     ':has-text("Switch accounts")',
     ':has-text("ログアウト")',
     ':has-text("Log out")',
+    'svg[aria-label="ピン留め"]',
+    'svg[aria-label="Pin"]',
+    'svg[aria-label="下書き"]',
+    'svg[aria-label="Drafts"]',
 ]
 
 # Alias for backwards compatibility
