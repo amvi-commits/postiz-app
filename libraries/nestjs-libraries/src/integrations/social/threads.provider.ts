@@ -89,6 +89,118 @@ export function validateBrowserSidecarUrl(rawUrl: string): string {
   return `${parsed.protocol}//${parsed.hostname}:${parsed.port}`;
 }
 
+export function isBrowserIntegration(integration?: {
+  providerIdentifier?: string;
+  internalId?: string;
+  customInstanceDetails?: string | null;
+  additionalSettings?: string | null;
+  token?: string;
+} | null): boolean {
+  if (!integration || integration.providerIdentifier !== 'threads') {
+    return false;
+  }
+  if (
+    integration.internalId?.startsWith('threads_browser_') ||
+    integration.internalId?.startsWith('browser:')
+  ) {
+    return true;
+  }
+  if (
+    integration.token?.startsWith('managed:threads-browser:') ||
+    integration.token?.startsWith('managed:browser:')
+  ) {
+    return true;
+  }
+  if (integration.customInstanceDetails) {
+    try {
+      const details = JSON.parse(integration.customInstanceDetails);
+      if (details.transport === 'browser') return true;
+    } catch {}
+  }
+  if (integration.additionalSettings) {
+    try {
+      const settings = JSON.parse(integration.additionalSettings);
+      if (
+        Array.isArray(settings) &&
+        settings.some(
+          (s: any) => s.title === 'transport' && s.value === 'browser'
+        )
+      ) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+export function getThreadsTransport(integration?: {
+  providerIdentifier?: string;
+  internalId?: string;
+  customInstanceDetails?: string | null;
+  additionalSettings?: string | null;
+  token?: string;
+} | null): 'browser' | 'official_api' {
+  if (isBrowserIntegration(integration)) {
+    return 'browser';
+  }
+  if (!integration && process.env.THREADS_PUBLISH_TRANSPORT === 'browser') {
+    return 'browser';
+  }
+  return 'official_api';
+}
+
+export function getBrowserAccount(integration?: {
+  customInstanceDetails?: string | null;
+  additionalSettings?: string | null;
+  internalId?: string;
+} | null): string {
+  if (integration?.customInstanceDetails) {
+    try {
+      const details = JSON.parse(integration.customInstanceDetails);
+      if (details.browserAccount) return details.browserAccount;
+    } catch {}
+  }
+  if (integration?.additionalSettings) {
+    try {
+      const settings = JSON.parse(integration.additionalSettings);
+      if (Array.isArray(settings)) {
+        const item = settings.find((s: any) => s.title === 'browserAccount');
+        if (item?.value) return item.value;
+      }
+    } catch {}
+  }
+  if (integration?.internalId?.startsWith('threads_browser_')) {
+    return integration.internalId.replace('threads_browser_', '');
+  }
+  if (integration?.internalId?.startsWith('browser:')) {
+    return integration.internalId.replace('browser:', '');
+  }
+  return process.env.THREADS_BROWSER_DEFAULT_ACCOUNT || 'main';
+}
+
+export function isBrowserToken(token?: string | null): boolean {
+  if (!token) return false;
+  return (
+    token.startsWith('managed:threads-browser:') ||
+    token.startsWith('managed:browser:') ||
+    token.includes('threads-browser')
+  );
+}
+
+export function assertNotBrowserToken(
+  token?: string | null,
+  operation = 'This operation'
+): void {
+  if (isBrowserToken(token)) {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      `[BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE] ${operation} is only supported for official Meta API connected accounts, not browser-connected accounts.`
+    );
+  }
+}
+
 export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   identifier = 'threads';
   name = 'Threads';
@@ -143,6 +255,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   }
 
   async refreshToken(refresh_token: string): Promise<AuthTokenDetails> {
+    assertNotBrowserToken(refresh_token, 'Token refresh');
     const { access_token } = await (
       await this.fetch(
         `https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=${refresh_token}`
@@ -237,6 +350,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     mediaContainerId: string,
     accessToken: string
   ): Promise<'FINISHED' | 'IN_PROGRESS' | 'PUBLISHED'> {
+    assertNotBrowserToken(accessToken, 'checkContainerStatus');
     const { status, error_message } = await (
       await this.fetch(
         `https://graph.threads.net/v1.0/${mediaContainerId}?fields=status,error_message&access_token=${accessToken}`
@@ -290,6 +404,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   }
 
   private async fetchUserInfo(accessToken: string) {
+    assertNotBrowserToken(accessToken, 'fetchUserInfo');
     const { id, username, threads_profile_picture_url } = await (
       await this.fetch(
         `https://graph.threads.net/v1.0/me?fields=id,username,threads_profile_picture_url&access_token=${accessToken}`
@@ -671,6 +786,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
+    assertNotBrowserToken(accessToken, 'postPending');
     if (!postDetails.length) {
       return [];
     }
@@ -877,7 +993,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       return [];
     }
 
-    if (process.env.THREADS_PUBLISH_TRANSPORT === 'browser') {
+    if (
+      isBrowserIntegration(integration) ||
+      process.env.THREADS_PUBLISH_TRANSPORT === 'browser'
+    ) {
       return this.postViaBrowser(postDetails, integration);
     }
 
@@ -943,6 +1062,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     postDetails: PostDetails<ThreadsSettingsData>[],
     integration: Integration
   ): Promise<PostResponse[]> {
+    assertNotBrowserToken(accessToken, 'comment');
     if (!postDetails.length) {
       return [];
     }
@@ -980,6 +1100,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     accessToken: string,
     date: number
   ): Promise<AnalyticsData[]> {
+    assertNotBrowserToken(accessToken, 'analytics');
     const until = dayjs().endOf('day').unix();
     const since = dayjs().subtract(date, 'day').unix();
 
@@ -1032,6 +1153,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     id: string,
     fields: { likesAmount: string; post: string }
   ) {
+    assertNotBrowserToken(integration.token, 'autoPlugPost');
     const { data } = await (
       await fetch(
         `https://graph.threads.net/v1.0/${id}/insights?metric=likes&access_token=${integration.token}`
@@ -1078,6 +1200,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     postId: string,
     date: number
   ): Promise<AnalyticsData[]> {
+    assertNotBrowserToken(accessToken, 'postAnalytics');
     const today = dayjs().format('YYYY-MM-DD');
 
     try {
@@ -1136,6 +1259,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
 
   /** Single explicit cleanup call; not connected to publishing or workflows. */
   async deleteThread(accessToken: string, threadId: string): Promise<Response> {
+    assertNotBrowserToken(accessToken, 'deleteThread');
     const id = typeof threadId === 'string' ? threadId.trim() : '';
     if (!id || id === '.' || id === '..') {
       throw new BadBody(
@@ -1182,6 +1306,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   }
 
   async fetchPendingReplies(accessToken: string, mediaId: string) {
+    assertNotBrowserToken(accessToken, 'fetchPendingReplies');
     const res = await this.fetch(
       `https://graph.threads.net/v1.0/${mediaId}/pending_replies?fields=id,text,timestamp,username,from,hide_status&access_token=${accessToken}`
     );
@@ -1193,6 +1318,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     replyId: string,
     approve: boolean
   ) {
+    assertNotBrowserToken(accessToken, 'managePendingReply');
     const res = await this.fetch(
       `https://graph.threads.net/v1.0/${replyId}/manage_pending_reply?approve=${approve}&access_token=${accessToken}`,
       { method: 'POST' }
@@ -1205,6 +1331,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     replyId: string,
     hide: boolean
   ) {
+    assertNotBrowserToken(accessToken, 'manageReply');
     const res = await this.fetch(
       `https://graph.threads.net/v1.0/${replyId}/manage_reply?hide=${hide}&access_token=${accessToken}`,
       { method: 'POST' }
@@ -1213,6 +1340,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   }
 
   async fetchConversation(accessToken: string, mediaId: string) {
+    assertNotBrowserToken(accessToken, 'fetchConversation');
     const res = await this.fetch(
       `https://graph.threads.net/v1.0/${mediaId}/conversation?fields=id,text,timestamp,username,permalink,hide_status&access_token=${accessToken}`
     );
@@ -1220,6 +1348,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   }
 
   async fetchUserThreads(accessToken: string, limit = 25) {
+    assertNotBrowserToken(accessToken, 'fetchUserThreads');
     const res = await this.fetch(
       `https://graph.threads.net/v1.0/me/threads?fields=id,media_product_type,media_type,text,permalink,timestamp,shortcode,is_quote_post&limit=${limit}&access_token=${accessToken}`
     );
@@ -1232,6 +1361,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     searchType: 'TOP' | 'RECENT' = 'RECENT',
     searchMode: 'KEYWORD' | 'TAG' = 'KEYWORD'
   ) {
+    assertNotBrowserToken(accessToken, 'keywordSearch');
     const params = new URLSearchParams({
       q: query,
       search_type: searchType,
@@ -1250,6 +1380,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     replyToId: string,
     text: string
   ): Promise<{ threadId: string; permalink: string }> {
+    assertNotBrowserToken(accessToken, 'replyToThread');
     const form = new FormData();
     form.append('media_type', 'TEXT');
     form.append('text', text);
@@ -1283,6 +1414,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     accessToken: string,
     query: string
   ): Promise<{ data: Array<{ id: string; name: string }> }> {
+    assertNotBrowserToken(accessToken, 'searchLocations');
     const params = new URLSearchParams({
       q: query,
       access_token: accessToken,
@@ -1308,6 +1440,7 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       reply_quota_usage?: number;
     }>;
   }> {
+    assertNotBrowserToken(accessToken, 'fetchPublishingLimit');
     const res = await this.fetch(
       `${THREADS_BASE_GRAPH_URL}/${userId}/threads_publishing_limit?fields=quota_usage,config,reply_quota_usage&access_token=${accessToken}`
     );
@@ -1336,6 +1469,9 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     const accountName =
       (firstPost?.settings as any)?.browserAccount ||
       (firstPost?.settings as any)?.account ||
+      (isBrowserIntegration(integration)
+        ? getBrowserAccount(integration)
+        : null) ||
       process.env.THREADS_BROWSER_DEFAULT_ACCOUNT ||
       integration.name?.replace(/[^A-Za-z0-9_-]/g, '_') ||
       'main';
@@ -1555,6 +1691,55 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     }
 
     return result;
+  }
+
+  async getBrowserProfile(account = 'main'): Promise<{
+    status: string;
+    account: string;
+    username?: string | null;
+    name?: string | null;
+    picture?: string | null;
+    profile_url?: string | null;
+    session_status: string;
+  }> {
+    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+    if (!serviceKey) {
+      throw new BadBody(
+        this.identifier,
+        '{}',
+        '{}',
+        '[CONFIGURATION_ERROR] THREADS_BROWSER_SERVICE_KEY must be configured.'
+      );
+    }
+    const rawSidecarUrl =
+      process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+    const sidecarUrl = validateBrowserSidecarUrl(rawSidecarUrl);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Threads-Service-Key': serviceKey,
+    };
+
+    const res = await this.fetch(
+      `${sidecarUrl}/api/threads/accounts/${encodeURIComponent(account)}/profile`,
+      {
+        headers,
+        // @ts-ignore
+        dispatcher: new Agent(),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.status === 'error') {
+      const errCode = data?.code || 'PROFILE_FETCH_FAILED';
+      const errMsg = data?.message || 'Failed to fetch Threads browser profile';
+      throw new BadBody(
+        this.identifier,
+        '{}',
+        JSON.stringify(data),
+        `[${errCode}] ${errMsg}`
+      );
+    }
+    return data;
   }
 }
 

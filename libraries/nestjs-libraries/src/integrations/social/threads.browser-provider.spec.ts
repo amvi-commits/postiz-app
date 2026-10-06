@@ -1,6 +1,11 @@
 import {
   ThreadsProvider,
   validateBrowserSidecarUrl,
+  isBrowserIntegration,
+  getThreadsTransport,
+  getBrowserAccount,
+  isBrowserToken,
+  assertNotBrowserToken,
 } from './threads.provider';
 import { BadBody } from '@gitroom/nestjs-libraries/integrations/social.abstract';
 import type { Integration } from '@prisma/client';
@@ -584,6 +589,185 @@ describe('Threads Browser Publish Transport', () => {
       expect(res.session?.status).toBe('error');
       expect(res.post?.status).toBe('error');
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Browser Integration helpers and fail-closed official API protection', () => {
+    it('correctly identifies browser integrations via various metadata', () => {
+      expect(isBrowserIntegration(null)).toBe(false);
+      expect(isBrowserIntegration({ providerIdentifier: 'instagram' })).toBe(false);
+      expect(isBrowserIntegration({ providerIdentifier: 'threads', internalId: '123456789' })).toBe(false);
+      
+      expect(isBrowserIntegration({
+        providerIdentifier: 'threads',
+        internalId: 'threads_browser_main',
+      })).toBe(true);
+
+      expect(isBrowserIntegration({
+        providerIdentifier: 'threads',
+        token: 'managed:threads-browser:main',
+      })).toBe(true);
+
+      expect(isBrowserIntegration({
+        providerIdentifier: 'threads',
+        customInstanceDetails: JSON.stringify({ transport: 'browser', browserAccount: 'main' }),
+      })).toBe(true);
+
+      expect(isBrowserIntegration({
+        providerIdentifier: 'threads',
+        additionalSettings: JSON.stringify([{ title: 'transport', value: 'browser' }]),
+      })).toBe(true);
+    });
+
+    it('determines transport correctly via getThreadsTransport', () => {
+      delete process.env.THREADS_PUBLISH_TRANSPORT;
+      expect(getThreadsTransport(null)).toBe('official_api');
+      expect(getThreadsTransport({ providerIdentifier: 'threads', token: 'official_token' })).toBe('official_api');
+
+      expect(getThreadsTransport({
+        providerIdentifier: 'threads',
+        internalId: 'threads_browser_main',
+      })).toBe('browser');
+
+      process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+      expect(getThreadsTransport(null)).toBe('browser');
+    });
+
+    it('extracts browser profile alias correctly via getBrowserAccount', () => {
+      delete process.env.THREADS_BROWSER_DEFAULT_ACCOUNT;
+      expect(getBrowserAccount(null)).toBe('main');
+
+      expect(getBrowserAccount({
+        customInstanceDetails: JSON.stringify({ browserAccount: 'sub_acc' }),
+      })).toBe('sub_acc');
+
+      expect(getBrowserAccount({
+        additionalSettings: JSON.stringify([{ title: 'browserAccount', value: 'settings_acc' }]),
+      })).toBe('settings_acc');
+
+      expect(getBrowserAccount({
+        internalId: 'threads_browser_custom',
+      })).toBe('custom');
+    });
+
+    it('asserts non-browser tokens and detects browser tokens', () => {
+      expect(isBrowserToken('test_official_token')).toBe(false);
+      expect(isBrowserToken('managed:threads-browser:main')).toBe(true);
+      expect(isBrowserToken('managed:browser:main')).toBe(true);
+
+      expect(() => assertNotBrowserToken('test_official_token')).not.toThrow();
+      expect(() => assertNotBrowserToken('managed:threads-browser:main', 'testOperation')).toThrow(BadBody);
+
+      try {
+        assertNotBrowserToken('managed:threads-browser:main', 'testOperation');
+      } catch (err: any) {
+        expect(err.message).toContain('[BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE]');
+        expect(err.message).toContain('testOperation');
+      }
+    });
+
+    it('routes browser integration to postViaBrowser in post() even if THREADS_PUBLISH_TRANSPORT is unset', async () => {
+      delete process.env.THREADS_PUBLISH_TRANSPORT;
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+
+      const browserIntegration: Integration = {
+        ...mockIntegration,
+        internalId: 'threads_browser_main',
+        token: 'managed:threads-browser:main',
+        customInstanceDetails: JSON.stringify({ transport: 'browser', browserAccount: 'main' }),
+      };
+
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: 'ok',
+            account: 'main',
+            post_id: 'th_browser_123',
+            url: 'https://www.threads.net/@main',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const result = await provider.post('user_1', 'managed:threads-browser:main', samplePostDetails, browserIntegration);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8017/api/threads/post',
+        expect.anything()
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].postId).toBe('th_browser_123');
+    });
+
+    it('fails closed when official Graph API methods are called with managed browser token', async () => {
+      const browserToken = 'managed:threads-browser:main';
+
+      await expect(provider.fetchUserThreads(browserToken)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.fetchPublishingLimit(browserToken, 'user_1')).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.keywordSearch(browserToken, 'query')).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.replyToThread('user_1', browserToken, 'reply_1', 'text')).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.searchLocations(browserToken, 'query')).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.refreshToken(browserToken)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.postPending('user_1', browserToken, samplePostDetails, mockIntegration)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.deleteThread(browserToken, 'post_123')).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.comment('user_1', 'post_1', undefined, browserToken, samplePostDetails, mockIntegration)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.analytics('post_1', browserToken, 7)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+      await expect(provider.postAnalytics('int_1', browserToken, 'post_1', 7)).rejects.toThrow(
+        /BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE/
+      );
+    });
+
+    it('fetches browser profile from sidecar via getBrowserProfile', async () => {
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: 'ok',
+            account: 'main',
+            username: 'my_threads_handle',
+            name: 'My Threads User',
+            picture: 'https://example.com/avatar.jpg',
+            profile_url: 'https://www.threads.net/@my_threads_handle',
+            session_status: 'SESSION_OK',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const profile = await provider.getBrowserProfile('main');
+      expect(profile.username).toBe('my_threads_handle');
+      expect(profile.session_status).toBe('SESSION_OK');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8017/api/threads/accounts/main/profile',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-Threads-Service-Key': 'test_secret_key',
+          }),
+        })
+      );
     });
   });
 });

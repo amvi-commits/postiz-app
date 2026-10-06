@@ -90,6 +90,10 @@ class SyncInboxDto {
   @IsOptional() @IsString() integrationId?: string;
 }
 
+class ConnectThreadsBrowserDto {
+  @IsOptional() @IsString() account?: string;
+}
+
 class VerifyThreadsBrowserDto {
   @IsOptional() @IsString() account?: string;
   @IsOptional() @IsString() text?: string;
@@ -300,6 +304,14 @@ export class ThreadsStudioController {
     @GetOrgFromRequest() org?: Organization
   ) {
     return this.threadsStudioService.verifyBrowserTransport(body, org);
+  }
+
+  @Post('/browser/connect')
+  connectBrowserAccount(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: ConnectThreadsBrowserDto
+  ) {
+    return this.threadsStudioService.connectBrowserAccount(org, body);
   }
 }
 
