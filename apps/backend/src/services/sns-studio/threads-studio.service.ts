@@ -79,6 +79,8 @@ export class ThreadsStudioService {
         createdAt: true,
         updatedAt: true,
         internalId: true,
+        providerIdentifier: true,
+        token: true,
         customInstanceDetails: true,
         additionalSettings: true,
       },

@@ -96,7 +96,10 @@ export function isBrowserIntegration(integration?: {
   additionalSettings?: string | null;
   token?: string;
 } | null): boolean {
-  if (!integration || integration.providerIdentifier !== 'threads') {
+  if (!integration) {
+    return false;
+  }
+  if (integration.providerIdentifier && integration.providerIdentifier !== 'threads') {
     return false;
   }
   if (
@@ -114,7 +117,7 @@ export function isBrowserIntegration(integration?: {
   if (integration.customInstanceDetails) {
     try {
       const details = JSON.parse(integration.customInstanceDetails);
-      if (details.transport === 'browser') return true;
+      if (details.transport === 'browser' || details.isBrowser === true) return true;
     } catch {}
   }
   if (integration.additionalSettings) {
