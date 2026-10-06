@@ -1,4 +1,7 @@
-import { ThreadsProvider } from './threads.provider';
+import {
+  ThreadsProvider,
+  validateBrowserSidecarUrl,
+} from './threads.provider';
 import { BadBody } from '@gitroom/nestjs-libraries/integrations/social.abstract';
 import type { Integration } from '@prisma/client';
 
@@ -254,6 +257,33 @@ describe('Threads Browser Publish Transport', () => {
     );
   });
 
+  it('prioritizes THREADS_BROWSER_DEFAULT_ACCOUNT over integration name when post settings omit account', async () => {
+    process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+    process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+    process.env.THREADS_BROWSER_DEFAULT_ACCOUNT = 'main';
+
+    const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ok',
+          account: 'main',
+          post_id: 'real_post_999',
+          url: 'https://www.threads.net/post/real_post_999',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+
+    await provider.post('user_1', 'token_1', samplePostDetails, mockIntegration);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:8017/api/threads/post',
+      expect.objectContaining({
+        body: expect.stringContaining('"account":"main"'),
+      })
+    );
+  });
+
   it('maps submitted status with null post_id to undefined postId and status submitted', async () => {
     process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
     process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
@@ -480,6 +510,80 @@ describe('Threads Browser Publish Transport', () => {
         httpStatus: 409,
         dry_run: true,
       });
+    });
+  });
+
+  describe('SSRF Hardening and Sidecar URL Validation', () => {
+    it('allows valid sidecar URLs and normalizes trailing slashes', () => {
+      expect(validateBrowserSidecarUrl('http://127.0.0.1:8017')).toBe('http://127.0.0.1:8017');
+      expect(validateBrowserSidecarUrl('http://127.0.0.1:8017/')).toBe('http://127.0.0.1:8017');
+      expect(validateBrowserSidecarUrl('http://127.0.0.1:8017/some/path')).toBe('http://127.0.0.1:8017');
+      expect(validateBrowserSidecarUrl('http://host.docker.internal:8017')).toBe('http://host.docker.internal:8017');
+      expect(validateBrowserSidecarUrl('http://localhost:8017')).toBe('http://localhost:8017');
+      expect(validateBrowserSidecarUrl('http://threads-browser-worker:8017')).toBe('http://threads-browser-worker:8017');
+    });
+
+    it('rejects https protocol', () => {
+      expect(() => validateBrowserSidecarUrl('https://127.0.0.1:8017')).toThrow(BadBody);
+      try {
+        validateBrowserSidecarUrl('https://127.0.0.1:8017');
+      } catch (e: any) {
+        expect(e.message).toContain('[SECURITY_ERROR]');
+        expect(e.message).toContain('must use http: protocol');
+      }
+    });
+
+    it('rejects disallowed hostnames', () => {
+      expect(() => validateBrowserSidecarUrl('http://attacker.com:8017')).toThrow(BadBody);
+      expect(() => validateBrowserSidecarUrl('http://192.168.1.1:8017')).toThrow(BadBody);
+      expect(() => validateBrowserSidecarUrl('http://169.254.169.254:8017')).toThrow(BadBody);
+    });
+
+    it('rejects non-8017 ports', () => {
+      expect(() => validateBrowserSidecarUrl('http://127.0.0.1:80')).toThrow(BadBody);
+      expect(() => validateBrowserSidecarUrl('http://127.0.0.1:3000')).toThrow(BadBody);
+      expect(() => validateBrowserSidecarUrl('http://127.0.0.1')).toThrow(BadBody);
+    });
+
+    it('rejects URLs containing credentials', () => {
+      expect(() => validateBrowserSidecarUrl('http://user:pass@127.0.0.1:8017')).toThrow(BadBody);
+    });
+
+    it('rejects malformed URLs', () => {
+      expect(() => validateBrowserSidecarUrl('not-a-valid-url')).toThrow(BadBody);
+    });
+
+    it('fails closed in postViaBrowser when THREADS_BROWSER_SERVICE_URL is invalid', async () => {
+      process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://attacker.com:8017';
+
+      const fetchSpy = jest.spyOn(provider as any, 'fetch');
+
+      await expect(
+        provider.post('user_1', 'token_1', samplePostDetails, mockIntegration)
+      ).rejects.toThrow(BadBody);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed in verifyBrowserTransport when THREADS_BROWSER_SERVICE_URL is invalid', async () => {
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://attacker.com:8017';
+
+      const fetchSpy = jest.spyOn(provider as any, 'fetch');
+
+      const res = await provider.verifyBrowserTransport({
+        checkHealth: true,
+        checkSession: true,
+        dryRunPost: true,
+      });
+
+      expect(res.health?.status).toBe('error');
+      expect(res.health?.error).toContain('[SECURITY_ERROR]');
+      expect(res.session?.status).toBe('error');
+      expect(res.post?.status).toBe('error');
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

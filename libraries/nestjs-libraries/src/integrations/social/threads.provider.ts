@@ -29,6 +29,66 @@ import {
 } from '@gitroom/nestjs-libraries/integrations/social/threads.capabilities';
 import { Agent } from 'undici';
 
+export const ALLOWED_BROWSER_SIDECAR_HOSTS = new Set([
+  'host.docker.internal',
+  '127.0.0.1',
+  'localhost',
+  'threads-browser-worker',
+]);
+
+export function validateBrowserSidecarUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      `[SECURITY_ERROR] Invalid THREADS_BROWSER_SERVICE_URL: "${rawUrl}" is not a valid URL.`
+    );
+  }
+
+  if (parsed.protocol !== 'http:') {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      `[SECURITY_ERROR] THREADS_BROWSER_SERVICE_URL must use http: protocol, got "${parsed.protocol}".`
+    );
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      '[SECURITY_ERROR] THREADS_BROWSER_SERVICE_URL must not contain credentials.'
+    );
+  }
+
+  if (!ALLOWED_BROWSER_SIDECAR_HOSTS.has(parsed.hostname)) {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      `[SECURITY_ERROR] THREADS_BROWSER_SERVICE_URL host "${parsed.hostname}" is not permitted. Allowed hosts: ${Array.from(ALLOWED_BROWSER_SIDECAR_HOSTS).join(', ')}`
+    );
+  }
+
+  const port = parsed.port || (parsed.protocol === 'http:' ? '80' : '443');
+  if (port !== '8017') {
+    throw new BadBody(
+      'threads',
+      '{}',
+      '{}',
+      `[SECURITY_ERROR] THREADS_BROWSER_SERVICE_URL must use port 8017, got "${port}".`
+    );
+  }
+
+  return `${parsed.protocol}//${parsed.hostname}:${parsed.port}`;
+}
+
 export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   identifier = 'threads';
   name = 'Threads';
@@ -1269,12 +1329,14 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     }
 
     const [firstPost] = postDetails;
-    const sidecarUrl =
+    const rawSidecarUrl =
       process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+    const sidecarUrl = validateBrowserSidecarUrl(rawSidecarUrl);
 
     const accountName =
       (firstPost?.settings as any)?.browserAccount ||
       (firstPost?.settings as any)?.account ||
+      process.env.THREADS_BROWSER_DEFAULT_ACCOUNT ||
       integration.name?.replace(/[^A-Za-z0-9_-]/g, '_') ||
       'main';
 
@@ -1362,8 +1424,18 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     session?: any;
     post?: any;
   }> {
-    const sidecarUrl =
+    const rawSidecarUrl =
       process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+    let sidecarUrl = rawSidecarUrl;
+    let sidecarUrlValid = true;
+    let urlError: string | null = null;
+    try {
+      sidecarUrl = validateBrowserSidecarUrl(rawSidecarUrl);
+    } catch (err: any) {
+      sidecarUrlValid = false;
+      urlError = err?.message || String(err);
+    }
+
     const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
     const allowRealPost =
       process.env.THREADS_BROWSER_ALLOW_REAL_POST?.toLowerCase().trim() === 'true';
@@ -1381,6 +1453,17 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       allowRealPost,
       sidecarUrl,
     };
+
+    if (!sidecarUrlValid) {
+      result.health = { status: 'error', error: urlError };
+      if (options?.checkSession) {
+        result.session = { status: 'error', error: urlError };
+      }
+      if (options?.dryRunPost) {
+        result.post = { status: 'error', error: urlError, dry_run: true };
+      }
+      return result;
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
