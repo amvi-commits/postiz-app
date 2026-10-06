@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -147,3 +148,47 @@ def save_diagnostic(page: Page, account: str, stage: str) -> None:
         logger.info(f"Diagnostic saved: {base_name}")
     except Exception as e:
         logger.warning(f"Failed to record diagnostic: {e}")
+
+def extract_profile_info(page: Page, account: str) -> dict:
+    """Safely extract public identity information from authenticated Threads page.
+    Never extracts or returns cookies, tokens, or credentials.
+    """
+    username = None
+    display_name = None
+    profile_url = None
+    picture = None
+
+    try:
+        profile_links = page.locator('a[href^="/@"], a[href*="threads.net/@"]')
+        count = profile_links.count()
+        for i in range(count):
+            link = profile_links.nth(i)
+            href = link.get_attribute("href") or ""
+            match = re.search(r"/@([A-Za-z0-9_.-]+)", href)
+            if match:
+                username = match.group(1)
+                profile_url = f"https://www.threads.net/@{username}"
+                img = link.locator("img")
+                if img.count() > 0:
+                    picture = img.first.get_attribute("src")
+                text = (link.text_content() or "").strip()
+                if text and text != username:
+                    display_name = text
+                break
+    except Exception as e:
+        logger.debug(f"Failed to extract profile info from DOM: {e}")
+
+    if not username:
+        username = account
+    if not display_name:
+        display_name = f"Threads ({username})"
+    if not profile_url:
+        profile_url = f"https://www.threads.net/@{username}"
+
+    return {
+        "account": account,
+        "username": username,
+        "displayName": display_name,
+        "profileUrl": profile_url,
+        "picture": picture,
+    }

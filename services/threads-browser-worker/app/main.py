@@ -16,11 +16,12 @@ from app.models import (
     AccountsResponse,
     SessionCheckRequest,
     SessionCheckResponse,
+    AccountProfileResponse,
     PostRequest,
     PostResponseModel,
 )
-from app.accounts import list_accounts, account_exists, acquire_account_lock
-from app.browser import launch_persistent_browser, check_login_state
+from app.accounts import list_accounts, account_exists, acquire_account_lock, validate_account_name
+from app.browser import launch_persistent_browser, check_login_state, extract_profile_info
 from app.publisher import publish_thread
 
 # Configure structured logging (no cookies, passwords, or tokens)
@@ -124,6 +125,52 @@ def check_session(req: SessionCheckRequest):
             page = context.pages[0] if context.pages else context.new_page()
             state = check_login_state(page, timeout_ms=10000)
             return SessionCheckResponse(account=req.account, status=state)
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                pw.stop()
+            except Exception:
+                pass
+
+@app.get(
+    "/api/threads/accounts/{account}/profile",
+    response_model=AccountProfileResponse,
+    dependencies=[Depends(verify_service_key)],
+)
+def get_account_profile(account: str):
+    """Retrieve public identity information for an authenticated account profile.
+    Never returns cookies, tokens, or private credentials.
+    """
+    valid_name = validate_account_name(account)
+    if not account_exists(valid_name):
+        raise AccountNotFoundError(valid_name)
+
+    with acquire_account_lock(valid_name):
+        pw, context = launch_persistent_browser(valid_name, headless=True)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            state = check_login_state(page, timeout_ms=10000)
+            if state != "SESSION_OK":
+                return AccountProfileResponse(
+                    account=valid_name,
+                    status=state,
+                    username=None,
+                    displayName=None,
+                    profileUrl=None,
+                    picture=None,
+                )
+            info = extract_profile_info(page, valid_name)
+            return AccountProfileResponse(
+                account=valid_name,
+                status=state,
+                username=info.get("username"),
+                displayName=info.get("displayName"),
+                profileUrl=info.get("profileUrl"),
+                picture=info.get("picture"),
+            )
         finally:
             try:
                 context.close()

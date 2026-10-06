@@ -167,6 +167,29 @@ export function normalizeThreadsInboxItem(
   };
 }
 
+const BrowserFeatureUnavailableBanner: FC<{
+  featureName: string;
+  description?: string;
+}> = ({
+  featureName,
+  description = 'この機能はMeta公式API経由のアカウント専用です。Browser接続アカウントでは、投稿（テキスト/単一画像）機能のみ利用可能です。',
+}) => (
+  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-center">
+    <div className="text-2xl mb-2">⚠️</div>
+    <h3 className="text-sm font-bold text-textColor">
+      {featureName} はBrowser接続アカウントでは利用できません
+    </h3>
+    <p className="mt-2 text-xs text-textItemBlur max-w-md mx-auto">
+      {description}
+    </p>
+    <div className="mt-4">
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs bg-amber-500/20 text-amber-300 font-mono">
+        BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE
+      </span>
+    </div>
+  </div>
+);
+
 export const ThreadsWorkspace: FC<{
   onOpenPublish?: (prefill: CommonPublishPrefill) => void;
 }> = ({ onOpenPublish }) => {
@@ -175,6 +198,10 @@ export const ThreadsWorkspace: FC<{
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [browserAccountInput, setBrowserAccountInput] = useState('main');
+  const [browserConnecting, setBrowserConnecting] = useState(false);
+  const [browserCheckResult, setBrowserCheckResult] = useState<any>(null);
+  const [checkingSidecar, setCheckingSidecar] = useState(false);
 
   // SWR request helper
   const request = useCallback(
@@ -210,10 +237,18 @@ export const ThreadsWorkspace: FC<{
     return selectedAccountId || accounts[0]?.id || '';
   }, [selectedAccountId, accounts]);
 
+  const selectedAccount = useMemo(() => {
+    return accounts.find((a) => a.id === effectiveAccountId);
+  }, [accounts, effectiveAccountId]);
+
+  const isBrowserAccount = Boolean(
+    selectedAccount?.isBrowser || selectedAccount?.transport === 'browser'
+  );
+
   const { data: capabilitiesData } = useSWR('/threads-studio/capabilities', load);
 
   const { data: quotaData } = useSWR(
-    effectiveAccountId && activeSubTab === 'Settings'
+    effectiveAccountId && activeSubTab === 'Settings' && !isBrowserAccount
       ? `/threads-studio/accounts/${effectiveAccountId}/quota`
       : null,
     load
@@ -233,7 +268,7 @@ export const ThreadsWorkspace: FC<{
 
   const [inboxStatusFilter, setInboxStatusFilter] = useState<string>('ALL');
   const { data: inboxData, mutate: refreshInbox } = useSWR(
-    activeSubTab === 'Inbox'
+    activeSubTab === 'Inbox' && !isBrowserAccount
       ? `/threads-studio/inbox?${effectiveAccountId ? `integrationId=${effectiveAccountId}&` : ''}${inboxStatusFilter !== 'ALL' ? `status=${inboxStatusFilter}` : ''}`
       : null,
     load,
@@ -264,11 +299,67 @@ export const ThreadsWorkspace: FC<{
   );
 
   const { data: analyticsData, mutate: refreshAnalytics } = useSWR(
-    activeSubTab === 'Analytics'
+    activeSubTab === 'Analytics' && !isBrowserAccount
       ? `/threads-studio/analytics?${effectiveAccountId ? `integrationId=${effectiveAccountId}` : ''}`
       : null,
     load
   );
+
+  const checkSidecarStatus = useCallback(async () => {
+    setCheckingSidecar(true);
+    try {
+      const res = await request('/threads-studio/browser/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          account: browserAccountInput || 'main',
+          checkHealth: true,
+          checkSession: true,
+        }),
+      });
+      setBrowserCheckResult(res);
+      return res;
+    } catch (err: any) {
+      setBrowserCheckResult({
+        health: { status: 'error', error: err?.message || String(err) },
+      });
+      return null;
+    } finally {
+      setCheckingSidecar(false);
+    }
+  }, [browserAccountInput, request]);
+
+  const connectBrowserAccountAction = useCallback(async () => {
+    setBrowserConnecting(true);
+    setMessage('');
+    try {
+      const res = await request('/threads-studio/browser/connect', {
+        method: 'POST',
+        body: JSON.stringify({ account: browserAccountInput || 'main' }),
+      });
+      await refreshAccounts();
+      if (res?.integration?.id) {
+        setSelectedAccountId(res.integration.id);
+      }
+      setMessage(res?.message || 'Threads Browserアカウントを接続しました。');
+    } catch (err: any) {
+      setMessage(`接続エラー: ${err?.message || String(err)}`);
+    } finally {
+      setBrowserConnecting(false);
+    }
+  }, [browserAccountInput, request, refreshAccounts]);
+
+  const connectOfficialAccountAction = useCallback(async () => {
+    try {
+      const res = await (await fetch('/integrations/social/threads')).json();
+      if (res?.url) {
+        window.location.href = res.url;
+      } else {
+        setMessage('公式API認証URLの生成に失敗しました。');
+      }
+    } catch (err: any) {
+      setMessage(`公式API接続エラー: ${err?.message || String(err)}`);
+    }
+  }, [fetch]);
 
   const runAction = useCallback(
     async (action: () => Promise<unknown>, successMsg: string) => {
@@ -517,20 +608,34 @@ export const ThreadsWorkspace: FC<{
           <div className="flex items-center gap-3">
             <span className="text-xs text-textItemBlur">対象アカウント:</span>
             <select
-              className={clsx(field, 'w-auto min-w-[200px] text-xs font-semibold')}
+              className={clsx(field, 'w-auto min-w-[220px] text-xs font-semibold')}
               value={effectiveAccountId}
               onChange={(e) => setSelectedAccountId(e.target.value)}
             >
               {accounts.length ? (
                 accounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>
-                    @{acc.name || acc.display || acc.username || acc.identifier}
+                    @{acc.name || acc.display || acc.username || acc.identifier}{' '}
+                    {acc.isBrowser ? '[Browser]' : '[Official API]'}
                   </option>
                 ))
               ) : (
                 <option value="">Threadsアカウント未接続</option>
               )}
             </select>
+            {selectedAccount && (
+              <span
+                className={clsx(
+                  'rounded px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1',
+                  isBrowserAccount
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                )}
+              >
+                <span>{isBrowserAccount ? '🌐' : '🔑'}</span>
+                <span>{isBrowserAccount ? 'Browser Transport' : 'Official Meta API'}</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -853,6 +958,12 @@ export const ThreadsWorkspace: FC<{
 
       {/* 3. Sub-tab: Inbox & Moderation */}
       {activeSubTab === 'Inbox' && (
+        isBrowserAccount ? (
+          <BrowserFeatureUnavailableBanner
+            featureName="Inbox・モデレーション・返信機能"
+            description="Threadsのリプライ取得およびモデレーション機能 (threads_manage_replies, threads_read_replies) はMeta公式API専用機能です。Browser接続アカウントではご利用いただけません。"
+          />
+        ) : (
         <div className="grid gap-6 xl:grid-cols-3">
           {/* Inbox List (2 Cols) */}
           <div className={clsx(card, 'xl:col-span-2')}>
@@ -1106,10 +1217,17 @@ export const ThreadsWorkspace: FC<{
             )}
           </div>
         </div>
+        )
       )}
 
       {/* 4. Sub-tab: Research (Official API keyword_search) */}
       {activeSubTab === 'Research' && (
+        isBrowserAccount ? (
+          <BrowserFeatureUnavailableBanner
+            featureName="Threads キーワードリサーチ・検索"
+            description="Threadsのキーワード検索API (threads_keyword_search) はMeta公式API専用機能です。Browser接続アカウントではご利用いただけません。"
+          />
+        ) : (
         <div className="grid gap-6">
           <div className="rounded-md border border-blockSeparator px-4 py-3 text-xs text-textColor">
             <p>
@@ -1249,6 +1367,7 @@ export const ThreadsWorkspace: FC<{
             )}
           </div>
         </div>
+        )
       )}
 
       {/* 5. Sub-tab: Reference Posts Library */}
@@ -1344,6 +1463,12 @@ export const ThreadsWorkspace: FC<{
 
       {/* 6. Sub-tab: Analytics & Multi-dimensional Comparison */}
       {activeSubTab === 'Analytics' && (
+        isBrowserAccount ? (
+          <BrowserFeatureUnavailableBanner
+            featureName="Threads アナリティクス・詳細インサイト"
+            description="Threads Insights API (threads_manage_insights) はMeta公式API専用機能です。Browser接続アカウントではご利用いただけません。"
+          />
+        ) : (
         <div className="flex flex-col gap-6">
           {/* KPI Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -1442,13 +1567,166 @@ export const ThreadsWorkspace: FC<{
             </div>
           </div>
         </div>
+        )
       )}
 
       {/* 7. Sub-tab: Settings & Automation */}
       {activeSubTab === 'Settings' && (
         <div className="grid gap-6 xl:grid-cols-2">
-          {/* Threads API Quota & Rate Limit status */}
-          {quotaData?.data?.[0] && (
+          {/* Threads Account Connection Card (Official OAuth & Browser Sidecar) */}
+          <div className={clsx(card, 'xl:col-span-2')}>
+            <h2 className="text-base font-bold text-textColor flex items-center gap-2">
+              <span>🔗</span> Threads アカウント接続
+            </h2>
+            <p className="mt-1 text-xs text-textItemBlur">
+              Meta公式APIによるOAuth接続、またはローカルのBrowser Sidecarによるブラウザ接続を管理します。
+            </p>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Official Meta OAuth */}
+              <div className="rounded-lg border border-blockSeparator p-4 bg-newBgColorInner flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-textColor flex items-center gap-1.5">
+                      <span>🌐</span> 公式API (Meta OAuth)
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30">
+                      Graph API
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-textItemBlur leading-relaxed">
+                    Meta Graph APIを利用して接続します。投稿、リサーチ、インサイト、Inbox返信など全ての公式機能が利用可能です。
+                  </p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-blockSeparator">
+                  <button
+                    type="button"
+                    className={clsx(primaryButton, 'w-full text-center justify-center')}
+                    onClick={connectOfficialAccountAction}
+                  >
+                    公式APIで接続 ➔
+                  </button>
+                </div>
+              </div>
+
+              {/* Browser Sidecar Connection */}
+              <div className="rounded-lg border border-blockSeparator p-4 bg-newBgColorInner flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-textColor flex items-center gap-1.5">
+                      <span>🖥️</span> Browserで接続 (Playwright Sidecar)
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/30 font-mono">
+                      Sidecar
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-textItemBlur leading-relaxed">
+                    ローカルのThreads Browser Sidecarでログイン済みのプロファイル（例: main）をSNS Studioのアカウントとして登録します。
+                  </p>
+
+                  {/* Account Alias Input & Sidecar Status */}
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-textItemBlur whitespace-nowrap">プロファイル:</label>
+                      <input
+                        type="text"
+                        value={browserAccountInput}
+                        onChange={(e) => setBrowserAccountInput(e.target.value)}
+                        placeholder="main"
+                        className={clsx(field, 'text-xs py-1 px-2')}
+                        disabled={browserConnecting || checkingSidecar}
+                      />
+                      <button
+                        type="button"
+                        className={clsx(secondaryButton, 'text-xs py-1 px-3 whitespace-nowrap')}
+                        onClick={() => void checkSidecarStatus()}
+                        disabled={checkingSidecar || !browserAccountInput.trim()}
+                      >
+                        {checkingSidecar ? '確認中...' : '状態確認'}
+                      </button>
+                    </div>
+
+                    {browserCheckResult && (
+                      <div
+                        className={clsx(
+                          'text-xs p-2.5 rounded border',
+                          browserCheckResult.healthy && browserCheckResult.session === 'SESSION_OK'
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                        )}
+                      >
+                        <div className="font-semibold flex items-center gap-1.5">
+                          <span>{browserCheckResult.healthy && browserCheckResult.session === 'SESSION_OK' ? '✅' : '⚠️'}</span>
+                          <span>Sidecar: {browserCheckResult.healthy ? 'ONLINE (8017)' : 'OFFLINE'}</span>
+                          <span>/ Session: {browserCheckResult.session || 'UNKNOWN'}</span>
+                        </div>
+                        {browserCheckResult.profile && (
+                          <div className="mt-1 text-[11px] text-textItemBlur">
+                            ユーザー: @{browserCheckResult.profile.username || browserCheckResult.profile.display_name} ({browserCheckResult.profile.display_name})
+                          </div>
+                        )}
+                        {browserCheckResult.error && (
+                          <div className="mt-1 text-[11px] text-red-400">
+                            {browserCheckResult.error}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-blockSeparator">
+                  <button
+                    type="button"
+                    className={clsx(primaryButton, 'w-full text-center justify-center bg-purple-600 hover:bg-purple-500')}
+                    onClick={() => void connectBrowserAccountAction()}
+                    disabled={browserConnecting || !browserAccountInput.trim()}
+                  >
+                    {browserConnecting ? '登録処理中...' : 'Browserで接続 ➔'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Threads API Quota & Rate Limit status or Browser Transport Info */}
+          {isBrowserAccount ? (
+            <div className={clsx(card, 'xl:col-span-2 bg-purple-500/10 border-purple-500/30')}>
+              <h2 className="text-base font-bold text-textColor flex items-center gap-2">
+                <span>🖥️</span> Threads Browser Transport (Sidecar) 接続情報
+              </h2>
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div className="rounded-lg bg-newBgColorInner p-3 border border-blockSeparator">
+                  <div className="text-textItemBlur font-medium">トランスポート形式</div>
+                  <div className="text-base font-bold text-textColor mt-1 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-purple-400"></span>
+                    Browser Sidecar (Playwright)
+                  </div>
+                  <div className="text-[10px] text-textItemBlur mt-1">
+                    ローカルブラウザプロファイル経由
+                  </div>
+                </div>
+                <div className="rounded-lg bg-newBgColorInner p-3 border border-blockSeparator">
+                  <div className="text-textItemBlur font-medium">プロファイル Alias</div>
+                  <div className="text-base font-bold text-textColor mt-1 font-mono">
+                    {selectedAccount?.browserAccount || 'main'}
+                  </div>
+                  <div className="text-[10px] text-textItemBlur mt-1">
+                    sessions/{selectedAccount?.browserAccount || 'main'}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-newBgColorInner p-3 border border-blockSeparator">
+                  <div className="text-textItemBlur font-medium">投稿制限・モード</div>
+                  <div className="text-base font-bold text-amber-400 mt-1">
+                    Safe Dry-Run Mode
+                  </div>
+                  <div className="text-[10px] text-textItemBlur mt-1">
+                    実投稿ガード有効 (ALLOW_REAL_POST=false)
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : quotaData?.data?.[0] ? (
             <div className={clsx(card, 'xl:col-span-2 bg-[#7774ff]/10 border-[#7774ff]/30')}>
               <h2 className="text-base font-bold text-textColor flex items-center gap-2">
                 <span>⏱️</span> Threads API 公開枠・レート制限 (Official 24h Quota)
@@ -1474,7 +1752,7 @@ export const ThreadsWorkspace: FC<{
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* Default Reply Controls & Account Rules */}
           <div className={card}>

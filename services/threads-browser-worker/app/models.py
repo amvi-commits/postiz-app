@@ -34,6 +34,14 @@ class SessionCheckResponse(BaseModel):
     account: str
     status: Literal["SESSION_OK", "AUTH_REQUIRED", "SESSION_UNKNOWN"]
 
+class AccountProfileResponse(BaseModel):
+    account: str
+    status: Literal["SESSION_OK", "AUTH_REQUIRED", "SESSION_UNKNOWN"]
+    username: Optional[str] = None
+    displayName: Optional[str] = None
+    profileUrl: Optional[str] = None
+    picture: Optional[str] = None
+
 class PostRequest(BaseModel):
     account: str = Field(..., description="Account identifier name")
     text: str = Field(..., description="Post message text (1-500 characters)")

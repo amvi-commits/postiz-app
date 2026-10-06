@@ -345,3 +345,66 @@ def test_post_executes_outside_asyncio_event_loop(tmp_path, monkeypatch):
         assert res.json()["status"] == "dry_run_ok"
         assert verified_no_loop is True, "spy_publish_thread was not called"
 
+
+def test_get_account_profile_unknown_account(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "SESSIONS_DIR", tmp_path)
+    res = client.get("/api/threads/accounts/non_existent/profile", headers=AUTH_HEADER)
+    assert res.status_code == 404
+    assert res.json()["code"] == "ACCOUNT_NOT_FOUND"
+
+
+def test_get_account_profile_auth_required(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "SESSIONS_DIR", tmp_path)
+    get_account_profile_dir("unauth_user", create=True)
+
+    with patch("app.main.launch_persistent_browser") as mock_launch, \
+         patch("app.main.check_login_state") as mock_check:
+        mock_pw = MagicMock()
+        mock_ctx = MagicMock()
+        mock_launch.return_value = (mock_pw, mock_ctx)
+        mock_check.return_value = "AUTH_REQUIRED"
+
+        res = client.get("/api/threads/accounts/unauth_user/profile", headers=AUTH_HEADER)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["account"] == "unauth_user"
+        assert data["status"] == "AUTH_REQUIRED"
+        assert data["username"] is None
+        assert data["profileUrl"] is None
+        # Verify no credentials leaked
+        assert "cookie" not in str(data).lower()
+        assert "sessionid" not in str(data).lower()
+
+
+def test_get_account_profile_session_ok(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "SESSIONS_DIR", tmp_path)
+    get_account_profile_dir("main", create=True)
+
+    with patch("app.main.launch_persistent_browser") as mock_launch, \
+         patch("app.main.check_login_state") as mock_check, \
+         patch("app.main.extract_profile_info") as mock_extract:
+        mock_pw = MagicMock()
+        mock_ctx = MagicMock()
+        mock_launch.return_value = (mock_pw, mock_ctx)
+        mock_check.return_value = "SESSION_OK"
+        mock_extract.return_value = {
+            "account": "main",
+            "username": "threads_tester",
+            "displayName": "Tester Account",
+            "profileUrl": "https://www.threads.net/@threads_tester",
+            "picture": "https://cdn.example.com/avatar.jpg",
+        }
+
+        res = client.get("/api/threads/accounts/main/profile", headers=AUTH_HEADER)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["account"] == "main"
+        assert data["status"] == "SESSION_OK"
+        assert data["username"] == "threads_tester"
+        assert data["displayName"] == "Tester Account"
+        assert data["profileUrl"] == "https://www.threads.net/@threads_tester"
+        assert data["picture"] == "https://cdn.example.com/avatar.jpg"
+        # Strict security: verify no secrets
+        for forbidden in ["cookie", "sessionid", "csrftoken", "password", "token"]:
+            assert forbidden not in data
+

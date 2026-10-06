@@ -7,7 +7,12 @@ import { Integration, Organization, Post, Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
 import { IntegrationManager } from '@gitroom/nestjs-libraries/integrations/integration.manager';
-import { ThreadsProvider } from '@gitroom/nestjs-libraries/integrations/social/threads.provider';
+import {
+  ThreadsProvider,
+  isBrowserIntegration,
+  getThreadsTransport,
+  getBrowserAccount,
+} from '@gitroom/nestjs-libraries/integrations/social/threads.provider';
 import {
   DEFAULT_THREADS_FEATURE_FLAGS,
   getThreadsFeatureFlags,
@@ -27,6 +32,24 @@ export class ThreadsStudioService {
 
   private getThreadsProvider(): ThreadsProvider {
     return this.integrationManager.getSocialIntegration('threads') as ThreadsProvider;
+  }
+
+  private assertNotBrowserIntegration(
+    integration: {
+      providerIdentifier?: string;
+      internalId?: string;
+      customInstanceDetails?: string | null;
+      additionalSettings?: string | null;
+      token?: string;
+    } | null,
+    operationName = 'この機能'
+  ) {
+    if (isBrowserIntegration(integration)) {
+      throw new BadRequestException({
+        code: 'BROWSER_ACCOUNT_OFFICIAL_API_UNAVAILABLE',
+        message: `Threads Browser Transportアカウントは公式APIの${operationName}に対応していません。`,
+      });
+    }
   }
 
   // 1. Capabilities & Feature Flags
@@ -55,6 +78,11 @@ export class ThreadsStudioService {
         refreshNeeded: true,
         createdAt: true,
         updatedAt: true,
+        internalId: true,
+        providerIdentifier: true,
+        token: true,
+        customInstanceDetails: true,
+        additionalSettings: true,
       },
     });
 
@@ -65,8 +93,22 @@ export class ThreadsStudioService {
 
     return integrations.map((integration) => {
       const setting = settingsMap.get(integration.id);
+      const isBrowser = isBrowserIntegration(integration);
+      const transport = getThreadsTransport(integration);
+      const browserAccount = isBrowser ? getBrowserAccount(integration) : null;
+
       return {
-        ...integration,
+        id: integration.id,
+        name: integration.name,
+        profile: integration.profile,
+        picture: integration.picture,
+        inBetweenSteps: integration.inBetweenSteps,
+        refreshNeeded: integration.refreshNeeded,
+        createdAt: integration.createdAt,
+        updatedAt: integration.updatedAt,
+        isBrowser,
+        transport,
+        browserAccount,
         threadsSettings: setting || {
           displayName: integration.name || integration.profile,
           autoPostEnabled: true,
@@ -239,6 +281,15 @@ export class ThreadsStudioService {
   async syncInbox(org: Organization, targetIntegrationId?: string) {
     await this.checkAndArchiveExpiredGhostPosts(org.id);
 
+    if (targetIntegrationId) {
+      const targetIntegration = await this.prisma.integration.findFirst({
+        where: { id: targetIntegrationId, organizationId: org.id },
+      });
+      if (targetIntegration) {
+        this.assertNotBrowserIntegration(targetIntegration, 'Inbox同期');
+      }
+    }
+
     const integrations = await this.prisma.integration.findMany({
       where: {
         organizationId: org.id,
@@ -252,6 +303,9 @@ export class ThreadsStudioService {
     let totalSynced = 0;
 
     for (const integration of integrations) {
+      if (isBrowserIntegration(integration)) {
+        continue;
+      }
       try {
         const userThreadsRes = await provider.fetchUserThreads(integration.token, 15);
         const userThreads = userThreadsRes?.data || [];
@@ -401,6 +455,7 @@ export class ThreadsStudioService {
     if (!integration) {
       throw new NotFoundException('Associated integration not found');
     }
+    this.assertNotBrowserIntegration(integration, 'Inbox返信');
 
     const provider = this.getThreadsProvider();
     try {
@@ -438,6 +493,7 @@ export class ThreadsStudioService {
       where: { id: item.integrationId, organizationId: org.id },
     });
     if (!integration) throw new NotFoundException('Integration not found');
+    this.assertNotBrowserIntegration(integration, '返信非表示操作');
 
     const provider = this.getThreadsProvider();
     await provider.manageReply(integration.token, item.threadsReplyId, hide);
@@ -461,6 +517,7 @@ export class ThreadsStudioService {
       where: { id: item.integrationId, organizationId: org.id },
     });
     if (!integration) throw new NotFoundException('Integration not found');
+    this.assertNotBrowserIntegration(integration, '返信承認操作');
 
     const provider = this.getThreadsProvider();
     await provider.managePendingReply(integration.token, item.threadsReplyId, approve);
@@ -647,6 +704,7 @@ export class ThreadsStudioService {
       where: { id: integrationId, organizationId: org.id, providerIdentifier: 'threads' },
     });
     if (!integration) throw new NotFoundException('Threads integration not found');
+    this.assertNotBrowserIntegration(integration, 'リサーチ検索');
 
     const provider = this.getThreadsProvider();
     try {
@@ -672,6 +730,7 @@ export class ThreadsStudioService {
       where: { id: integrationId, organizationId: org.id, providerIdentifier: 'threads' },
     });
     if (!integration) throw new NotFoundException('Threads integration not found');
+    this.assertNotBrowserIntegration(integration, '位置情報検索');
 
     const provider = this.getThreadsProvider();
     try {
@@ -691,6 +750,7 @@ export class ThreadsStudioService {
       where: { id: integrationId, organizationId: org.id, providerIdentifier: 'threads' },
     });
     if (!integration) throw new NotFoundException('Threads integration not found');
+    this.assertNotBrowserIntegration(integration, 'クォータ取得');
 
     const provider = this.getThreadsProvider();
     try {
@@ -933,6 +993,15 @@ JSONフォーマットで回答してください:
     org: Organization,
     query: { integrationId?: string; fromDate?: string; toDate?: string }
   ) {
+    if (query.integrationId) {
+      const targetIntegration = await this.prisma.integration.findFirst({
+        where: { id: query.integrationId, organizationId: org.id },
+      });
+      if (targetIntegration) {
+        this.assertNotBrowserIntegration(targetIntegration, 'アナリティクス取得');
+      }
+    }
+
     const from = query.fromDate ? dayjs(query.fromDate).toDate() : dayjs().subtract(30, 'day').toDate();
     const to = query.toDate ? dayjs(query.toDate).toDate() : dayjs().toDate();
 
@@ -967,7 +1036,7 @@ JSONフォーマットで回答してください:
           const integration = await this.prisma.integration.findUnique({
             where: { id: post.integrationId },
           });
-          if (integration?.token) {
+          if (integration?.token && !isBrowserIntegration(integration)) {
             const insights = await provider.postAnalytics(
               integration.id,
               integration.token,
@@ -1070,6 +1139,10 @@ JSONフォーマットで回答してください:
       return { triggered: false, reason: 'POST_NOT_FOUND_OR_NOT_PUBLISHED' };
     }
 
+    if (isBrowserIntegration(post.integration)) {
+      return { triggered: false, reason: 'BROWSER_ACCOUNT_NOT_SUPPORTED' };
+    }
+
     const setting = await this.prisma.snsThreadsAccountSetting.findUnique({
       where: { integrationId: post.integrationId },
     });
@@ -1120,4 +1193,167 @@ JSONフォーマットで回答してください:
 
     return { triggered: false, currentLikes: likes, threshold };
   }
+
+  // 13. Browser Transport Diagnostics & Verification
+  async verifyBrowserTransport(
+    dto?: {
+      account?: string;
+      text?: string;
+      mediaUrls?: string[];
+      isGhost?: boolean;
+      checkHealth?: boolean;
+      checkSession?: boolean;
+      dryRunPost?: boolean;
+    },
+    org?: Organization
+  ) {
+    const provider = this.getThreadsProvider();
+    return provider.verifyBrowserTransport(dto);
+  }
+
+  // 14. Connect Browser Account
+  async connectBrowserAccount(
+    org: Organization,
+    body?: { account?: string }
+  ) {
+    const account = (body?.account || 'main').trim();
+    if (!/^[a-zA-Z0-9_-]+$/.test(account)) {
+      throw new BadRequestException({
+        code: 'INVALID_ACCOUNT_NAME',
+        message: 'アカウント名には英数字、ハイフン、アンダースコアのみ使用できます。',
+      });
+    }
+
+    const provider = this.getThreadsProvider();
+
+    // 1. Verify Sidecar connectivity and session status
+    const verification = await provider.verifyBrowserTransport({
+      account,
+      checkHealth: true,
+      checkSession: true,
+      dryRunPost: false,
+    });
+
+    if (verification?.health?.status !== 'ok') {
+      throw new BadRequestException({
+        code: 'THREADS_BROWSER_UNREACHABLE',
+        message: `Threads Browser Sidecar (${verification.sidecarUrl}) に接続できません。Sidecarがポート8017で稼働していることを確認してください。`,
+        details: verification?.health,
+      });
+    }
+
+    const sessionStatus =
+      verification?.session?.status ||
+      verification?.session?.session_status ||
+      'UNKNOWN';
+    if (sessionStatus !== 'SESSION_OK') {
+      throw new BadRequestException({
+        code: 'THREADS_BROWSER_AUTH_REQUIRED',
+        message: `Threads Browserのアカウント "${account}" が未認証です。ホスト側でログイン (cli_login.py ${account}) を完了してください。`,
+        sessionStatus,
+      });
+    }
+
+    // 2. Fetch profile from Sidecar
+    let profileData: any;
+    try {
+      profileData = await provider.getBrowserProfile(account);
+    } catch (err: any) {
+      throw new BadRequestException({
+        code: 'THREADS_BROWSER_PROFILE_ERROR',
+        message: `Sidecarからのプロファイル取得に失敗しました: ${err.message || err}`,
+      });
+    }
+
+    const internalId = `threads_browser_${account}`;
+    const token = `managed:threads-browser:${account}`;
+    const username = profileData?.username || account;
+    const displayName = profileData?.name || username;
+    const profileUrl =
+      profileData?.profile_url || `https://www.threads.net/@${username}`;
+    const picture = profileData?.picture || '';
+
+    const customInstanceDetails = JSON.stringify({
+      transport: 'browser',
+      browserAccount: account,
+      profileUrl,
+    });
+    const additionalSettings = JSON.stringify([
+      { title: 'transport', value: 'browser' },
+      { title: 'browserAccount', value: account },
+    ]);
+
+    // 3. Idempotently upsert integration
+    const integration = await this.prisma.integration.upsert({
+      where: {
+        organizationId_internalId: {
+          organizationId: org.id,
+          internalId,
+        },
+      },
+      create: {
+        organizationId: org.id,
+        internalId,
+        providerIdentifier: 'threads',
+        name: displayName,
+        profile: username,
+        picture: picture || null,
+        type: 'social',
+        token,
+        disabled: false,
+        refreshNeeded: false,
+        inBetweenSteps: false,
+        customInstanceDetails,
+        additionalSettings,
+      },
+      update: {
+        name: displayName,
+        profile: username,
+        picture: picture || null,
+        token,
+        disabled: false,
+        refreshNeeded: false,
+        customInstanceDetails,
+        additionalSettings,
+        deletedAt: null,
+      },
+    });
+
+    // 4. Ensure SnsThreadsAccountSetting exists
+    await this.prisma.snsThreadsAccountSetting.upsert({
+      where: { integrationId: integration.id },
+      create: {
+        organizationId: org.id,
+        integrationId: integration.id,
+        displayName,
+        autoPostEnabled: true,
+        defaultReplyControl: 'everyone',
+        aiReplyEnabled: false,
+        autoReplyEnabled: false,
+        maxPostsPerDay: 10,
+        maxRepliesPerDay: 50,
+        tone: 'polite',
+        ngWords: [],
+        autoPlugEnabled: false,
+      },
+      update: {
+        displayName,
+      },
+    });
+
+    return {
+      status: 'ok',
+      message: `Threads Browser アカウント「@${username}」を正常に登録しました。`,
+      integration: {
+        id: integration.id,
+        name: integration.name,
+        profile: integration.profile,
+        picture: integration.picture,
+        isBrowser: true,
+        transport: 'browser',
+        browserAccount: account,
+      },
+    };
+  }
 }
+
