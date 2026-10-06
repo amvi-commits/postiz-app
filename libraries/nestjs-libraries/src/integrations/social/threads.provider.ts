@@ -816,6 +816,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       return [];
     }
 
+    if (process.env.THREADS_PUBLISH_TRANSPORT === 'browser') {
+      return this.postViaBrowser(postDetails, integration);
+    }
+
     const [firstPost] = postDetails;
     const [response] = await this.postPending(
       userId,
@@ -1248,5 +1252,88 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     );
     return res.json();
   }
+
+  private async postViaBrowser(
+    postDetails: PostDetails<ThreadsSettingsData>[],
+    integration: Integration
+  ): Promise<PostResponse[]> {
+    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+    if (!serviceKey) {
+      throw new BadBody(
+        this.identifier,
+        '{}',
+        '{}',
+        '[CONFIGURATION_ERROR] THREADS_BROWSER_SERVICE_KEY must be configured when THREADS_PUBLISH_TRANSPORT is "browser".'
+      );
+    }
+
+    const [firstPost] = postDetails;
+    const sidecarUrl =
+      process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+
+    const accountName =
+      (firstPost?.settings as any)?.browserAccount ||
+      (firstPost?.settings as any)?.account ||
+      integration.name?.replace(/[^A-Za-z0-9_-]/g, '_') ||
+      'main';
+
+    console.log(
+      `[ThreadsBrowserTransport] Routing post to browser profile alias '${accountName}' (integration: ${integration.name || integration.id})`
+    );
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Threads-Service-Key': serviceKey,
+    };
+
+    const mediaUrls = (firstPost.media || [])
+      .map((m) => m.path)
+      .filter((p): p is string => Boolean(p));
+
+    const payload: Record<string, any> = {
+      account: accountName,
+      text: firstPost.message,
+      is_ghost: Boolean((firstPost.settings as any)?.isGhostPost),
+      request_id: makeSecureId(16),
+      dry_run: false,
+    };
+
+    if (mediaUrls.length > 0) {
+      payload.media_urls = mediaUrls;
+    }
+
+    const res = await this.fetch(`${sidecarUrl}/api/threads/post`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.status === 'error') {
+      const errCode = data?.code || 'POST_SUBMIT_FAILED';
+      const errMsg = data?.message || 'Threadsブラウザ投稿に失敗しました。';
+      throw new BadBody(
+        this.identifier,
+        JSON.stringify(payload),
+        JSON.stringify(data),
+        `[${errCode}] ${errMsg}`
+      );
+    }
+
+    const realPostId = data?.post_id || undefined;
+    const realReleaseUrl = data?.url || undefined;
+    const responseStatus =
+      data?.status === 'ok' && realPostId ? 'completed' : 'submitted';
+
+    return [
+      {
+        id: firstPost.id,
+        postId: realPostId,
+        releaseURL: realReleaseUrl,
+        status: responseStatus,
+      },
+    ];
+  }
 }
+
 

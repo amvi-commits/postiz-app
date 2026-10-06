@@ -40,7 +40,7 @@ const integration = {
   providerIdentifier: 'tiktok',
   disabled: false,
   refreshNeeded: false,
-  deletedAt: null,
+  deletedAt: null as any,
 };
 
 const assets = [
