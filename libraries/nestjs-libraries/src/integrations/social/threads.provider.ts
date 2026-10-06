@@ -27,6 +27,7 @@ import {
   THREADS_SCOPES,
   THREADS_BASE_GRAPH_URL,
 } from '@gitroom/nestjs-libraries/integrations/social/threads.capabilities';
+import { Agent } from 'undici';
 
 export class ThreadsProvider extends SocialAbstract implements SocialProvider {
   identifier = 'threads';
@@ -1310,6 +1311,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      // @ts-ignore
+      dispatcher: new Agent(),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -1389,7 +1392,10 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     // 1. Health check
     if (options?.checkHealth !== false) {
       try {
-        const hRes = await this.fetch(`${sidecarUrl}/health`);
+        const hRes = await this.fetch(`${sidecarUrl}/health`, {
+          // @ts-ignore
+          dispatcher: new Agent(),
+        });
         result.health = await hRes.json().catch(() => ({ status: 'invalid_json' }));
       } catch (err: any) {
         result.health = { status: 'error', error: err?.message || String(err) };
@@ -1404,6 +1410,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
           method: 'POST',
           headers,
           body: JSON.stringify({ account }),
+          // @ts-ignore
+          dispatcher: new Agent(),
         });
         result.session = await sRes.json().catch(() => ({ status: 'invalid_json' }));
       } catch (err: any) {
@@ -1430,6 +1438,8 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
+          // @ts-ignore
+          dispatcher: new Agent(),
         });
         const pData = await pRes.json().catch(() => ({}));
         if (pRes.status === 409 && pData?.code === 'GHOST_NOT_AVAILABLE') {
