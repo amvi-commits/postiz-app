@@ -49,6 +49,11 @@ describe('Threads Browser Publish Transport', () => {
   beforeEach(() => {
     jest.resetModules();
     process.env = { ...originalEnv };
+    delete process.env.THREADS_BROWSER_WORKER_URL;
+    delete process.env.THREADS_BROWSER_SERVICE_URL;
+    delete process.env.THREADS_BROWSER_DEFAULT_ACCOUNT;
+    delete process.env.THREADS_BROWSER_SERVICE_KEY;
+    delete process.env.THREADS_PUBLISH_TRANSPORT;
     provider = new ThreadsProvider();
   });
 
