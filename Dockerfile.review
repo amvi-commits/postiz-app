@@ -1,0 +1,16 @@
+FROM sns-studio/integration-4017:bridge-13647ed
+
+WORKDIR /app
+
+# Copy updated application code from feature/sns-studio-v1 (HEAD commit e3d4a6660e1af16c080052ed6c664d7c113506be)
+COPY apps/backend/src /app/apps/backend/src
+COPY apps/frontend/src /app/apps/frontend/src
+COPY libraries/nestjs-libraries/src /app/libraries/nestjs-libraries/src
+COPY libraries/helpers/src /app/libraries/helpers/src
+COPY scripts/seed-review.cjs /app/scripts/seed-review.cjs
+
+WORKDIR /app
+RUN pnpm --filter ./apps/backend run build
+RUN pnpm --filter ./apps/frontend run build
+
+RUN echo '{"branch":"feature/sns-studio-v1","commit":"e3d4a6660e1af16c080052ed6c664d7c113506be","role":"review-runtime","status":"READY"}' > /app/.sns-studio-build-manifest.json
