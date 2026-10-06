@@ -31,6 +31,28 @@ export interface AddEditModalProps {
       path: string;
     }>;
   }>;
+  onlyValuesByIntegration?: Record<string, Array<{
+    content: string;
+    id?: string;
+    image?: Array<{
+      id: string;
+      path: string;
+    }>;
+  }>>;
+  selectedChannelSettings?: Record<string, any>;
+  scheduledAtByIntegration?: Record<string, string>;
+  commonContentPlanId?: string;
+  onBeforePost?: (type: 'draft' | 'now' | 'schedule') => void | Promise<void>;
+  onPosted?: (result: {
+    type: 'draft' | 'now' | 'schedule' | 'update';
+    items: Array<{
+      postId: string;
+      integration: string;
+      date: string;
+      content?: string;
+      settings?: Record<string, any>;
+    }>;
+  }) => void | Promise<void>;
 }
 
 export const AddEditModal: FC<AddEditModalProps> = (props) => {
@@ -68,14 +90,19 @@ export const AddEditModal: FC<AddEditModalProps> = (props) => {
 
 export const AddEditModalInner: FC<AddEditModalProps> = (props) => {
   const existingData = useExistingData();
-  const { addOrRemoveSelectedIntegration, selectedIntegrations, integrations } =
-    useLaunchStore(
-      useShallow((state) => ({
-        integrations: state.integrations,
-        selectedIntegrations: state.selectedIntegrations,
-        addOrRemoveSelectedIntegration: state.addOrRemoveSelectedIntegration,
-      }))
-    );
+  const {
+    addOrRemoveSelectedIntegration,
+    addInternalValue,
+    selectedIntegrations,
+    integrations,
+  } = useLaunchStore(
+    useShallow((state) => ({
+      integrations: state.integrations,
+      selectedIntegrations: state.selectedIntegrations,
+      addOrRemoveSelectedIntegration: state.addOrRemoveSelectedIntegration,
+      addInternalValue: state.addInternalValue,
+    }))
+  );
 
   useEffect(() => {
     if (props?.set?.posts?.length) {
@@ -100,7 +127,29 @@ export const AddEditModalInner: FC<AddEditModalProps> = (props) => {
       for (const channel of props.selectedChannels) {
         const integration = integrations.find((i) => i.id === channel);
         if (integration) {
-          addOrRemoveSelectedIntegration(integration, {});
+          addOrRemoveSelectedIntegration(
+            integration,
+            props.selectedChannelSettings?.[channel] || {}
+          );
+          const values = props.onlyValuesByIntegration?.[channel];
+          if (values?.length) {
+            addInternalValue(
+              0,
+              channel,
+              values.map((p) => ({
+                content:
+                  p.content.indexOf('<p>') > -1
+                    ? p.content
+                    : p.content
+                        .split('\n')
+                        .map((line: string) => `<p>${line}</p>`)
+                        .join(''),
+                id: makeId(10),
+                media: p.image || [],
+                delay: 0,
+              }))
+            );
+          }
         }
       }
     }
@@ -212,6 +261,7 @@ export const AddEditModalInnerInner: FC<AddEditModalProps> = (props) => {
             },
           ]
     );
+
 
     return () => {
       reset();

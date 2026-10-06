@@ -57,10 +57,25 @@ import { WalletProvider } from '@gitroom/backend/services/auth/providers/wallet.
 import { OauthProvider } from '@gitroom/backend/services/auth/providers/oauth.provider';
 import { StripeController } from '@gitroom/backend/api/routes/stripe.controller';
 import { SnsStudioController } from '@gitroom/backend/api/routes/sns-studio.controller';
+import { ThreadsStudioController } from '@gitroom/backend/api/routes/threads-studio.controller';
+import { ThreadsStudioService } from '@gitroom/backend/services/sns-studio/threads-studio.service';
+import { SnsStudioCommonPublishingController } from '@gitroom/backend/api/routes/sns-studio-common-publishing.controller';
+import { CommonPublishingService } from '@gitroom/backend/services/sns-studio/common-publishing.service';
+import { CommonDeliveryViewService } from '@gitroom/backend/services/sns-studio/common-delivery-view.service';
 import { GoogleDriveStorageProvider } from '@gitroom/backend/services/sns-studio/google-drive.storage';
 import { GoogleDriveGenerationProvider } from '@gitroom/backend/services/sns-studio/google-drive.generation-provider';
 import { OpenAICaptionProvider } from '@gitroom/backend/services/sns-studio/openai-caption.provider';
 import { SNS_STUDIO_CAPTION_PROVIDER } from '@gitroom/backend/services/sns-studio/caption-provider.interface';
+import { AccountProtectionController } from '@gitroom/backend/api/routes/account-protection.controller';
+import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
+import { TikTokPublishGuard } from '@gitroom/backend/services/sns-studio/tiktok-publish.guard';
+import { TikTokCommonPublishPreCreateHook } from '@gitroom/backend/services/sns-studio/tiktok-common-publish-pre-create.hook';
+import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
+import { TikTokStatusAdapter } from '@gitroom/backend/services/sns-studio/tiktok-status.adapter';
+import {
+  PROVIDER_PUBLISH_PRE_CREATE_HOOKS,
+  ProviderPublishPreCreateProtection,
+} from '@gitroom/backend/services/posts/provider-publish-pre-create-protection.service';
 
 const authenticatedController = [
   UsersController,
@@ -84,6 +99,9 @@ const authenticatedController = [
   AnnouncementsController,
   AdminController,
   SnsStudioController,
+  ThreadsStudioController,
+  AccountProtectionController,
+  SnsStudioCommonPublishingController,
 ];
 @Module({
   imports: [UploadModule],
@@ -134,7 +152,21 @@ const authenticatedController = [
     GoogleDriveStorageProvider,
     GoogleDriveGenerationProvider,
     OpenAICaptionProvider,
+    ThreadsStudioService,
+    CommonPublishingService,
+    CommonDeliveryViewService,
     { provide: SNS_STUDIO_CAPTION_PROVIDER, useExisting: OpenAICaptionProvider },
+    TikTokPublishAdapter,
+    TikTokPublishGuard,
+    TikTokCommonPublishPreCreateHook,
+    ProviderPublishPreCreateProtection,
+    {
+      provide: PROVIDER_PUBLISH_PRE_CREATE_HOOKS,
+      useFactory: (tiktokHook: TikTokCommonPublishPreCreateHook) => [tiktokHook],
+      inject: [TikTokCommonPublishPreCreateHook],
+    },
+    TikTokAnalyticsAdapter,
+    TikTokStatusAdapter,
   ],
   get exports() {
     return [...this.imports, ...this.providers];

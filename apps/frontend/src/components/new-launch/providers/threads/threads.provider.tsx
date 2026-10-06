@@ -4,16 +4,14 @@ import {
   PostComment,
   withProvider,
 } from '@gitroom/frontend/components/new-launch/providers/high.order.provider';
-import { ThreadFinisher } from '@gitroom/frontend/components/new-launch/finisher/thread.finisher';
-const SettingsComponent = () => {
-  return <ThreadFinisher />;
-};
+import { ThreadsSettings } from '@gitroom/frontend/components/new-launch/providers/threads/threads.settings';
+import { ThreadsDto } from '@gitroom/nestjs-libraries/dtos/posts/providers-settings/threads.dto';
 
 export default withProvider({
   postComment: PostComment.POST,
   minimumCharacters: [],
-  SettingsComponent: SettingsComponent,
+  SettingsComponent: ThreadsSettings,
   CustomPreviewComponent: undefined,
-  dto: undefined,
+  dto: ThreadsDto,
   maximumCharacters: 500,
 });

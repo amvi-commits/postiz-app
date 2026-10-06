@@ -34,6 +34,11 @@ import {
   ResolveCommentDto,
 } from '@gitroom/nestjs-libraries/dtos/comments/add.comment.dto';
 import { RealIP } from 'nestjs-real-ip';
+import {
+  CommonPublishMode,
+  CommonPublishingService,
+} from '@gitroom/backend/services/sns-studio/common-publishing.service';
+import { ProviderPublishPreCreateProtection } from '@gitroom/backend/services/posts/provider-publish-pre-create-protection.service';
 
 @ApiTags('Posts')
 @Controller('/posts')
@@ -41,7 +46,9 @@ export class PostsController {
   constructor(
     private _postsService: PostsService,
     private _agentGraphService: AgentGraphService,
-    private _shortLinkService: ShortLinkService
+    private _shortLinkService: ShortLinkService,
+    private _commonPublishingService: CommonPublishingService,
+    private _providerPublishPreCreateProtection: ProviderPublishPreCreateProtection
   ) {}
 
   @Get('/:id/statistics')
@@ -236,8 +243,54 @@ export class PostsController {
       }
     }
 
+    const contentPlanId =
+      typeof rawBody?.snsStudioContentPlanId === 'string'
+        ? rawBody.snsStudioContentPlanId
+        : undefined;
+    let commonMode: CommonPublishMode | undefined;
+
+    if (contentPlanId) {
+      if (rawBody.type === 'update') {
+        throw new HttpException(
+          { code: 'COMMON_PLAN_UPDATE_UNSUPPORTED' },
+          400
+        );
+      }
+      commonMode =
+        rawBody.type === 'draft'
+          ? 'draft'
+          : rawBody.type === 'now'
+            ? 'now'
+            : 'schedule';
+      await this._commonPublishingService.assertPlanAllowsPost(
+        org.id,
+        contentPlanId,
+        commonMode,
+        rawBody?.posts || []
+      );
+    }
+
     const body = await this._postsService.mapTypeToPost(rawBody, org.id);
-    return this._postsService.createPost(org.id, body, 'WEB');
+    return this._providerPublishPreCreateProtection.run(
+      {
+        organizationId: org.id,
+        type: body.type,
+        publishDate: body.date,
+        contentPlanId,
+        posts: body.posts,
+      },
+      async (posts) => {
+        if (contentPlanId && commonMode) {
+          await this._commonPublishingService.assertPlanAllowsPost(
+            org.id,
+            contentPlanId,
+            commonMode,
+            posts
+          );
+        }
+      },
+      () => this._postsService.createPost(org.id, body, 'WEB')
+    );
   }
 
   @Post('/generator/draft')

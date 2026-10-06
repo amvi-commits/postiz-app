@@ -1,0 +1,520 @@
+{
+  "version": 2,
+  "findings": [
+    {
+      "path": ".env.example",
+      "rule": "cloudflare-api-key",
+      "startLine": 17,
+      "endLine": 17,
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "4552f88950739e776786c38be335f5445c3e7f84:.env.example:cloudflare-api-key:17:17"
+      ],
+      "currentBlobSha": "71b3d0324d318e342e336e9b3e136391275b4884",
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
+    },
+    {
+      "path": ".env.example",
+      "rule": "cloudflare-api-key",
+      "startLine": 26,
+      "endLine": 26,
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "6224634dcb125d08651d8b5217c3881b90a9323d:.env.example:cloudflare-api-key:26:26"
+      ],
+      "currentBlobSha": "71b3d0324d318e342e336e9b3e136391275b4884",
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 24,
+      "endLine": 24,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:24:24"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 27,
+      "endLine": 27,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:27:27"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 30,
+      "endLine": 30,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:30:30"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
+    },
+    {
+      "path": "README.md",
+      "rule": "generic-api-key",
+      "startLine": 33,
+      "endLine": 33,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact README line embeds a public HTTPS image/badge URL; the match is URL content, not a credential.",
+      "fingerprints": [
+        "b8c72002150bbcfb844e9b275b78c2bd9bf94851:README.md:generic-api-key:33:33"
+      ],
+      "currentBlobSha": "54a9d9d9d98fa61678d48e83966210325a4c14a7"
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 25,
+      "endLine": 25,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [
+        "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:25:25"
+      ],
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 26,
+      "endLine": 26,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [
+        "bff153fbc12251c8f7f9c5bdf9c64c5217d81f87:apps/backend/src/services/sns-studio/account-protection.spec.ts:generic-api-key:26:26"
+      ],
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 56,
+      "endLine": 56,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [],
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
+    },
+    {
+      "path": "apps/backend/src/services/sns-studio/account-protection.spec.ts",
+      "rule": "generic-api-key",
+      "startLine": 57,
+      "endLine": 57,
+      "classification": "SYNTHETIC_TEST_FIXTURE",
+      "reason": "This exact test line supplies synthetic profile/account identifiers to a browser-profile binding assertion; it is not sent to a provider.",
+      "fingerprints": [],
+      "currentBlobSha": "5f705964d67518ea92b75af3155f74cba81d748e"
+    },
+    {
+      "path": "apps/docs/installation/development.mdx",
+      "rule": "cloudflare-api-key",
+      "startLine": 99,
+      "endLine": 99,
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "75648cd90bd8748e0a091b6bf52942d91c159c96:apps/docs/installation/development.mdx:cloudflare-api-key:99:99"
+      ],
+      "exposureType": "CLOUDFLARE_CREDENTIAL_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
+    },
+    {
+      "path": "apps/frontend/src/components/launches/polonto.tsx",
+      "rule": "generic-api-key",
+      "startLine": 14,
+      "endLine": 14,
+      "classification": "FALSE_POSITIVE",
+      "reason": "This exact value is the UI state-store namespace passed as createStore({ key }); it is not an authentication credential.",
+      "fingerprints": [
+        "150b873b03916b9fdf950160c00dab4cf4612364:apps/frontend/src/components/launches/polonto.tsx:generic-api-key:14:14"
+      ],
+      "currentBlobSha": "cb3305a22a321bda12733641f6dd4cd9f07c17c6"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "discord-client-secret",
+      "startLine": 141,
+      "endLine": 141,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:discord-client-secret:141:141"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "discord-client-secret",
+      "startLine": 149,
+      "endLine": 149,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 42,
+      "endLine": 42,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:42:42"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 48,
+      "endLine": 48,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 226,
+      "endLine": 226,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:226:226"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 242,
+      "endLine": 242,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 276,
+      "endLine": 276,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:276:276"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 277,
+      "endLine": 277,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:277:277"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 278,
+      "endLine": 278,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:278:278"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 280,
+      "endLine": 280,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:280:280"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 281,
+      "endLine": 281,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:281:281"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 292,
+      "endLine": 292,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 293,
+      "endLine": 293,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 294,
+      "endLine": 294,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 296,
+      "endLine": 296,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 297,
+      "endLine": 297,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 349,
+      "endLine": 349,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:349:349"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 363,
+      "endLine": 363,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:363:363"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 365,
+      "endLine": 365,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:365:365"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 379,
+      "endLine": 379,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 381,
+      "endLine": 381,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 410,
+      "endLine": 410,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "44d64361b090fe410e0253333bfd65b22cc178c5:i18n.lock:generic-api-key:410:410"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 426,
+      "endLine": 426,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 580,
+      "endLine": 580,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "cd085e27cab868c82634d800b3876d41ef7e6ab9:i18n.lock:generic-api-key:580:580"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 616,
+      "endLine": 616,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 710,
+      "endLine": 710,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:710:710"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 712,
+      "endLine": 712,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:712:712"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 714,
+      "endLine": 714,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 716,
+      "endLine": 716,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 717,
+      "endLine": 717,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [
+        "2c2f788e1262fff1d13d0cf76bb9b51c0747b01d:i18n.lock:generic-api-key:717:717"
+      ],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "i18n.lock",
+      "rule": "generic-api-key",
+      "startLine": 721,
+      "endLine": 721,
+      "classification": "GENERATED_OR_VENDOR",
+      "reason": "This exact localization-lock entry is a generated 32-character translation key digest; it is not an authentication credential.",
+      "fingerprints": [],
+      "currentBlobSha": "6f5597c7db531a8bdf72919424e388ecc4dd461c"
+    },
+    {
+      "path": "sonar-project.properties",
+      "rule": "sonar-api-token",
+      "startLine": 12,
+      "endLine": 12,
+      "classification": "HISTORICAL_TRUE_SECRET",
+      "reason": "Historical credential exposure confirmed; current-tree status was independently checked and is sanitized or absent. Values withheld; credential rotation status requires operator confirmation.",
+      "fingerprints": [
+        "313830806627da9d4df541cc97945512f5175cec:sonar-project.properties:sonar-api-token:12:12",
+        "39f617a54aa8a6b2e690824e62481d41f0275863:sonar-project.properties:sonar-api-token:12:12"
+      ],
+      "currentBlobSha": "5f07148dc6b5ed1551c44a8b79b97b386c1c48c3",
+      "exposureType": "SONAR_TOKEN_HISTORY",
+      "historyRewriteStatus": "NOT_PERFORMED"
+    },
+    {
+      "path": "apps/frontend/src/components/agents/agent.tsx",
+      "rule": "generic-api-key",
+      "startLine": 236,
+      "endLine": 236,
+      "classification": "FALSE_POSITIVE",
+      "reason": "CopilotKit publicApiKey is documented and used as a public frontend identifier",
+      "evidence": "https://github.com/CopilotKit/CopilotKit/blob/cc24b7128ca2d5edc62076f2875b9d50a2c0a981/packages/react-core/src/v1-deprecated/components/copilot-provider/copilotkit-props.tsx",
+      "fingerprints": [
+        "73ba9acf8c537e7fffb55ad76888597e6c36f81a:apps/frontend/src/components/agents/agent.tsx:generic-api-key:236:236"
+      ],
+      "currentBlobSha": "af6d3af63471505fd518c48cd421626f8f750098"
+    }
+  ]
+}

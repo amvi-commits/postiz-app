@@ -1,0 +1,20 @@
+# Apply after the dedicated 4017 runtime compose and its Unified override.
+# Reuse the audited existing media volume; never create or migrate a volume here.
+#
+# Runtime identity SSOT: the dedicated runtime's .env.integration (passed to
+# Compose with --env-file by scripts/windows/start-sns-studio.ps1).
+# Keys are documented in scripts/windows/integration-runtime-identity.example.env.
+# Missing values fail closed; there is no fallback to a previously known tag
+# or to a legacy volume name.
+services:
+  postiz-integration:
+    image: ${SNS_STUDIO_INTEGRATION_IMAGE:?SNS_STUDIO_INTEGRATION_IMAGE is not set in the runtime identity SSOT (.env.integration)}
+    volumes:
+      - postiz-uploads:/uploads
+  sns-media-worker:
+    image: ${SNS_STUDIO_MEDIA_WORKER_IMAGE:?SNS_STUDIO_MEDIA_WORKER_IMAGE is not set in the runtime identity SSOT (.env.integration)}
+
+volumes:
+  postiz-uploads:
+    external: true
+    name: ${SNS_STUDIO_UPLOADS_VOLUME:?SNS_STUDIO_UPLOADS_VOLUME is not set in the runtime identity SSOT (.env.integration)}

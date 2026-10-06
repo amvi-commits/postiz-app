@@ -8,9 +8,9 @@ services:
     restart: always
     environment:
       # === Required Settings
-      MAIN_URL: 'http://localhost:4007'
-      FRONTEND_URL: 'http://localhost:4007'
-      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:4007/api'
+      MAIN_URL: 'http://localhost:4017'
+      FRONTEND_URL: 'http://localhost:4017'
+      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:4017/api'
       JWT_SECRET: '${JWT_SECRET:?Set JWT_SECRET in .env}'
       DATABASE_URL: 'postgresql://postiz-user:postiz-password@postiz-postgres:5432/postiz-db-local'
       REDIS_URL: 'redis://postiz-redis:6379'
@@ -49,12 +49,12 @@ services:
       APPLE_PRIVATE_KEY: ''
       BEEHIIVE_API_KEY: ''
       BEEHIIVE_PUBLICATION_ID: ''
-      THREADS_APP_ID: ''
-      THREADS_APP_SECRET: ''
+      THREADS_APP_ID: '${THREADS_APP_ID:-}'
+      THREADS_APP_SECRET: '${THREADS_APP_SECRET:-}'
       FACEBOOK_APP_ID: ''
       FACEBOOK_APP_SECRET: ''
-      YOUTUBE_CLIENT_ID: ''
-      YOUTUBE_CLIENT_SECRET: ''
+      YOUTUBE_CLIENT_ID: '${YOUTUBE_CLIENT_ID:-}'
+      YOUTUBE_CLIENT_SECRET: '${YOUTUBE_CLIENT_SECRET:-}'
       TIKTOK_CLIENT_ID: ''
       TIKTOK_CLIENT_SECRET: ''
       TIKTOK_BUSINESS_CLIENT_ID: ''
@@ -113,12 +113,15 @@ services:
       # SNS Studio local workers
       INSTAGRAM_WORKER_URL: 'http://sns-instagram-worker:8000'
       MEDIA_WORKER_URL: 'http://sns-media-worker:8001'
+      THREADS_PUBLISH_TRANSPORT: '${THREADS_PUBLISH_TRANSPORT:-official_api}'
+      THREADS_BROWSER_SERVICE_URL: '${THREADS_BROWSER_SERVICE_URL:-http://threads-browser-worker:8017}'
+      THREADS_BROWSER_SERVICE_KEY: '${THREADS_BROWSER_SERVICE_KEY:-}'
       SNS_STUDIO_SERVICE_TOKEN: '${SNS_STUDIO_SERVICE_TOKEN:?Set SNS_STUDIO_SERVICE_TOKEN in .env}'
       SNS_STUDIO_DATA_DIR: '/sns-studio-data'
       SNS_STUDIO_GOOGLE_DRIVE_MOCK: '${SNS_STUDIO_GOOGLE_DRIVE_MOCK:-false}'
       GOOGLE_DRIVE_CLIENT_ID: '${GOOGLE_DRIVE_CLIENT_ID:-}'
       GOOGLE_DRIVE_CLIENT_SECRET: '${GOOGLE_DRIVE_CLIENT_SECRET:-}'
-      GOOGLE_DRIVE_REDIRECT_URI: '${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:4007/api/sns-studio/drive/callback}'
+      GOOGLE_DRIVE_REDIRECT_URI: '${GOOGLE_DRIVE_REDIRECT_URI:-http://localhost:4017/api/sns-studio/drive/callback}'
       GOOGLE_DRIVE_TOKEN_KEY: '${GOOGLE_DRIVE_TOKEN_KEY:-}'
 
       # === Short Link Service Settings (Optional - leave blank if unused)
@@ -139,7 +142,7 @@ services:
       - sns-studio-data:/sns-studio-data
       - ./.env:/app/.env:ro
     ports:
-      - '127.0.0.1:4007:5000'
+      - '127.0.0.1:4017:5000'
     networks:
       - postiz-network
       - temporal-network
@@ -193,6 +196,28 @@ services:
       - voicevox
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  threads-browser-worker:
+    build:
+      context: ./services/threads-browser-worker
+    container_name: threads-browser-worker
+    restart: unless-stopped
+    ports:
+      - '8017:8017'
+    volumes:
+      - ./services/threads-browser-worker/sessions:/app/sessions
+      - ./services/threads-browser-worker/diagnostics:/app/diagnostics
+    environment:
+      THREADS_BROWSER_SERVICE_HOST: '0.0.0.0'
+      THREADS_BROWSER_SERVICE_PORT: '8017'
+      THREADS_BROWSER_SERVICE_KEY: '${THREADS_BROWSER_SERVICE_KEY:-}'
+    networks:
+      - postiz-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8017/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 10

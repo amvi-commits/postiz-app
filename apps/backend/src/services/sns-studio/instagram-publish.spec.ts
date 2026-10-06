@@ -1,6 +1,18 @@
 import { HttpException } from '@nestjs/common';
 import { SnsStudioController } from '../../api/routes/sns-studio.controller';
 
+jest.mock('isomorphic-dompurify', () => ({
+  __esModule: true,
+  default: { sanitize: (value: any) => value },
+  sanitize: (value: any) => value,
+}));
+jest.mock('nostr-tools', () => ({
+  getPublicKey: jest.fn(),
+  Relay: jest.fn(),
+  finalizeEvent: jest.fn(),
+  SimplePool: jest.fn(),
+}));
+jest.mock('file-type', () => ({ fileTypeFromBuffer: jest.fn() }));
 jest.mock(
   '@gitroom/nestjs-libraries/user/org.from.request',
   () => ({ GetOrgFromRequest: () => () => undefined }),
@@ -9,6 +21,21 @@ jest.mock(
 jest.mock(
   '@gitroom/nestjs-libraries/database/prisma/prisma.service',
   () => ({ PrismaService: class PrismaService {} }),
+  { virtual: true },
+);
+jest.mock(
+  '@gitroom/nestjs-libraries/database/prisma/media/media.service',
+  () => ({ MediaService: class MediaService {} }),
+  { virtual: true },
+);
+jest.mock(
+  '@gitroom/nestjs-libraries/upload/upload.factory',
+  () => ({ UploadFactory: { createStorage: jest.fn(() => ({})) } }),
+  { virtual: true },
+);
+jest.mock(
+  '@gitroom/nestjs-libraries/upload/custom.upload.validation',
+  () => ({ uploadStreamToStorage: jest.fn() }),
   { virtual: true },
 );
 jest.mock('@gitroom/helpers/utils/shuffle-bag', () => ({ chooseShuffleBagItem: jest.fn() }), { virtual: true });
@@ -26,7 +53,7 @@ describe('SnsStudioController.publishReel failure handling', () => {
         update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockRejectedValue(new HttpException({ code: 'IG_UPLOAD_FAILED' }, 502));
     (controller as any).account = jest.fn().mockResolvedValue({ id: 'account-1' });
     (controller as any).preflightReel = jest.fn().mockResolvedValue({ ready: true, warnings: [] });
@@ -60,6 +87,69 @@ describe('SnsStudioController.publishReel failure handling', () => {
   });
 });
 
+describe('SnsStudioController.publishStory failure handling', () => {
+  it('creates one FAILED Story record and calls the Instagram Worker once', async () => {
+    const publishRecord = { id: 'story-record-1' };
+    const prisma = {
+      snsInstagramAccount: { update: jest.fn().mockResolvedValue({}) },
+      snsMediaAsset: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      snsPublishRecord: {
+        create: jest.fn().mockResolvedValue(publishRecord),
+        update: jest.fn().mockResolvedValue({ ...publishRecord, status: 'FAILED' }),
+      },
+    };
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
+    const body = {
+      accountId: 'account-1',
+      mediaPath: '/uploads/story.mp4',
+      mediaType: 'video',
+      linkUrl: 'https://example.com/',
+      sticker: { x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0 },
+    };
+    const worker = jest.fn().mockRejectedValue(
+      new HttpException({ code: 'IG_STORY_UPLOAD_FAILED', message: 'Instagram Story upload did not complete.' }, 502),
+    );
+    (controller as any).account = jest.fn().mockResolvedValue({ id: 'account-1', username: 'lovenight_8r' });
+    (controller as any).preflightStory = jest.fn().mockResolvedValue({ ready: true, warnings: [] });
+    (controller as any).worker = worker;
+
+    let thrown: unknown;
+    try {
+      await controller.publishStory({ id: 'org-1' } as any, body as any);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(HttpException);
+    expect((thrown as HttpException).getStatus()).toBe(502);
+    expect((thrown as HttpException).getResponse()).toEqual({
+      code: 'IG_STORY_UPLOAD_FAILED',
+      message: 'Instagram Story upload did not complete.',
+    });
+    expect(worker).toHaveBeenCalledTimes(1);
+    expect(worker).toHaveBeenCalledWith('/publish/story', 'POST', body);
+    expect(prisma.snsPublishRecord.create).toHaveBeenCalledTimes(1);
+    expect(prisma.snsPublishRecord.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accountId: 'account-1',
+        mediaPath: body.mediaPath,
+        publishType: 'STORY',
+        status: 'PUBLISHING',
+        variantSettings: {
+          sticker: body.sticker,
+          mediaType: 'video',
+          linkUrl: body.linkUrl,
+        },
+      }),
+    });
+    expect(prisma.snsPublishRecord.update).toHaveBeenCalledTimes(1);
+    expect(prisma.snsPublishRecord.update).toHaveBeenCalledWith({
+      where: { id: 'story-record-1' },
+      data: expect.objectContaining({ status: 'FAILED', errorCode: 'IG_STORY_UPLOAD_FAILED' }),
+    });
+  });
+});
+
 describe('SnsStudioController.listAccounts organization scope', () => {
   const accounts: Array<{
     id: string;
@@ -86,7 +176,7 @@ describe('SnsStudioController.listAccounts organization scope', () => {
         ),
       },
     };
-    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any);
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, { run: (_context: any, operation: () => Promise<any>) => operation() } as any, {} as any, {} as any, {} as any, {} as any);
     const worker = jest.fn().mockResolvedValue({ status: 'GREEN', session: 'VALID' });
     (controller as any).worker = worker;
     return { controller, prisma, worker };
@@ -121,5 +211,89 @@ describe('SnsStudioController.listAccounts organization scope', () => {
     expect(worker).toHaveBeenCalledTimes(1);
     expect(worker).toHaveBeenCalledWith('/accounts/group-account-1/health');
     expect(worker.mock.calls.some(([path]) => /\/accounts\/login|\/publish\/reel/.test(path))).toBe(false);
+  });
+});
+
+describe('SnsStudioController.preflightStory read-only behavior', () => {
+  const body = {
+    accountId: 'account-1',
+    mediaPath: '/uploads/story.mp4',
+    mediaType: 'video',
+    linkUrl: 'https://example.com/',
+    sticker: { x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0 },
+  };
+
+  const createController = (healthStatus = 'GREEN') => {
+    const prisma = {
+      snsInstagramAccount: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'account-1', username: 'lovenight_8r', status: 'ACTIVE' }),
+        update: jest.fn(),
+      },
+      snsPublishRecord: { create: jest.fn(), update: jest.fn() },
+    };
+    const mediaWorker = jest.fn().mockResolvedValue({
+      kind: 'video', sizeBytes: 123381, durationSeconds: 3.675,
+      video: { width: 1080, height: 1920, codec: 'h264' }, hasAudio: true,
+    });
+    const worker = jest.fn((path: string) => Promise.resolve(
+      path === '/media/preflight/story'
+        ? { ready: true, errors: [], warnings: [], visual: { text: 'OPEN LINK\nexample.com', decode: 'PASS' } }
+        : { status: healthStatus, session: 'VALID' },
+    ));
+    // prisma, googleDrive, generationProvider, mediaService, accountProtection,
+    // captionProvider, tiktokPublishAdapter, tiktokAnalyticsAdapter, tiktokStatusAdapter
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    (controller as any).mediaWorker = mediaWorker;
+    (controller as any).worker = worker;
+    return { controller, prisma, mediaWorker, worker };
+  };
+
+  it('probes the media and session without creating a publish record or calling Worker publish', async () => {
+    const { controller, prisma, mediaWorker, worker } = createController();
+
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+
+    expect(result.ready).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.account).toEqual({ id: 'account-1', username: 'lovenight_8r', status: 'GREEN' });
+    expect(mediaWorker).toHaveBeenCalledWith('/probe', 'POST', { path: body.mediaPath });
+    expect(worker).toHaveBeenCalledWith('/accounts/account-1/health');
+    expect(worker).toHaveBeenCalledWith('/media/preflight/story', 'POST', body);
+    expect(result.visual?.text).toBe('OPEN LINK\nexample.com');
+    expect(worker.mock.calls.map(([path]) => path)).not.toContain('/publish/story');
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(prisma.snsPublishRecord.update).not.toHaveBeenCalled();
+    expect(prisma.snsInstagramAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('returns a hard error for unhealthy session and still creates no publish record', async () => {
+    const { controller, prisma, worker } = createController('YELLOW');
+
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+
+    expect(result.ready).toBe(false);
+    expect(result.errors).toContain('INSTAGRAM_SESSION_NOT_HEALTHY');
+    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/media/preflight/story', '/accounts/account-1/health']);
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(prisma.snsInstagramAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('stops on visual render failure or invalid hostname without creating a publish record', async () => {
+    const { controller, prisma, worker } = createController();
+    worker.mockImplementation((path: string) => Promise.resolve(
+      path === '/media/preflight/story'
+        ? { ready: false, errors: ['IG_STORY_VISUAL_RENDER_FAILED'], warnings: [], visual: null }
+        : { status: 'GREEN', session: 'VALID' },
+    ) as any);
+    const result = await controller.preflightStory({ id: 'org-1' } as any, body as any);
+    expect(result.ready).toBe(false);
+    expect(result.errors).toContain('IG_STORY_VISUAL_RENDER_FAILED');
+    expect(prisma.snsPublishRecord.create).not.toHaveBeenCalled();
+    expect(worker.mock.calls.map(([path]) => path)).toEqual(['/media/preflight/story']);
+
+    worker.mockClear();
+    const invalid = await controller.preflightStory({ id: 'org-1' } as any, { ...body, linkUrl: 'https:///' } as any);
+    expect(invalid.errors).toContain('STORY_LINK_URL_INVALID');
+    expect(worker).not.toHaveBeenCalled();
   });
 });

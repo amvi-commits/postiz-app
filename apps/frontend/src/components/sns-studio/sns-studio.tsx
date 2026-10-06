@@ -5,9 +5,39 @@ import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
 import { useUser } from '@gitroom/frontend/components/layout/user.context';
+import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
+import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
+import { ThreadsWorkspace } from '@gitroom/frontend/components/sns-studio/threads/threads-workspace';
+import { AddProviderComponent, useAddProvider } from '@gitroom/frontend/components/launches/add.provider.component';
+import { useModals } from '@gitroom/frontend/components/layout/new-modal';
+import { useIntegrationList } from '@gitroom/frontend/components/launches/helpers/use.integration.list';
+import { CommonDeliveryWorkspace } from '@gitroom/frontend/components/sns-studio/common-delivery-workspace';
+import { navigationForTab, platforms, platformSections, type Platform, type Tab } from './studio-navigation';
+import {
+  createStoryPreflightPayload,
+  getStoryPreflightVerdict,
+  requestStoryPreflight,
+  StoryPreflightInputError,
+  type StoryPreflightResult,
+} from '@gitroom/helpers/utils/sns-studio-story-preflight';
 
-type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings';
+type ProviderIntegration = { id: string; name: string; identifier: string; display?: string | null; disabled?: boolean; refreshNeeded?: boolean };
 type Account = { id: string; username: string; status: string; healthStatus?: string; health?: { session?: string; sessionStatus?: string; loginState?: string; requiresAction?: boolean; errorCode?: string | null }; proxyConfigured?: boolean | null; lastError?: string | null; captionAIEnabled?: boolean; lastValidatedAt?: string | null; lastPublishedAt?: string | null; defaultStoryPoolId?: string | null; defaultStickerX?: number | null; defaultStickerY?: number | null; defaultStickerWidth?: number | null; defaultStickerHeight?: number | null; defaultStickerRotation?: number | null; defaultStoryPool?: { id: string; name: string } | null };
+type TikTokAccount = {
+  id: string; // Integration.id
+  integrationId: string;
+  providerIdentifier: string; // 'tiktok' | 'tiktok-business'
+  platform: 'tiktok' | string;
+  accountType: 'personal' | 'business';
+  username: string;
+  displayName?: string | null;
+  picture?: string | null;
+  status: 'ACTIVE' | 'DISCONNECTED' | 'NEEDS_USER_ACTION' | string;
+  tokenExpired?: boolean;
+  duplicateWindowDays: number;
+  lastValidatedAt?: string | null;
+  lastPublishedAt?: string | null;
+};
 type OrganizationSummary = { id: string; name: string };
 type UrlItem = { id: string; name: string; url: string; note?: string | null; active: boolean };
 type Pool = { id: string; name: string; items: Array<{ id: string; mediaPath: string; mediaType: string; urlSnapshot?: string | null; urlLibrary?: UrlItem | null }> };
@@ -15,8 +45,8 @@ type Recipe = { id: string; name: string; inputType: string; config: Record<stri
 type PublishRecord = { id: string; publishType: string; status: string; postUrl?: string | null; mediaId?: string | null; publishedAt?: string | null; errorCode?: string | null; account: { username: string }; snapshots?: Array<{ metrics?: Record<string, unknown> | null }> };
 type ReelPreflightProbe = { kind?: string; sizeBytes?: number; durationSeconds?: number; video?: { codec?: string; width?: number; height?: number }; hasAudio?: boolean };
 type ReelPreflightResult = { ready: boolean; errors: string[]; warnings: string[]; account: { id: string; username: string; status: string }; media: ReelPreflightProbe | null; thumbnail?: ReelPreflightProbe | null; trialEligible: boolean | null };
+type StoryPreflightState = { inputKey: string; result: StoryPreflightResult };
 
-const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field = 'w-full rounded-lg border border-blockSeparator bg-newBgColorInner px-3 py-2 text-newTextColor outline-none focus:border-[#7774ff]';
 const primaryButton = 'rounded-lg bg-[#5145ff] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
@@ -32,7 +62,23 @@ export const SnsStudio = () => {
   const fetch = useFetch();
   const { backendUrl } = useVariables();
   const user = useUser();
+  const modal = useModals();
   const [activeTab, setActiveTab] = useState<Tab>('Dashboard');
+  const [activePlatform, setActivePlatform] = useState<Platform>('common');
+  const [activeSection, setActiveSection] = useState('Dashboard');
+  const activateSection = (platform: Platform, label: string) => {
+    const section = platformSections[platform].find((item) => item.label === label);
+    if (!section) return;
+    setActivePlatform(platform);
+    setActiveSection(label);
+    setActiveTab(section.tab);
+  };
+  useEffect(() => {
+    if (platformSections[activePlatform].some((item) => item.tab === activeTab && item.label === activeSection)) return;
+    const next = navigationForTab(activeTab, activePlatform);
+    setActivePlatform(next.platform);
+    setActiveSection(next.section);
+  }, [activeTab, activePlatform, activeSection]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [accountForm, setAccountForm] = useState({ username: '', password: '', proxy: '' });
@@ -41,6 +87,7 @@ export const SnsStudio = () => {
   const [reelForm, setReelForm] = useState({ accountId: '', videoPath: '', caption: '', thumbnailPath: '', trialReel: false, pipelineRunId: '' });
   const [reelPreflight, setReelPreflight] = useState<{ inputKey: string; result: ReelPreflightResult } | null>(null);
   const [storyForm, setStoryForm] = useState({ accountId: '', mediaPath: '', mediaType: 'image', linkUrl: '', x: 0.5, y: 0.5, width: 0.51, height: 0.26, rotation: 0, pipelineRunId: '' });
+  const [storyPreflight, setStoryPreflight] = useState<StoryPreflightState | null>(null);
   const [poolForm, setPoolForm] = useState({ name: '', description: '' });
   const [poolItemForm, setPoolItemForm] = useState({ poolId: '', mediaPath: '', mediaType: 'image', urlLibraryId: '' });
   const [urlForm, setUrlForm] = useState({ name: '', url: '', note: '' });
@@ -50,6 +97,7 @@ export const SnsStudio = () => {
   const [renderForm, setRenderForm] = useState({ sourcePath: '', trimStartSeconds: 0, trimEndSeconds: 0, playbackSpeed: 1, cropPercent: 100, bgmPath: '', bgmVolume: 0.15, sourceAudioVolume: 1, subtitlesPath: '', textOverlay: '', textX: 0.5, textY: 0.8, textFontSize: 64 });
   const [variantForm, setVariantForm] = useState({ sourcePath: '', count: 3, settings: '{\n  "playbackSpeed": {"enabled": true, "min": 0.96, "max": 1.04},\n  "trimStartSeconds": {"enabled": false, "min": 0, "max": 1.5},\n  "trimEndSeconds": {"enabled": false, "min": 0, "max": 1},\n  "cropPercent": {"enabled": false, "min": 95, "max": 100}\n}' });
   const [variantResults, setVariantResults] = useState<any[]>([]);
+  const [commonPostPrefill, setCommonPostPrefill] = useState<CommonPublishPrefill | null>(null);
   const [comicPages, setComicPages] = useState('[\n  {\n    "imagePath": "/uploads/page-01.png",\n    "dialogues": [\n      {"speakerSlot": "FEMALE_1", "text": "最初のセリフ"},\n      {"speakerSlot": "MALE_1", "text": "次のセリフ"}\n    ]\n  }\n]');
   const [comicEditingPresetId, setComicEditingPresetId] = useState('');
   const [concatPaths, setConcatPaths] = useState('[\n  "/uploads/clip-01.mp4",\n  "/uploads/clip-02.mp4"\n]');
@@ -104,10 +152,91 @@ export const SnsStudio = () => {
   const { data: editingPresets = [], mutate: refreshEditingPresets } = useSWR<any[]>('/sns-studio/editing-presets', load);
   const { data: voicePresets = [], mutate: refreshVoicePresets } = useSWR<any[]>('/sns-studio/voice-presets', load);
   const { data: generationJobs = [], mutate: refreshGenerationJobs } = useSWR<any[]>('/sns-studio/generation/jobs', load);
+  // TikTok accounts synced from Postiz Integration + SnsAppSetting adapter
+  const { data: tiktokAccounts = [], mutate: refreshTikTokAccounts } = useSWR<TikTokAccount[]>('/sns-studio/tiktok/accounts', load);
+  // Local edits for TikTok account settings (before saving)
+  const [tiktokAccountEdits, setTikTokAccountEdits] = useState<Record<string, Partial<TikTokAccount>>>({});
+  // Reusable Postiz Add Provider modal (for TikTok OAuth)
+  const connectTikTok = useAddProvider(refreshTikTokAccounts);
+  const { data: providerIntegrations, error: providerIntegrationsError, mutate: refreshProviderIntegrations } = useIntegrationList();
+  const youtubeIntegrations = ((providerIntegrations || []) as ProviderIntegration[]).filter((integration) => integration.identifier === 'youtube');
+  const openYoutubeConnect = useCallback(async () => {
+    setMessage('');
+    try {
+      const providers = await request('/integrations');
+      const youtube = (providers?.social || []).filter((provider: { identifier: string }) => provider.identifier === 'youtube');
+      if (!youtube.length) return setMessage('PostizのSocial Integration一覧にYouTubeがありません。');
+      modal.openModal({
+        title: 'YouTubeチャンネルを接続',
+        withCloseButton: true,
+        children: <AddProviderComponent social={youtube} article={providers?.article || []} invite={false} update={() => void refreshProviderIntegrations()} />,
+      });
+    } catch {
+      setMessage('PostizのSocial Integration一覧を取得できませんでした。');
+    }
+  }, [modal, request, refreshProviderIntegrations]);
+
+  const { data: mediaAssets = [], mutate: refreshMediaAssets } = useSWR<any[]>('/sns-studio/media-assets', load);
+  const [reelPreviewError, setReelPreviewError] = useState(false);
+  const [storyPreviewError, setStoryPreviewError] = useState(false);
+
+  const availableVideoAssets = useMemo(() => {
+    const list: Array<{ storageKey: string; label: string }> = [];
+    const seen = new Set<string>();
+    for (const a of mediaAssets) {
+      if (a.storageKey && !seen.has(a.storageKey) && (a.mimeType?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(a.storageKey))) {
+        seen.add(a.storageKey);
+        list.push({ storageKey: a.storageKey, label: a.fileName || a.storageKey });
+      }
+    }
+    for (const item of (inbox || [])) {
+      const key = item.mediaAsset?.storageKey;
+      if (key && !seen.has(key) && item.mediaType === 'video') {
+        seen.add(key);
+        list.push({ storageKey: key, label: item.fileName || key });
+      }
+    }
+    for (const q of (queue || [])) {
+      const key = q.output?.mediaPath;
+      if (key && !seen.has(key) && (q.output?.mediaType === 'video' || /\.(mp4|mov|webm)$/i.test(key))) {
+        seen.add(key);
+        list.push({ storageKey: key, label: `Queue: ${q.recipe?.name || 'Rendered'} (${key.split('/').pop()})` });
+      }
+    }
+    return list;
+  }, [mediaAssets, inbox, queue]);
+
+  const availableStoryAssets = useMemo(() => {
+    const list: Array<{ storageKey: string; label: string; mediaType: 'image' | 'video' }> = [];
+    const seen = new Set<string>();
+    for (const a of mediaAssets) {
+      if (a.storageKey && !seen.has(a.storageKey)) {
+        seen.add(a.storageKey);
+        const isVideo = a.mimeType?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(a.storageKey);
+        list.push({ storageKey: a.storageKey, label: a.fileName || a.storageKey, mediaType: isVideo ? 'video' : 'image' });
+      }
+    }
+    for (const item of (inbox || [])) {
+      const key = item.mediaAsset?.storageKey;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push({ storageKey: key, label: item.fileName || key, mediaType: item.mediaType === 'video' ? 'video' : 'image' });
+      }
+    }
+    for (const q of (queue || [])) {
+      const key = q.output?.mediaPath;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        const isVideo = q.output?.mediaType === 'video' || /\.(mp4|mov|webm)$/i.test(key);
+        list.push({ storageKey: key, label: `Queue: ${q.recipe?.name || 'Rendered'} (${key.split('/').pop()})`, mediaType: isVideo ? 'video' : 'image' });
+      }
+    }
+    return list;
+  }, [mediaAssets, inbox, queue]);
 
   const refresh = useCallback(async () => {
-    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs()]);
-  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs]);
+    await Promise.all([refreshDashboard(), refreshAccounts(), refreshUrls(), refreshPools(), refreshRecipes(), refreshInbox(), refreshMediaAssets(), refreshQueue(), refreshRecords(), refreshDrive(), refreshDriveFolders(), refreshSettings(), refreshEditingPresets(), refreshVoicePresets(), refreshGenerationJobs(), refreshTikTokAccounts(), refreshProviderIntegrations()]);
+  }, [refreshDashboard, refreshAccounts, refreshUrls, refreshPools, refreshRecipes, refreshInbox, refreshMediaAssets, refreshQueue, refreshRecords, refreshDrive, refreshDriveFolders, refreshSettings, refreshEditingPresets, refreshVoicePresets, refreshGenerationJobs, refreshTikTokAccounts, refreshProviderIntegrations]);
 
   const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -225,6 +354,68 @@ export const SnsStudio = () => {
   }), [reelForm.accountId, reelForm.videoPath, reelForm.caption, reelForm.thumbnailPath, reelForm.trialReel, defaultAccount]);
   const reelPreflightInputKey = JSON.stringify(reelPreflightBody);
   const reelPreflightReady = reelPreflight?.inputKey === reelPreflightInputKey && reelPreflight.result.ready;
+  const storyPreflightPayload = useMemo(
+    () => createStoryPreflightPayload(storyForm, defaultAccount),
+    [storyForm.accountId, storyForm.mediaPath, storyForm.mediaType, storyForm.linkUrl, storyForm.x, storyForm.y, storyForm.width, storyForm.height, storyForm.rotation, defaultAccount],
+  );
+  const storyPreflightInputKey = JSON.stringify(storyPreflightPayload);
+
+  const bridgeMediaAsset = useCallback(async (mediaAssetId: string) => {
+    if (!mediaAssetId) {
+      throw new Error('共通投稿へ渡せるSNS Studio素材がありません。');
+    }
+    const result = await request(
+      `/sns-studio/media-assets/${mediaAssetId}/post-media`,
+      { method: 'POST' }
+    );
+    if (!result?.media?.id || !result?.media?.path) {
+      throw new Error('共通投稿用Mediaの作成に失敗しました。');
+    }
+    return {
+      sourceAssetId: result.sourceAssetId as string,
+      media: {
+        id: result.media.id as string,
+        path: result.media.path as string,
+      },
+    };
+  }, [request]);
+
+  const openMediaAssetInCommonPublisher = useCallback(async (mediaAssetId: string) => {
+    const bridged = await bridgeMediaAsset(mediaAssetId);
+    setCommonPostPrefill({
+      ...bridged,
+      defaultVariantAssetId: bridged.sourceAssetId,
+    });
+    setActiveTab('Publish');
+  }, [bridgeMediaAsset]);
+
+  const openVariantSetInCommonPublisher = useCallback(async (variants: any[]) => {
+    const bridged = await Promise.all(
+      variants.map(async (variant, index) => ({
+        ...(await bridgeMediaAsset(variant.mediaAssetId)),
+        name: `Variant ${index + 1}`,
+      }))
+    );
+    if (!bridged.length) {
+      throw new Error('共通投稿へ渡せるVariantがありません。');
+    }
+    setCommonPostPrefill({
+      sourceAssetId: bridged[0].sourceAssetId,
+      defaultVariantAssetId: bridged[0].sourceAssetId,
+      media: bridged[0].media,
+      variants: bridged.map((variant) => ({
+        sourceAssetId: variant.sourceAssetId,
+        name: variant.name,
+        media: variant.media,
+      })),
+    });
+    setActiveTab('Publish');
+  }, [bridgeMediaAsset]);
+
+  const openCommonPublisher = useCallback(
+    (item: any) => openMediaAssetInCommonPublisher(item?.mediaAsset?.id || ''),
+    [openMediaAssetInCommonPublisher]
+  );
 
   useEffect(() => {
     const account = accounts.find((candidate) => candidate.id === (storyForm.accountId || defaultAccount));
@@ -271,6 +462,28 @@ export const SnsStudio = () => {
     setReelPreflight({ inputKey: reelPreflightInputKey, result });
     if (!result.ready) throw new Error(`Preflightで停止しました: ${result.errors.join(', ') || '確認が必要です。'}`);
     return result;
+  };
+
+  const preflightStoryOnly = async () => {
+    const inputKey = storyPreflightInputKey;
+    setStoryPreflight(null);
+    setMessage('');
+    setBusy(true);
+    try {
+      const result = await requestStoryPreflight(request, storyPreflightPayload);
+      setStoryPreflight({ inputKey, result });
+    } catch (error) {
+      if (error instanceof StoryPreflightInputError) {
+        setStoryPreflight({
+          inputKey,
+          result: { ready: false, errors: error.errors, warnings: [] },
+        });
+      } else {
+        setMessage(error instanceof Error ? error.message : 'Story Preflightに失敗しました。');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const publishStory = async () => {
@@ -367,15 +580,96 @@ export const SnsStudio = () => {
         <button className={secondaryButton} onClick={() => void refresh()} disabled={busy}>更新</button>
       </header>
 
-      <nav className="flex flex-wrap gap-2 rounded-xl border border-blockSeparator bg-newBgColorInner p-2" aria-label="SNS Studio navigation">
-        {tabs.map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>
-            {tab}
-          </button>
-        ))}
-      </nav>
+      <div className="rounded-xl border border-blockSeparator bg-newBgColorInner p-2">
+        <nav className="flex flex-wrap gap-2 border-b border-blockSeparator pb-2" aria-label="SNS Studio platforms">
+          {platforms.map((platform) => <button key={platform.id} type="button" aria-pressed={activePlatform === platform.id} onClick={() => activateSection(platform.id, platformSections[platform.id][0].label)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activePlatform === platform.id ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>{platform.label}</button>)}
+        </nav>
+        <nav className="flex flex-wrap gap-2 pt-2" aria-label={`${platforms.find((platform) => platform.id === activePlatform)?.label} sections`}>
+          {platformSections[activePlatform].map((section) => <button key={section.label} type="button" aria-pressed={activeSection === section.label} onClick={() => activateSection(activePlatform, section.label)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${activeSection === section.label ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused hover:text-newTextColor'}`}>{section.label}</button>)}
+        </nav>
+      </div>
 
       {message && <div role="status" className="rounded-lg border border-[#7774ff]/40 bg-[#5145ff]/10 px-4 py-3 text-sm">{message}</div>}
+
+      {activeTab === 'Calendar' && <section className={card}>
+        <h2 className="text-lg font-bold">Calendar</h2>
+        <p className="mt-2 text-sm text-textItemBlur">投稿カレンダーはPostizで確認できます。</p>
+        <a className={`${primaryButton} mt-4 inline-block`} href="/launches">Postiz Calendarを開く</a>
+      </section>}
+
+      {activeTab === 'Instagram Overview' && <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Instagram Overview">
+        <Metric title="Instagram Accounts" value={accounts.length} detail="保存済みアカウント" />
+        <Metric title="Story Pools" value={pools.length} detail="共有素材プール" />
+        <Metric title="Content Inbox" value={inbox.length} detail="確認できる素材" />
+        <Metric title="Recent publishing" value={records.filter((row) => row.status === 'PUBLISHED').length} detail="公開済み" />
+      </section>}
+
+      {activeTab === 'TikTok Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">TikTok Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">{tiktokAccounts.length}件のTikTokアカウント。共通投稿と既存のTikTok設定を利用できます。</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className={primaryButton} onClick={() => activateSection('tiktok', 'Videos')}>TikTok投稿を開く</button>
+          <button type="button" className={secondaryButton} onClick={() => activateSection('tiktok', 'Accounts')}>TikTok Accountsを開く</button>
+        </div>
+      </section>}
+
+      {activeTab === 'Threads Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">Threads Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">Threadsの投稿、カレンダー、Inbox、リサーチ、分析、アカウント設定を開きます。</p>
+        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', 'Workspace')}>Threads Workspaceを開く</button>
+      </section>}
+
+      {activeTab === 'YouTube Overview' && <section className={card}>
+        <h2 className="text-lg font-bold">YouTube Overview</h2>
+        <p className="mt-2 text-sm text-textItemBlur">YouTubeの投稿送信APIはこのSNS Studio buildには接続されていません。投稿先の選択と配信には既存のPostiz composerを使用してください。</p>
+        <a className={`${secondaryButton} mt-4 inline-block`} href="/launches">Postiz composerを開く</a>
+      </section>}
+
+      {(activeTab === 'YouTube Video Composer' || activeTab === 'Shorts Composer') && <section className="grid gap-5 xl:grid-cols-2">
+        <div className={card}>
+          <h2 className="text-lg font-bold">{activeTab === 'Shorts Composer' ? 'Shorts Composer' : '通常動画 Composer'}</h2>
+          <p className="mt-2 text-sm text-textItemBlur">この画面はSNS StudioのYouTubeメニューに接続されています。YouTubeへの投稿送信は既存のPostiz composerで行います。</p>
+          <div className="mt-4 grid gap-3">
+            <Field label="動画素材"><input className={field} placeholder="/uploads/video.mp4" /></Field>
+            <Field label="タイトル"><input className={field} maxLength={100} /></Field>
+            <Field label="説明"><textarea className={`${field} min-h-24`} maxLength={5000} /></Field>
+          </div>
+          <div role="status" className="mt-4 rounded-lg border border-blockSeparator p-3 text-sm text-textItemBlur">SNS StudioからのYouTube投稿APIは未接続です。下書き保存・投稿は実行されません。</div>
+          <a className={`${primaryButton} mt-4 inline-block`} href="/launches">既存のPostiz composerを開く</a>
+        </div>
+        <div className={card}>
+          <h3 className="font-semibold">投稿先</h3>
+          <p className="mt-2 text-sm text-textItemBlur">チャンネル接続後、Postiz composerの投稿先一覧からYouTubeを選択してください。</p>
+          <a className="mt-3 inline-block text-sm text-[#9e9aff] underline" href="/third-party">Integrationsを確認</a>
+        </div>
+      </section>}
+
+      {activeTab === 'Channels' && <section className={card} aria-label="YouTube Channels">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold">YouTube Channels</h2>
+            <p className="mt-2 text-sm text-textItemBlur">接続状態はPostizのSocial Integrationから読み込みます。</p>
+          </div>
+          <button type="button" className={primaryButton} onClick={() => void openYoutubeConnect()}>YouTubeチャンネルを接続</button>
+        </div>
+        <div className="mt-4 grid gap-3">
+          {youtubeIntegrations.map((integration) => (
+            <div key={integration.id} className="rounded-lg border border-blockSeparator p-4">
+              <div className="font-semibold">{integration.display || integration.name}</div>
+              <div className="mt-1 text-sm text-textItemBlur">{integration.disabled ? '無効' : integration.refreshNeeded ? '再接続が必要' : '接続済み'}</div>
+            </div>
+          ))}
+          {!youtubeIntegrations.length && providerIntegrations && <p className="text-sm text-textItemBlur">YouTubeチャンネルはまだ接続されていません。</p>}
+          {providerIntegrationsError && <p role="status" className="text-sm text-textItemBlur">接続状態を取得できませんでした。PostizのSocial Integrationを確認してください。</p>}
+          {!providerIntegrations && !providerIntegrationsError && <p className="text-sm text-textItemBlur">接続状態を読み込んでいます…</p>}
+        </div>
+      </section>}
+
+      {activeTab === 'Playlists' && <section className={card}>
+        <h2 className="text-lg font-bold">Playlists</h2>
+        <p className="mt-2 text-sm text-textItemBlur">プレイリスト情報はまだ同期されていません。YouTubeチャンネルの接続状態はPostiz Social Integrationを利用します。</p>
+        <button type="button" className={`${secondaryButton} mt-4`} onClick={() => activateSection('youtube', 'Channels')}>Channelsを開く</button>
+      </section>}
 
       {activeTab === 'Dashboard' && <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Metric title="Accounts" value={accounts.length} detail={`${dashboard?.accounts?.reduce((n: number, row: any) => n + row._count._all, 0) || 0} saved`} />
@@ -400,31 +694,159 @@ export const SnsStudio = () => {
             <button className={primaryButton} disabled={busy}>Instagramへログイン</button>
           </div>
         </form>
-        <div className={card}>
-          <h2 className="text-lg font-bold">Accounts</h2>
-          <div className="mt-4 grid gap-3">
-            {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
-            {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
-              <div className="min-w-[220px] flex-1"><div className="font-bold">@{account.username}</div><div className={`mt-1 text-xs ${account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' || account.healthStatus === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300'}`}>{account.healthStatus === 'GREEN' ? 'ACTIVE · Session: VALID · Health: GREEN' : `YELLOW · Session: ${account.health?.session || 'INVALID'} · ${accountLoginState(account)}`} · Proxy: {account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし'}</div><div className="mt-1 text-xs text-textItemBlur">Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}</div>{account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}
-                {account.healthStatus !== 'GREEN' && (loginOpenFor === account.id || ['2FA_REQUIRED', 'CHALLENGE_REQUIRED'].includes(accountLoginState(account))) && <div className="mt-3 grid w-full gap-3 rounded-lg border border-blockSeparator p-3">
-                  {accountLoginState(account) === '2FA_REQUIRED' ? <><p className="text-sm">Instagramの2FAコードを入力してください。</p><Field label="2FAコード"><input className={field} inputMode="numeric" autoComplete="one-time-code" value={loginDrafts[account.id]?.verificationCode || ''} onChange={(e) => updateLoginDraft(account.id, 'verificationCode', e.target.value)} /></Field><button type="button" className={primaryButton} disabled={busy} onClick={() => submitTwoFactorCode(account)}>確認</button></> : accountLoginState(account) === 'CHALLENGE_REQUIRED' ? <p className="text-sm">Instagramアプリでログインを承認してください。承認後、［再確認］を押してください。</p> : <><p className="text-sm">保存済みアカウント @{account.username} にログインします。</p><Field label="Password"><input className={field} type="password" autoComplete="current-password" value={loginDrafts[account.id]?.password || ''} onChange={(e) => updateLoginDraft(account.id, 'password', e.target.value)} /></Field><Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={loginDrafts[account.id]?.proxy || ''} onChange={(e) => updateLoginDraft(account.id, 'proxy', e.target.value)} /></Field><button type="button" className={primaryButton} disabled={busy || !loginDrafts[account.id]?.password} onClick={() => submitExistingInstagramLogin(account)}>Instagramへログイン</button></>}
-                </div>}
+        <div className="flex flex-col gap-5">
+          <div className={card}>
+            <h2 className="text-lg font-bold">Instagram Accounts</h2>
+            <div className="mt-4 grid gap-3">
+              {accounts.length === 0 && <Empty>Instagramアカウントはまだありません。</Empty>}
+              {accounts.map((account) => <div key={account.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-blockSeparator p-4">
+                <div className="min-w-[220px] flex-1">
+                  <div className="font-bold">@{account.username}</div>
+                  <div className={'mt-1 text-xs ' + (account.healthStatus === 'GREEN' ? 'text-green-400' : account.healthStatus === 'YELLOW' || account.healthStatus === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300')}>
+                    {account.healthStatus === 'GREEN' ? 'ACTIVE · Session: VALID · Health: GREEN' : 'YELLOW · Session: ' + (account.health?.session || 'INVALID') + ' · ' + accountLoginState(account)}
+                    {' · Proxy: ' + (account.proxyConfigured === null || account.proxyConfigured === undefined ? '不明' : account.proxyConfigured ? '設定済み' : 'なし')}
+                  </div>
+                  <div className="mt-1 text-xs text-textItemBlur">
+                    Last validation: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '未確認'} · Last post: {account.lastPublishedAt ? new Date(account.lastPublishedAt).toLocaleString() : '—'} · Trial Reel: {trialEligibility[account.id] === undefined ? '未確認' : trialEligibility[account.id] ? '利用可能' : '対象外'} · Story Pool: {account.defaultStoryPool?.name || '未設定'}
+                  </div>
+                  {account.lastError && <div className="mt-1 text-xs text-red-300">Last error: {account.lastError}</div>}
+                  {account.healthStatus !== 'GREEN' && (loginOpenFor === account.id || ['2FA_REQUIRED', 'CHALLENGE_REQUIRED'].includes(accountLoginState(account))) && (
+                    <div className="mt-3 grid w-full gap-3 rounded-lg border border-blockSeparator p-3">
+                      {accountLoginState(account) === '2FA_REQUIRED' ? <>
+                        <p className="text-sm">Instagramの2FAコードを入力してください。</p>
+                        <Field label="2FAコード"><input className={field} inputMode="numeric" autoComplete="one-time-code" value={loginDrafts[account.id]?.verificationCode || ''} onChange={(e) => updateLoginDraft(account.id, 'verificationCode', e.target.value)} /></Field>
+                        <button type="button" className={primaryButton} disabled={busy} onClick={() => submitTwoFactorCode(account)}>確認</button>
+                      </> : accountLoginState(account) === 'CHALLENGE_REQUIRED' ? (
+                        <p className="text-sm">Instagramアプリでログインを承認してください。承認後、［再確認］を押してください。</p>
+                      ) : <>
+                        <p className="text-sm">保存済みアカウント @{account.username} にログインします。</p>
+                        <Field label="Password"><input className={field} type="password" autoComplete="current-password" value={loginDrafts[account.id]?.password || ''} onChange={(e) => updateLoginDraft(account.id, 'password', e.target.value)} /></Field>
+                        <Field label="Proxy (optional)"><input className={field} placeholder="http(s):// or socks5://" value={loginDrafts[account.id]?.proxy || ''} onChange={(e) => updateLoginDraft(account.id, 'proxy', e.target.value)} /></Field>
+                        <button type="button" className={primaryButton} disabled={busy || !loginDrafts[account.id]?.password} onClick={() => submitExistingInstagramLogin(account)}>Instagramへログイン</button>
+                      </>}
+                    </div>
+                  )}
+                </div>
+                {account.healthStatus !== 'GREEN' && <button type="button" className={secondaryButton} onClick={() => accountLoginState(account) === 'CHALLENGE_REQUIRED' ? recheckInstagramChallenge(account) : setLoginOpenFor(account.id)} disabled={busy}>
+                  {accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : accountLoginState(account) === '2FA_REQUIRED' ? '2FAコードを入力' : 'Instagramへログイン'}
+                </button>}
+                <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>Validate</button>
+                <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/caption-settings`, { method: 'PUT', body: JSON.stringify({ enabled: !account.captionAIEnabled }) }), 'AI Caption設定を更新しました。')} disabled={busy}>AI Caption {account.captionAIEnabled ? 'ON' : 'OFF'}</button>
+                <button className={secondaryButton} onClick={() => void run(async () => { const result = await request(`/sns-studio/accounts/${account.id}/trial-reel-eligibility`); setTrialEligibility((current) => ({ ...current, [account.id]: !!result.eligible })); return result; }, 'Trial Reelの利用可否を確認しました。')} disabled={busy}>Trial Reel check</button>
+              </div>)}
+            </div>
+          </div>
+
+          {/* TikTok / TikTok Business Accounts — linked from Postiz Integration */}
+          <div className={card}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">TikTok Accounts</h2>
+                <p className="mt-1 text-sm text-textItemBlur">
+                  PostizでTikTokを接続済みのアカウントが自動的に表示されます。
+                  接続はPostiz標準のOAuth画面を利用します。
+                </p>
               </div>
-              {account.healthStatus !== 'GREEN' && <button type="button" className={secondaryButton} onClick={() => accountLoginState(account) === 'CHALLENGE_REQUIRED' ? recheckInstagramChallenge(account) : setLoginOpenFor(account.id)} disabled={busy}>{accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : accountLoginState(account) === '2FA_REQUIRED' ? '2FAコードを入力' : 'Instagramへログイン'}</button>}
-              <select aria-label={`@${account.username} の Story Pool`} className={`${field} max-w-48`} value={poolAssignments[account.id] ?? account.defaultStoryPoolId ?? ''} onChange={(e) => setPoolAssignments({ ...poolAssignments, [account.id]: e.target.value })}><option value="">Poolを選択</option>{pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name}</option>)}</select>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/story-pool/${poolAssignments[account.id] ?? account.defaultStoryPoolId}`, { method: 'POST' }), 'AccountのStory Poolを保存しました。')} disabled={busy || !(poolAssignments[account.id] ?? account.defaultStoryPoolId)}>Pool保存</button>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/validate`, { method: 'POST', body: '{}' }), 'セッションを確認しました。')} disabled={busy}>{accountLoginState(account) === 'CHALLENGE_REQUIRED' ? '再確認' : 'Validate'}</button>
-              <button className={secondaryButton} onClick={() => void run(() => request(`/sns-studio/accounts/${account.id}/caption-settings`, { method: 'PUT', body: JSON.stringify({ enabled: !account.captionAIEnabled }) }), 'AI Caption設定を更新しました。')} disabled={busy}>AI Caption {account.captionAIEnabled ? 'ON' : 'OFF'}</button>
-              <button className={secondaryButton} onClick={() => void run(async () => { const result = await request(`/sns-studio/accounts/${account.id}/trial-reel-eligibility`); setTrialEligibility((current) => ({ ...current, [account.id]: !!result.eligible })); return result; }, 'Trial Reelの利用可否を確認しました。')} disabled={busy}>Trial Reel check</button>
-            </div>)}
+              <div className="flex gap-2">
+                <button className={primaryButton} onClick={connectTikTok}>TikTokを接続</button>
+                <button className={secondaryButton} disabled={busy} onClick={() => void run(() => refreshTikTokAccounts(), 'TikTokアカウントを同期しました。')}>同期</button>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {tiktokAccounts.filter((a) => a.platform === 'tiktok').length === 0 && (
+                <Empty>
+                  <div>TikTokアカウントが見つかりません。</div>
+                  <div className="mt-1 text-xs text-textItemBlur">PostizのIntegration設定でTikTokまたはTikTok Businessを接続してください。</div>
+                  <button className={`${primaryButton} mt-3`} onClick={connectTikTok}>TikTokを接続する</button>
+                </Empty>
+              )}
+              {tiktokAccounts
+                .filter((a) => a.platform === 'tiktok')
+                .map((account) => {
+                  const edits = tiktokAccountEdits[account.id] ?? {};
+                  const current = { ...account, ...edits };
+                  const isBusiness = account.providerIdentifier === 'tiktok-business' || account.accountType === 'business';
+                  return (
+                    <div key={account.id} className="rounded-lg border border-blockSeparator p-4">
+                      <div className="flex flex-wrap items-start gap-3">
+                        {/* TikTok icon placeholder */}
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-black text-white text-sm font-bold">TT</div>
+                        <div className="flex-1 min-w-[180px]">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold">@{account.username}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isBusiness ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                              {isBusiness ? 'Business' : 'Personal'}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${account.status === 'ACTIVE' ? 'text-green-400' : account.status === 'NEEDS_USER_ACTION' ? 'text-amber-300' : 'text-red-300'}`}>
+                              {account.status === 'ACTIVE' ? '接続済み' : account.status === 'NEEDS_USER_ACTION' ? '要再認証' : '切断済み'}
+                            </span>
+                          </div>
+                          {account.displayName && account.displayName !== account.username && (
+                            <div className="mt-0.5 text-xs text-textItemBlur">{account.displayName}</div>
+                          )}
+                          <div className="mt-1 text-xs text-textItemBlur">
+                            Last validated: {account.lastValidatedAt ? new Date(account.lastValidatedAt).toLocaleString() : '—'}
+                            {account.lastPublishedAt && ` · Last post: ${new Date(account.lastPublishedAt).toLocaleString()}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-1">
+                        <Field label="再投稿禁止期間（日）">
+                          <input
+                            className={field}
+                            type="number"
+                            min={0}
+                            max={365}
+                            value={current.duplicateWindowDays}
+                            onChange={(e) => setTikTokAccountEdits((prev) => ({ ...prev, [account.id]: { ...prev[account.id], duplicateWindowDays: Number(e.target.value) } }))}
+                          />
+                        </Field>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          className={primaryButton}
+                          disabled={busy}
+                          onClick={() => void run(
+                            () => request(`/sns-studio/tiktok/accounts/${account.id}`, {
+                              method: 'PUT',
+                              body: JSON.stringify({
+                                duplicateWindowDays: current.duplicateWindowDays,
+                              }),
+                            }),
+                            '設定を保存しました。',
+                          )}
+                        >
+                          設定を保存
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
         </div>
       </section>}
 
       {activeTab === 'Content Inbox' && <section className={card}>
         <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-bold">Content Inbox</h2><p className="mt-1 text-sm text-textItemBlur">Google Drive接続後、指定フォルダの素材をここで確認します。</p></div><button className={secondaryButton} onClick={() => void refreshInbox()}>同期状態を更新</button></div>
-        <div className="mt-4 grid gap-3">{inbox.length ? inbox.map((item: any) => <div key={item.id} className="flex flex-wrap items-center gap-4 rounded-lg border border-blockSeparator p-4"><div className="min-w-[200px] flex-1 font-semibold">{item.fileName}</div><span className="text-sm text-textItemBlur">{item.mediaType}</span><span className="text-sm text-textItemBlur">{item.status}</span><span className="text-sm text-textItemBlur">{item.sizeBytes ? `${(Number(item.sizeBytes) / 1024 / 1024).toFixed(1)} MB` : '—'}</span>{item.previewUrl && <a href={item.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-[#9e9aff] underline">Preview / Drive</a>}{item.mediaAsset?.storageKey && <div className="flex flex-wrap items-center gap-2"><select aria-label={`${item.fileName} に使用するRecipe`} className={`${field} max-w-56`} value={inboxRecipeSelection[item.id] || ''} onChange={(e) => setInboxRecipeSelection((current) => ({ ...current, [item.id]: e.target.value }))}><option value="">Recipeを選択</option>{recipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select><button className={secondaryButton} disabled={busy || !inboxRecipeSelection[item.id]} onClick={() => { const recipe = recipes.find((entry) => entry.id === inboxRecipeSelection[item.id]); if (recipe) void run(() => startRecipe(recipe, { path: item.mediaAsset.storageKey, inboxItemId: item.id, mediaType: item.mediaType }), '素材を制作Queueへ登録しました。'); }}>Recipeを実行</button></div>}{item.mediaAsset?.storageKey && item.mediaType === 'video' && <button className={secondaryButton} onClick={() => { setReelForm((current) => ({ ...current, videoPath: item.mediaAsset.storageKey, pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Reel</button>}{item.mediaAsset?.storageKey && item.mediaType === 'image' && <button className={secondaryButton} onClick={() => { setStoryForm((current) => ({ ...current, mediaPath: item.mediaAsset.storageKey, mediaType: 'image', pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Story</button>}</div>) : <Empty>Inboxは空です。SettingsからGoogle Driveを接続して同期してください。</Empty>}</div>
+        <div className="mt-4 grid gap-3">{inbox.length ? inbox.map((item: any) => <div key={item.id} className="flex flex-wrap items-center gap-4 rounded-lg border border-blockSeparator p-4"><div className="min-w-[200px] flex-1 font-semibold">{item.fileName}</div><span className="text-sm text-textItemBlur">{item.mediaType}</span><span className="text-sm text-textItemBlur">{item.status}</span><span className="text-sm text-textItemBlur">{item.sizeBytes ? `${(Number(item.sizeBytes) / 1024 / 1024).toFixed(1)} MB` : '—'}</span>{item.previewUrl && <a href={item.previewUrl} target="_blank" rel="noreferrer" className="text-sm text-[#9e9aff] underline">Preview / Drive</a>}{item.mediaAsset?.storageKey && <div className="flex flex-wrap items-center gap-2"><select aria-label={`${item.fileName} に使用するRecipe`} className={`${field} max-w-56`} value={inboxRecipeSelection[item.id] || ''} onChange={(e) => setInboxRecipeSelection((current) => ({ ...current, [item.id]: e.target.value }))}><option value="">Recipeを選択</option>{recipes.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name}</option>)}</select><button className={secondaryButton} disabled={busy || !inboxRecipeSelection[item.id]} onClick={() => { const recipe = recipes.find((entry) => entry.id === inboxRecipeSelection[item.id]); if (recipe) void run(() => startRecipe(recipe, { path: item.mediaAsset.storageKey, inboxItemId: item.id, mediaType: item.mediaType }), '素材を制作Queueへ登録しました。'); }}>Recipeを実行</button></div>}{item.mediaAsset?.id && <button className={primaryButton} disabled={busy} onClick={() => void run(() => openCommonPublisher(item), '共通投稿へ素材を引き継ぎました。')}>共通投稿で使用</button>}{item.mediaAsset?.storageKey && item.mediaType === 'video' && <button className={secondaryButton} onClick={() => { setReelForm((current) => ({ ...current, videoPath: item.mediaAsset.storageKey, pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Reel</button>}{item.mediaAsset?.storageKey && item.mediaType === 'image' && <button className={secondaryButton} onClick={() => { setStoryForm((current) => ({ ...current, mediaPath: item.mediaAsset.storageKey, mediaType: 'image', pipelineRunId: '' })); setActiveTab('Create'); }}>Use for Story</button>}</div>) : <Empty>Inboxは空です。SettingsからGoogle Driveを接続して同期してください。</Empty>}</div>
       </section>}
+
+      {activeTab === 'Publish' && <SnsStudioCommonPublisher prefill={commonPostPrefill} />}
+      {activeTab === 'Common Queue' && <CommonDeliveryWorkspace view="queue" />}
+      {activeTab === 'Common History' && <CommonDeliveryWorkspace view="history" />}
+      {activeTab === 'Common Analytics' && <CommonDeliveryWorkspace view="analytics" />}
+
+      {activeTab === 'Threads' && (
+        <ThreadsWorkspace
+          onOpenPublish={(prefill) => {
+            setCommonPostPrefill(prefill);
+            setActiveTab('Publish');
+          }}
+        />
+      )}
 
       {activeTab === 'Create' && <section className="grid gap-5 xl:grid-cols-2">
         <form className={card} onSubmit={submit(publishReel, 'Reel投稿が完了しました。')}>
@@ -432,8 +854,58 @@ export const SnsStudio = () => {
           <p className="mb-4 mt-1 text-sm text-textItemBlur">投稿前にアカウント、共有メディア、Trial Reel資格を確認してください。</p>
           <div className="grid gap-3">
             <AccountSelect accounts={accounts} value={reelForm.accountId || defaultAccount} onChange={(accountId) => setReelForm({ ...reelForm, accountId })} />
-            <Field label="Video path (inside shared uploads)"><input className={field} value={reelForm.videoPath} onChange={(e) => setReelForm({ ...reelForm, videoPath: e.target.value })} placeholder="/uploads/reel.mp4" required /></Field>
-            {reelForm.videoPath && <video className="max-h-96 w-full rounded-lg bg-black" controls preload="metadata" src={previewUrl(reelForm.videoPath)} />}
+            <Field label="Video asset (Workspace Media)">
+              <select
+                aria-label="Reel video asset"
+                className={field}
+                value={reelForm.videoPath}
+                onChange={(e) => {
+                  setReelPreviewError(false);
+                  setReelForm({ ...reelForm, videoPath: e.target.value, pipelineRunId: '' });
+                }}
+              >
+                <option value="">Media素材を選択してください...</option>
+                {availableVideoAssets.map((asset) => (
+                  <option key={asset.storageKey} value={asset.storageKey}>
+                    {asset.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <details className="text-xs text-textItemBlur">
+              <summary className="cursor-pointer hover:underline">高度な設定: パスを手動入力</summary>
+              <div className="mt-2">
+                <Field label="Video path (inside shared uploads)">
+                  <input
+                    className={field}
+                    value={reelForm.videoPath}
+                    onChange={(e) => {
+                      setReelPreviewError(false);
+                      setReelForm({ ...reelForm, videoPath: e.target.value });
+                    }}
+                    placeholder="/uploads/reel.mp4"
+                    required
+                  />
+                </Field>
+              </div>
+            </details>
+            {reelForm.videoPath && (
+              <div>
+                <video
+                  className="max-h-96 w-full rounded-lg bg-black"
+                  controls
+                  preload="metadata"
+                  src={previewUrl(reelForm.videoPath)}
+                  onError={() => setReelPreviewError(true)}
+                  onLoadedData={() => setReelPreviewError(false)}
+                />
+                {reelPreviewError && (
+                  <div className="mt-2 rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+                    このワークスペースでは利用できないメディアです。Mediaから選び直してください。
+                  </div>
+                )}
+              </div>
+            )}
             {reelForm.pipelineRunId && <div className="text-xs text-textItemBlur">承認済みPipeline: {reelForm.pipelineRunId}</div>}
             <Field label="Caption"><textarea className={`${field} min-h-24`} maxLength={2200} value={reelForm.caption} onChange={(e) => setReelForm({ ...reelForm, caption: e.target.value })} /></Field>
             <Field label="AI Caption用の素材メモ"><textarea className={`${field} min-h-16`} maxLength={12000} value={captionPrompt} onChange={(e) => setCaptionPrompt(e.target.value)} placeholder="動画の内容、伝えたい要点など" /></Field><button type="button" className={secondaryButton} disabled={busy || !captionPrompt.trim() || !accounts.find((account) => account.id === (reelForm.accountId || defaultAccount))?.captionAIEnabled} onClick={() => void run(generateCaption, 'AI Captionを作成しました。内容を確認して編集してください。')}>AI Captionを生成</button>
@@ -458,12 +930,105 @@ export const SnsStudio = () => {
           <p className="mb-4 mt-1 text-sm text-textItemBlur">Storyリンクスタンプの描画結果は、Instagramアプリで確認してください。</p>
           <div className="grid gap-3">
             <AccountSelect accounts={accounts} value={storyForm.accountId || defaultAccount} onChange={(accountId) => setStoryForm({ ...storyForm, accountId })} />
-            <Field label="Media path (inside shared uploads)"><input className={field} value={storyForm.mediaPath} onChange={(e) => setStoryForm({ ...storyForm, mediaPath: e.target.value })} placeholder="/uploads/story.jpg" required /></Field>
+            <Field label="Media asset (Workspace Media)">
+              <select
+                aria-label="Story media asset"
+                className={field}
+                value={storyForm.mediaPath}
+                onChange={(e) => {
+                  setStoryPreviewError(false);
+                  const selected = availableStoryAssets.find((a) => a.storageKey === e.target.value);
+                  setStoryForm({
+                    ...storyForm,
+                    mediaPath: e.target.value,
+                    mediaType: selected ? selected.mediaType : storyForm.mediaType,
+                    pipelineRunId: '',
+                  });
+                }}
+              >
+                <option value="">Media素材を選択してください...</option>
+                {availableStoryAssets.map((asset) => (
+                  <option key={asset.storageKey} value={asset.storageKey}>
+                    [{asset.mediaType.toUpperCase()}] {asset.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <details className="text-xs text-textItemBlur">
+              <summary className="cursor-pointer hover:underline">高度な設定: パスを手動入力</summary>
+              <div className="mt-2">
+                <Field label="Media path (inside shared uploads)">
+                  <input
+                    className={field}
+                    value={storyForm.mediaPath}
+                    onChange={(e) => {
+                      setStoryPreviewError(false);
+                      setStoryForm({ ...storyForm, mediaPath: e.target.value });
+                    }}
+                    placeholder="/uploads/story.jpg"
+                    required
+                  />
+                </Field>
+              </div>
+            </details>
             <Field label="Media type"><select className={field} value={storyForm.mediaType} onChange={(e) => setStoryForm({ ...storyForm, mediaType: e.target.value })}><option value="image">Image</option><option value="video">Video</option></select></Field>
-            {storyForm.mediaPath && <div className="relative mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[293px] overflow-hidden rounded-lg bg-black">{storyForm.mediaType === 'video' ? <video className="absolute inset-0 h-full w-full object-contain" controls preload="metadata" src={previewUrl(storyForm.mediaPath)} /> : <img className="absolute inset-0 h-full w-full object-contain" src={previewUrl(storyForm.mediaPath)} alt="Story preview" />}{storyForm.linkUrl && <div className="pointer-events-none absolute flex items-center justify-center rounded-full bg-white/90 px-2 text-center text-xs font-semibold text-black" style={{ left: `${storyForm.x * 100}%`, top: `${storyForm.y * 100}%`, width: `${Math.max(10, storyForm.width * 100)}%`, height: `${Math.max(4, storyForm.height * 100)}%`, transform: `translate(-50%, -50%) rotate(${storyForm.rotation}deg)` }}>Link Sticker</div>}</div>}
+            {storyForm.mediaPath && (
+              <div>
+                <div className="relative mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[293px] overflow-hidden rounded-lg bg-black">
+                  {storyForm.mediaType === 'video' ? (
+                    <video
+                      className="absolute inset-0 h-full w-full object-contain"
+                      controls
+                      preload="metadata"
+                      src={previewUrl(storyForm.mediaPath)}
+                      onError={() => setStoryPreviewError(true)}
+                      onLoadedData={() => setStoryPreviewError(false)}
+                    />
+                  ) : (
+                    <img
+                      className="absolute inset-0 h-full w-full object-contain"
+                      src={previewUrl(storyForm.mediaPath)}
+                      alt="Story preview"
+                      onError={() => setStoryPreviewError(true)}
+                      onLoad={() => setStoryPreviewError(false)}
+                    />
+                  )}
+                  {storyForm.linkUrl && <div className="pointer-events-none absolute flex items-center justify-center rounded-full bg-white/90 px-2 text-center text-xs font-semibold text-black" style={{ left: `${storyForm.x * 100}%`, top: `${storyForm.y * 100}%`, width: `${Math.max(10, storyForm.width * 100)}%`, height: `${Math.max(4, storyForm.height * 100)}%`, transform: `translate(-50%, -50%) rotate(${storyForm.rotation}deg)` }}>Link Sticker</div>}
+                </div>
+                {storyPreviewError && (
+                  <div className="mx-auto mt-2 max-w-[293px] rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300">
+                    このワークスペースでは利用できないメディアです。Mediaから選び直してください。
+                  </div>
+                )}
+              </div>
+            )}
             {storyForm.pipelineRunId && <div className="text-xs text-textItemBlur">承認済みPipeline: {storyForm.pipelineRunId}</div>}
             <Field label="Link URL"><input className={field} type="url" value={storyForm.linkUrl} onChange={(e) => setStoryForm({ ...storyForm, linkUrl: e.target.value })} placeholder="https://example.com" required /></Field>
             <StickerFields values={storyForm} onChange={(key, value) => setStoryForm({ ...storyForm, [key]: value })} />
+            <button type="button" className={secondaryButton} disabled={busy} title="Story専用の事前チェックだけを実行します。投稿リクエストは送信しません。" onClick={() => void preflightStoryOnly()}>Preflight only（投稿しません）</button>
+            {storyPreflight && <div className="rounded-lg border border-blockSeparator p-4" aria-live="polite" role="status">
+              {storyPreflight.inputKey !== storyPreflightInputKey ? <>
+                <h3 className="font-semibold text-amber-300">Story Preflight · 入力変更あり</h3>
+                <p className="mt-2 text-sm text-textItemBlur">Account、素材、URL、Sticker値が変わりました。最新の内容で事前チェックを再実行してください。</p>
+              </> : <>
+                {(() => {
+                  const verdict = getStoryPreflightVerdict(storyPreflight.result);
+                  const selectedAccount = accounts.find((account) => account.id === storyPreflightPayload.accountId);
+                  const statusClass = verdict === 'HARD_ERROR' ? 'text-red-300' : verdict === 'PASS_WITH_WARNINGS' ? 'text-amber-300' : 'text-green-400';
+                  const verdictLabel = verdict === 'HARD_ERROR' ? 'HARD ERROR · 投稿不可' : verdict === 'PASS_WITH_WARNINGS' ? 'PASS · 警告あり' : 'PASS';
+                  const media = storyPreflight.result.media;
+                  return <>
+                    <h3 className={`font-semibold ${statusClass}`}>Story Preflight · {verdictLabel}</h3>
+                    <p className="mt-2 text-sm">Account: @{storyPreflight.result.account?.username || selectedAccount?.username || '未選択'} · Account: {selectedAccount?.status || '—'} · Session: {selectedAccount?.health?.session || selectedAccount?.health?.sessionStatus || '未確認'} · Health: {storyPreflight.result.account?.status || selectedAccount?.healthStatus || '未確認'}</p>
+                    <p className="mt-1 text-sm">Media: {storyPreflightPayload.mediaPath || '未指定'} · {media?.kind || '未確認'}{media?.durationSeconds !== undefined ? ` · ${media.durationSeconds.toFixed(2)}秒` : ''}{media?.video?.width && media.video?.height ? ` · ${media.video.width}×${media.video.height}` : ''}{media?.video?.codec ? ` · ${media.video.codec}` : ''}{media?.sizeBytes ? ` · ${(media.sizeBytes / 1024 / 1024).toFixed(2)} MB` : ''}</p>
+                    <p className="mt-1 text-sm">Link URL: {storyPreflightPayload.linkUrl || '未指定'}</p>
+                    <p className="mt-1 text-sm">Sticker: x={storyPreflightPayload.sticker.x}, y={storyPreflightPayload.sticker.y}, width={storyPreflightPayload.sticker.width}, height={storyPreflightPayload.sticker.height}, rotation={storyPreflightPayload.sticker.rotation}</p>
+                    {!!storyPreflight.result.errors.length && <ul className="mt-2 list-disc pl-5 text-sm text-red-300">{storyPreflight.result.errors.map((error) => <li key={error}>停止理由: {error}</li>)}</ul>}
+                    {!!storyPreflight.result.warnings.length && <ul className="mt-2 list-disc pl-5 text-sm text-amber-300">{storyPreflight.result.warnings.map((warning) => <li key={warning}>警告: {warning}</li>)}</ul>}
+                  </>;
+                })()}
+              </>}
+            </div>}
             <button className={primaryButton} disabled={busy || !accounts.length}>Preflight and publish now</button>
           </div>
         </form>
@@ -483,7 +1048,7 @@ export const SnsStudio = () => {
         <form className={card} onSubmit={submit(async () => { const result = await request('/sns-studio/media/variants', { method: 'POST', body: JSON.stringify({ sourcePath: variantForm.sourcePath, count: variantForm.count, settings: JSON.parse(variantForm.settings) }) }); setVariantResults(result.variants || []); return result; }, 'Variantを生成しました。')}>
           <h2 className="text-lg font-bold">Variant Generator</h2><p className="mb-4 mt-1 text-sm text-textItemBlur">有効にした範囲だけランダムな編集値を選び、採用値を保存します。</p>
           <div className="grid gap-3"><Field label="Source path"><input className={field} value={variantForm.sourcePath} onChange={(e) => setVariantForm({ ...variantForm, sourcePath: e.target.value })} placeholder="/uploads/input.mp4" required /></Field><Field label="生成数（1–20）"><input className={field} type="number" min="1" max="20" value={variantForm.count} onChange={(e) => setVariantForm({ ...variantForm, count: Number(e.target.value) })} /></Field><Field label="変更項目と範囲（JSON）"><textarea className={`${field} min-h-40 font-mono text-xs`} value={variantForm.settings} onChange={(e) => setVariantForm({ ...variantForm, settings: e.target.value })} /></Field><button className={primaryButton} disabled={busy}>Variantsを生成</button></div>
-          {variantResults.length > 0 && <div className="mt-4 grid gap-2">{variantResults.map((variant, index) => <div key={variant.mediaAssetId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blockSeparator p-3 text-sm"><span>Variant {index + 1} · {variant.durationSeconds?.toFixed?.(1) || '—'}s</span><code className="text-xs">{JSON.stringify(variant.adoptedSettings)}</code><button type="button" className={secondaryButton} onClick={() => setReelForm((current) => ({ ...current, videoPath: variant.path }))}>Use for Reel</button></div>)}</div>}
+          {variantResults.length > 0 && <div className="mt-4 grid gap-2"><div className="flex justify-end"><button type="button" className={primaryButton} disabled={busy} onClick={() => void run(() => openVariantSetInCommonPublisher(variantResults), '生成したVariantsを1つの共通コンテンツとして引き継ぎました。')}>全Variantsを共通投稿で使用</button></div>{variantResults.map((variant, index) => <div key={variant.mediaAssetId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blockSeparator p-3 text-sm"><span>Variant {index + 1} · {variant.durationSeconds?.toFixed?.(1) || '—'}s</span><code className="text-xs">{JSON.stringify(variant.adoptedSettings)}</code><div className="flex flex-wrap gap-2"><button type="button" className={primaryButton} disabled={busy} onClick={() => void run(() => openMediaAssetInCommonPublisher(variant.mediaAssetId), 'Variantを共通投稿へ引き継ぎました。')}>共通投稿で使用</button><button type="button" className={secondaryButton} onClick={() => setReelForm((current) => ({ ...current, videoPath: variant.path }))}>Use for Reel</button></div></div>)}</div>}
         </form>
         <form className={card} onSubmit={submit(async () => { const voicePreset = voicePresets.find((item) => item.id === voicePresetId); const editingPreset = editingPresets.find((item) => item.id === comicEditingPresetId); const result = await request('/sns-studio/media/comic/render', { method: 'POST', body: JSON.stringify({ ...(editingPreset?.config || {}), ...(voicePreset?.ttsSettings || {}), pages: JSON.parse(comicPages), subtitles: true, voiceSlots: voicePreset?.slots || {}, voicePresetId: voicePreset?.id, editingPresetId: editingPreset?.id }) }); setReelForm((current) => ({ ...current, videoPath: result.path, pipelineRunId: '' })); return result; }, '漫画スライド動画を作成し、Reel欄へ設定しました。')}>
           <h2 className="text-lg font-bold">漫画スライド動画</h2><p className="mb-4 mt-1 text-sm text-textItemBlur">ページごとに画像と複数セリフを設定し、speakerSlotをVoice Presetへ割り当てます。</p><Field label="Voice Preset"><select className={field} value={voicePresetId} onChange={(e) => setVoicePresetId(e.target.value)}><option value="">Presetを選択</option>{voicePresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></Field><Field label="Editing Preset"><select className={field} value={comicEditingPresetId} onChange={(e) => setComicEditingPresetId(e.target.value)}><option value="">既定（1080×1920 / 30fps）</option>{editingPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></Field><Field label="ページとセリフ"><textarea className={`${field} min-h-64 font-mono text-xs`} value={comicPages} onChange={(e) => setComicPages(e.target.value)} /></Field><button className={`${primaryButton} mt-3`} disabled={busy}>動画を生成してReel欄へ</button>

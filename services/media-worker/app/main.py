@@ -272,7 +272,7 @@ def render(body: RenderRequest, root: Path | None = None) -> dict:
         if overlay_file:
             overlay_file.unlink(missing_ok=True)
     rendered = probe(output)
-    return {"path": str(output), "fileName": output.name, "durationSeconds": rendered["durationSeconds"], "width": rendered["video"]["width"], "height": rendered["video"]["height"], "hasAudio": rendered["hasAudio"]}
+    return {"path": str(output), "fileName": output.name, "sizeBytes": output.stat().st_size, "durationSeconds": rendered["durationSeconds"], "width": rendered["video"]["width"], "height": rendered["video"]["height"], "hasAudio": rendered["hasAudio"]}
 
 
 def render_comic(body: ComicRenderRequest) -> dict:

@@ -128,6 +128,8 @@ def test_ffmpeg_render_with_bgm_overlay_and_concat_real_media(tmp_path, monkeypa
     )
     rendered_path = Path(rendered["path"])
     assert rendered_path.is_file()
+    assert rendered["sizeBytes"] > 0
+    assert rendered["sizeBytes"] == rendered_path.stat().st_size
     assert rendered["width"] == 320
     assert rendered["height"] == 568
     assert rendered["hasAudio"] is True

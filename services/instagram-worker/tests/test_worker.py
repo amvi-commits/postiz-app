@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 
@@ -50,6 +51,13 @@ class FakeClient:
         return {"pk": media_id, "metrics": {"views": 20}}
 
 
+def copy_test_story_video(source: Path, output: Path, url, sticker):
+    from app.story_visual import story_link_text
+
+    output.write_bytes(source.read_bytes())
+    return {"text": story_link_text(url), "decode": "PASS", "sizeBytes": output.stat().st_size}
+
+
 def test_missing_video_thumbnail_dependency_has_specific_error_code():
     error = RuntimeError(
         "Could not generate video thumbnail. Pass thumbnail=... or install MoviePy 2.2.1."
@@ -72,6 +80,7 @@ def make_client(tmp_path: Path):
         client_factory=FakeClient,
         media_root=tmp_path / "uploads",
         thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
     )
     (tmp_path / "uploads").mkdir(exist_ok=True)
     (tmp_path / "uploads" / "reel.mp4").write_bytes(b"mock video")
@@ -427,7 +436,8 @@ def test_local_mock_reel_story_health_and_insights_are_credential_free(tmp_path,
     def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
         thumbnail_path.write_bytes(b"test-thumbnail")
 
-    app = create_app(store=store, media_root=upload_root, thumbnail_generator=write_test_thumbnail)
+    app = create_app(store=store, media_root=upload_root, thumbnail_generator=write_test_thumbnail,
+                     story_visual_renderer=copy_test_story_video)
     headers = {"Authorization": f"Bearer {app.state.token}"} if app.state.token else {}
     client = TestClient(app, headers=headers)
 
@@ -457,3 +467,231 @@ def test_local_mock_reel_story_health_and_insights_are_credential_free(tmp_path,
     assert insights.json()["metrics"]["views"] == 42
     assert store.load("mock-a")["username"] == "demo_a"
     assert store.load("mock-b")["username"] == "demo_b"
+
+
+def test_story_video_upload_uses_temporary_thumbnail_and_serializes_story_link_once(tmp_path):
+    from instagrapi.types import StoryLink
+
+    calls = []
+    generated = []
+
+    class TrackingClient(FakeClient):
+        def video_upload_to_story(self, path, **kwargs):
+            thumbnail = kwargs["thumbnail"]
+            assert thumbnail.is_file()
+            assert thumbnail.parent == path.parent
+            assert path.parent != upload_root
+            assert path.is_file()
+            calls.append((path, kwargs))
+            return FakeMedia()
+
+    def write_test_thumbnail(video_path: Path, thumbnail_path: Path):
+        generated.append((video_path, thumbnail_path))
+        thumbnail_path.write_bytes(b"test-story-thumbnail")
+
+    store = CredentialStore(tmp_path / "secure")
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    video = upload_root / "story.mp4"
+    video.write_bytes(b"mock video")
+    app = create_app(
+        store=store,
+        client_factory=TrackingClient,
+        media_root=upload_root,
+        thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
+    )
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    assert client.post("/accounts/login", json={"accountId": "story-video", "username": "u", "password": "p"}).status_code == 200
+
+    response = client.post(
+        "/publish/story",
+        json={
+            "accountId": "story-video",
+            "mediaPath": str(video),
+            "mediaType": "video",
+            "linkUrl": "https://example.com/",
+            "sticker": {"x": 0.5, "y": 0.5, "width": 0.51, "height": 0.26, "rotation": 0},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mediaType"] == "STORY"
+    assert len(calls) == 1
+    uploaded_video, options = calls[0]
+    assert uploaded_video == generated[0][0]
+    assert uploaded_video != video.resolve()
+    assert not uploaded_video.exists()
+    assert video.read_bytes() == b"mock video"
+    assert options["thumbnail"] == generated[0][1]
+    assert not options["thumbnail"].exists()
+    assert len(options["links"]) == 1
+    assert isinstance(options["links"][0], StoryLink)
+    assert options["links"][0].model_dump(mode="json") == {
+        "webUri": "https://example.com/",
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.0,
+        "width": 0.51,
+        "height": 0.26,
+        "rotation": 0.0,
+    }
+    assert not (upload_root / "story.mp4.jpg").exists()
+
+
+def test_story_link_serialization_and_empty_link_payload_are_offline():
+    from instagrapi import Client
+    from instagrapi.types import StoryLink
+
+    client = Client()
+    calls = []
+
+    def capture_private_request(endpoint, data):
+        calls.append((endpoint, data))
+        return data
+
+    client.private_request = capture_private_request
+    link = StoryLink(webUri="https://example.com/", x=0.5, y=0.5, width=0.51, height=0.26, rotation=0)
+    client.video_configure_to_story("upload-id", 1080, 1920, 3.675, Path("/tmp/story-thumbnail.jpg"), "", links=[link])
+
+    assert [endpoint for endpoint, _ in calls] == [
+        "media/validate_reel_url/",
+        "media/configure_to_story/?video=1",
+    ]
+    assert calls[0][1]["url"] == "https://example.com/"
+    payload = calls[1][1]
+    sticker = json.loads(payload["tap_models"])[0]
+    assert sticker == {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0,
+        "width": 0.51,
+        "height": 0.26,
+        "rotation": 0.0,
+        "type": "story_link",
+        "is_sticker": True,
+        "selected_index": 0,
+        "tap_state": 0,
+        "link_type": "web",
+        "url": "https://example.com/",
+        "tap_state_str_id": "link_sticker_default",
+    }
+    assert payload["story_sticker_ids"] == "link_sticker_default"
+
+    calls.clear()
+    client.video_configure_to_story("upload-id", 1080, 1920, 3.675, Path("/tmp/story-thumbnail.jpg"), "", links=[])
+    assert [endpoint for endpoint, _ in calls] == ["media/configure_to_story/?video=1"]
+    assert "tap_models" not in calls[0][1]
+    assert "story_sticker_ids" not in calls[0][1]
+
+
+def test_story_error_mapping_covers_account_network_link_media_and_upload_failures():
+    from app.main import _story_error_code, _story_failure_category
+
+    cases = [
+        ("ChallengeRequired", "challenge", "video_upload_to_story", "IG_CHALLENGE_REQUIRED", 409, "account_action"),
+        ("FeedbackRequired", "feedback", "video_upload_to_story", "IG_FEEDBACK_REQUIRED", 409, "account_action"),
+        ("RateLimitError", "slow down", "video_upload_to_story", "IG_RATE_LIMITED", 429, "rate_limit"),
+        ("ConnectTimeout", "timed out", "video_upload_to_story", "IG_NETWORK_ERROR", 502, "network"),
+        ("InvalidURL", "invalid Story URL", "story_link_build", "IG_STORY_LINK_INVALID", 422, "story_link"),
+        ("OSError", "read-only file system", "thumbnail_generation", "IG_MEDIA_PROCESSING_FAILED", 422, "media"),
+        ("ClientBadRequestError", "media rejected", "video_upload_to_story", "IG_MEDIA_REJECTED", 422, "upload"),
+        ("VideoConfigureStoryError", "configure failed", "video_upload_to_story", "IG_STORY_UPLOAD_FAILED", 502, "upload"),
+        ("UnknownStoryError", "unknown", "video_upload_to_story", "IG_STORY_UPLOAD_FAILED", 502, "upload"),
+    ]
+    for name, message, stage, expected_code, expected_status, expected_category in cases:
+        error_type = type(name, (Exception,), {})
+        code, _, status = _story_error_code(error_type(message), stage)
+        assert (code, status) == (expected_code, expected_status)
+        assert _story_failure_category(code, stage) == expected_category
+
+
+def test_story_upload_logs_sanitized_diagnostics_and_never_retries(tmp_path, caplog):
+    calls = []
+
+    class StoryUploadError(Exception):
+        status_code = 413
+        error_type = "VideoConfigureRejected"
+        code = "STORY_UPLOAD_REJECTED"
+
+    class FailingClient(FakeClient):
+        def login(self, username, password, **kwargs):
+            self.logged_in = True
+            self.settings = {
+                "username": username,
+                "cookies": {"sessionid": "private-session-cookie", "csrftoken": "private-csrf"},
+                "device": {"device_id": "private-device-id"},
+            }
+
+        def video_upload_to_story(self, path, **kwargs):
+            calls.append((path, kwargs))
+            raise StoryUploadError(
+                "video upload failed username=private-user password=private-password "
+                "sessionid=private-session-cookie cookie=private-cookie csrf=private-csrf "
+                "proxy=http://proxy-user:proxy-password@proxy.example:8080 "
+                "https://example.com/?token=private-url-token"
+            )
+
+    def write_test_thumbnail(_video_path: Path, thumbnail_path: Path):
+        thumbnail_path.write_bytes(b"test-thumbnail")
+
+    caplog.set_level(logging.ERROR, logger="sns-instagram-worker")
+    store = CredentialStore(tmp_path / "secure")
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    video = upload_root / "story.mp4"
+    video.write_bytes(b"mock video")
+    app = create_app(
+        store=store,
+        client_factory=FailingClient,
+        media_root=upload_root,
+        thumbnail_generator=write_test_thumbnail,
+        story_visual_renderer=copy_test_story_video,
+    )
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.token}"})
+    login = client.post(
+        "/accounts/login",
+        json={
+            "accountId": "story-failed",
+            "username": "private-user",
+            "password": "private-password",
+            "proxy": "http://proxy-user:proxy-password@proxy.example:8080",
+        },
+    )
+    assert login.status_code == 200
+
+    response = client.post(
+        "/publish/story",
+        json={
+            "accountId": "story-failed",
+            "mediaPath": str(video),
+            "mediaType": "video",
+            "linkUrl": "https://example.com/",
+            "sticker": {"x": 0.5, "y": 0.5, "width": 0.51, "height": 0.26, "rotation": 0},
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "IG_STORY_UPLOAD_FAILED"
+    assert len(calls) == 1
+    assert "PUBLISH_FAILURE accountId=story-failed stage=video_upload_to_story failureCategory=upload" in caplog.text
+    assert "errorCode=IG_STORY_UPLOAD_FAILED" in caplog.text
+    assert "exceptionClass=StoryUploadError" in caplog.text
+    assert "exceptionModule=test_worker" in caplog.text
+    assert "statusCode=413" in caplog.text
+    assert "errorType=VideoConfigureRejected" in caplog.text
+    assert "remoteCode=STORY_UPLOAD_REJECTED" in caplog.text
+    assert "message=video upload failed" in caplog.text
+    for secret in (
+        "private-user",
+        "private-password",
+        "private-session-cookie",
+        "private-csrf",
+        "private-cookie",
+        "private-device-id",
+        "proxy-user",
+        "proxy-password",
+        "private-url-token",
+    ):
+        assert secret not in caplog.text
+        assert secret not in response.text
