@@ -24,6 +24,17 @@ import { Integration } from '@prisma/client';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
 import { tiktokPublicationDetail } from '@gitroom/nestjs-libraries/integrations/social/tiktok-publication-status.adapter';
 
+export interface TikTokCreatorInfo {
+  creator_avatar_url: string;
+  creator_username: string;
+  creator_nickname: string;
+  privacy_level_options: string[];
+  comment_disabled: boolean;
+  duet_disabled: boolean;
+  stitch_disabled: boolean;
+  max_video_post_duration_sec: number;
+}
+
 @Rules(
   [
     'TikTok can have one video or one picture or multiple pictures, it cannot be without an attachment.',
@@ -44,7 +55,6 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     'user.info.basic',
     'video.publish',
     'video.upload',
-    'user.info.profile',
     'user.info.stats',
   ];
   override maxConcurrentJob = 10000;
@@ -420,10 +430,8 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
-  async maxVideoLength(accessToken: string) {
-    const {
-      data: { max_video_post_duration_sec },
-    } = await (
+  async creatorInfo(accessToken: string): Promise<TikTokCreatorInfo> {
+    const res = await (
       await fetch(
         'https://open.tiktokapis.com/v2/post/publish/creator_info/query/',
         {
@@ -436,8 +444,35 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
       )
     ).json();
 
+    if (res?.error?.code && res.error.code !== 'ok') {
+      throw new BadBody(
+        'tiktok-creator-info',
+        JSON.stringify(res),
+        Buffer.from(JSON.stringify(res)),
+        res?.error?.message || 'Failed to fetch TikTok creator info'
+      );
+    }
+
+    const data = res?.data || {};
     return {
-      maxDurationSeconds: max_video_post_duration_sec,
+      creator_avatar_url: data.creator_avatar_url || '',
+      creator_username: data.creator_username || '',
+      creator_nickname: data.creator_nickname || '',
+      privacy_level_options: Array.isArray(data.privacy_level_options)
+        ? data.privacy_level_options
+        : [],
+      comment_disabled: Boolean(data.comment_disabled),
+      duet_disabled: Boolean(data.duet_disabled),
+      stitch_disabled: Boolean(data.stitch_disabled),
+      max_video_post_duration_sec:
+        Number(data.max_video_post_duration_sec) || 0,
+    };
+  }
+
+  async maxVideoLength(accessToken: string) {
+    const info = await this.creatorInfo(accessToken);
+    return {
+      maxDurationSeconds: info.max_video_post_duration_sec,
     };
   }
 
@@ -557,8 +592,7 @@ export class TiktokProvider extends SocialAbstract implements SocialProvider {
             ? { title: firstPost.message }
             : {}),
           ...(isPhoto ? { description: firstPost.message } : {}),
-          privacy_level:
-            firstPost.settings.privacy_level || 'PUBLIC_TO_EVERYONE',
+          privacy_level: firstPost.settings.privacy_level,
           ...(isPhoto
             ? {}
             : { disable_duet: !this.assetBoolean(firstPost.settings.duet) }),

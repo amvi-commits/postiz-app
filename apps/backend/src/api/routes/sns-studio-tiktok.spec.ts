@@ -525,4 +525,53 @@ describe('SNS Studio TikTok Phase 1', () => {
       expect(source).toContain('this.tiktokStatusAdapter.getPostStatus(org.id, postId)');
     });
   });
+
+  describe('Phase 6: TikTok Creator Info controller route', () => {
+    let controller: SnsStudioController;
+    let mockPublishAdapter: any;
+    const testOrg = { id: 'org_creator_info', name: 'Creator Info Org' } as any;
+
+    beforeEach(() => {
+      mockPublishAdapter = {
+        getCreatorInfo: jest.fn(),
+      };
+      controller = new SnsStudioController(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        mockPublishAdapter,
+        {} as any,
+        {} as any
+      );
+    });
+
+    it('delegates creator info retrieval to tiktokPublishAdapter.getCreatorInfo', async () => {
+      const mockResult = {
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'tt_creator',
+        creator_nickname: 'Creator',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: false,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 600,
+      };
+      mockPublishAdapter.getCreatorInfo.mockResolvedValue(mockResult);
+
+      const res = await controller.tiktokCreatorInfo(testOrg, 'int_tt_1');
+      expect(res).toEqual(mockResult);
+      expect(mockPublishAdapter.getCreatorInfo).toHaveBeenCalledWith('org_creator_info', 'int_tt_1');
+    });
+
+    it('exposes the creator-info GET route without adding inline logic to the controller', () => {
+      const controllerPath = path.resolve(__dirname, './sns-studio.controller.ts');
+      const source = fs.readFileSync(controllerPath, 'utf8');
+
+      expect(source).toContain("@Get('/tiktok/accounts/:integrationId/creator-info')");
+      expect(source).toContain('this.tiktokPublishAdapter.getCreatorInfo(org.id, integrationId)');
+    });
+  });
 });

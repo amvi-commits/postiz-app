@@ -97,6 +97,21 @@ describe('TikTokPublishAdapter', () => {
 
     mockIntegrationManager = {
       getSocialIntegration: jest.fn().mockReturnValue({
+        creatorInfo: jest.fn().mockResolvedValue({
+          creator_avatar_url: 'https://example.com/avatar.jpg',
+          creator_username: 'creator_user',
+          creator_nickname: 'Creator Nick',
+          privacy_level_options: [
+            'PUBLIC_TO_EVERYONE',
+            'MUTUAL_FOLLOW_FRIENDS',
+            'FOLLOWER_OF_CREATOR',
+            'SELF_ONLY',
+          ],
+          comment_disabled: false,
+          duet_disabled: false,
+          stitch_disabled: false,
+          max_video_post_duration_sec: 600,
+        }),
         maxVideoLength: jest.fn().mockResolvedValue({ maxDurationSeconds: 600 }),
       }),
     };
@@ -209,30 +224,94 @@ describe('TikTokPublishAdapter', () => {
   // =========================================================================
 
   describe('Settings Normalization & Constraints', () => {
-    it('applies default settings when empty', async () => {
+    it('requires explicit privacy selection and affirmative consent for DIRECT_POST and defaults interactions to false', async () => {
+      // 1. Missing privacy_level throws TIKTOK_PRIVACY_SELECTION_REQUIRED
+      await expect(
+        adapter.normalizeAndValidateSettings('tiktok', {})
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_PRIVACY_SELECTION_REQUIRED' },
+      });
+
+      // 2. Missing consentConfirmed throws TIKTOK_CONSENT_REQUIRED
+      await expect(
+        adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+        })
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_CONSENT_REQUIRED' },
+      });
+
+      // 3. Valid settings apply compliant interaction defaults (comment=false, duet=false, stitch=false)
       const { resolvedSettings, warnings } =
-        await adapter.normalizeAndValidateSettings('tiktok', {});
+        await adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+        });
       expect(resolvedSettings.content_posting_method).toBe('DIRECT_POST');
       expect(resolvedSettings.privacy_level).toBe('PUBLIC_TO_EVERYONE');
-      expect(resolvedSettings.comment).toBe(true);
+      expect(resolvedSettings.comment).toBe(false);
       expect(resolvedSettings.duet).toBe(false);
       expect(resolvedSettings.stitch).toBe(false);
       expect(resolvedSettings.autoAddMusic).toBe('no');
       expect(resolvedSettings.video_made_with_ai).toBe(false);
       expect(resolvedSettings.brand_content_toggle).toBe(false);
       expect(resolvedSettings.brand_organic_toggle).toBe(false);
+      expect(resolvedSettings.consentConfirmed).toBe(true);
+      expect(resolvedSettings.consentConfirmedAt).toBeDefined();
       expect(warnings).toEqual([]);
+    });
+
+    it('validates commercial content disclosure requirements', async () => {
+      // disclose=true with neither toggle throws TIKTOK_COMMERCIAL_DISCLOSURE_SELECTION_REQUIRED
+      await expect(
+        adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+          disclose: true,
+        })
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_COMMERCIAL_DISCLOSURE_SELECTION_REQUIRED' },
+      });
+
+      // brand_content_toggle=true with SELF_ONLY throws TIKTOK_BRANDED_CONTENT_PRIVACY_INVALID
+      await expect(
+        adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'SELF_ONLY',
+          consentConfirmed: true,
+          disclose: true,
+          brand_content_toggle: true,
+        })
+      ).rejects.toMatchObject({
+        response: { code: 'TIKTOK_BRANDED_CONTENT_PRIVACY_INVALID' },
+      });
+
+      // brand_content_toggle=true with PUBLIC_TO_EVERYONE succeeds
+      const { resolvedSettings } = await adapter.normalizeAndValidateSettings('tiktok', {
+        privacy_level: 'PUBLIC_TO_EVERYONE',
+        consentConfirmed: true,
+        disclose: true,
+        brand_content_toggle: true,
+      });
+      expect(resolvedSettings.brand_content_toggle).toBe(true);
     });
 
     it('rejects music setting for Personal TikTok accounts (TIKTOK_SETTING_UNSUPPORTED)', async () => {
       await expect(
-        adapter.normalizeAndValidateSettings('tiktok', { music: 'music_123' as any })
+        adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+          music: 'music_123' as any,
+        })
       ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects location setting for Personal TikTok accounts (TIKTOK_SETTING_UNSUPPORTED)', async () => {
       await expect(
-        adapter.normalizeAndValidateSettings('tiktok', { location: 'loc_123' as any })
+        adapter.normalizeAndValidateSettings('tiktok', {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+          location: 'loc_123' as any,
+        })
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -240,6 +319,7 @@ describe('TikTokPublishAdapter', () => {
       const { resolvedSettings } = await adapter.normalizeAndValidateSettings(
         'tiktok-business',
         {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
           music: { id: 'music_biz', title: 'Music Track' },
           location: { id: 'loc_biz', name: 'Tokyo Tower' },
         } as any
@@ -281,6 +361,10 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: '',
           media: [],
+          settings: {
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          },
         })
       ).rejects.toMatchObject({
         response: {
@@ -306,6 +390,10 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: 'Some content',
           media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          },
         })
       ).rejects.toMatchObject({
         response: {
@@ -331,6 +419,10 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: 'Some content',
           media: [{ path: '/uploads/video.mp4' }, { path: '/uploads/video2.mp4' }],
+          settings: {
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          },
         })
       ).rejects.toMatchObject({
         response: {
@@ -356,6 +448,10 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: 'Very long content...'.repeat(200),
           media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          },
         })
       ).rejects.toMatchObject({
         response: {
@@ -369,6 +465,10 @@ describe('TikTokPublishAdapter', () => {
         integrationId: 'int_personal',
         content: 'Valid content',
         media: [{ path: '/uploads/video.mp4' }],
+        settings: {
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+        },
       });
       expect(res.valid).toBe(true);
       expect(res.errors).toEqual([]);
@@ -431,6 +531,7 @@ describe('TikTokPublishAdapter', () => {
         content: 'Common defaults allow this post',
         media: [{ path: '/uploads/video.mp4' }],
         mode: 'now',
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
       });
 
       expect(result.postId).toBe('post_real_123');
@@ -455,6 +556,7 @@ describe('TikTokPublishAdapter', () => {
         content: 'Draft post',
         media: [{ path: '/uploads/video.mp4' }],
         mode: 'draft',
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
       });
 
       expect(result.postId).toBe('post_real_123');
@@ -468,6 +570,7 @@ describe('TikTokPublishAdapter', () => {
         content: 'Draft only',
         media: [{ id: 'media_draft', path: '/uploads/draft.mp4' }],
         mode: 'draft',
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
       });
 
       expect(mockPrisma.post.findMany).not.toHaveBeenCalled();
@@ -500,6 +603,7 @@ describe('TikTokPublishAdapter', () => {
           content: 'Repeated media',
           media: [{ id: 'same-id', path: '/uploads/processed.mp4' }],
           mode: 'now',
+          settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
         })
       ).rejects.toMatchObject({
         response: { code: 'TIKTOK_DUPLICATE_MEDIA' },
@@ -518,6 +622,7 @@ describe('TikTokPublishAdapter', () => {
         content: 'Pipeline execution test',
         media: [{ path: '/uploads/biz_video.mp4' }],
         mode: 'now',
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE' } as any,
       });
 
       expect(mockPostsService.validatePosts).toHaveBeenCalledTimes(1);
@@ -544,6 +649,7 @@ describe('TikTokPublishAdapter', () => {
           },
         ],
         mode: 'now',
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
       });
 
       const [calledDto] = mockPostsService.mapTypeToPost.mock.calls[0];
@@ -581,6 +687,7 @@ describe('TikTokPublishAdapter', () => {
         integrationId: 'int_personal',
         content: 'Post with real ID',
         media: [{ path: '/uploads/video.mp4' }],
+        settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
       });
       expect(res.postId).toBe('post_actual_9999');
     });
@@ -593,6 +700,7 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: 'Empty result post',
           media: [{ path: '/uploads/video.mp4' }],
+          settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
         })
       ).rejects.toMatchObject({
         response: {
@@ -611,6 +719,7 @@ describe('TikTokPublishAdapter', () => {
           integrationId: 'int_personal',
           content: 'Missing postId',
           media: [{ path: '/uploads/video.mp4' }],
+          settings: { privacy_level: 'PUBLIC_TO_EVERYONE', consentConfirmed: true } as any,
         })
       ).rejects.toMatchObject({
         response: {
@@ -625,35 +734,55 @@ describe('TikTokPublishAdapter', () => {
   // =========================================================================
 
   describe('Creator Info Execution & Error Handling', () => {
-    it('calls maxVideoLength for Personal video DIRECT_POST', async () => {
+    it('calls creatorInfo for Personal video DIRECT_POST', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
+      provider.creatorInfo.mockClear();
+
       await adapter.preflight(orgId, {
         integrationId: 'int_personal',
         content: 'Personal video direct post',
         media: [{ path: '/uploads/video.mp4' }],
-        settings: { content_posting_method: 'DIRECT_POST' } as any,
+        settings: {
+          content_posting_method: 'DIRECT_POST',
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+        } as any,
       });
 
-      expect(provider.maxVideoLength).toHaveBeenCalledTimes(1);
+      expect(provider.creatorInfo).toHaveBeenCalledTimes(1);
     });
 
-    it('does NOT call maxVideoLength for photo posts', async () => {
+    it('does NOT enforce video duration limit for photo posts', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
-      provider.maxVideoLength.mockClear();
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: false,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 60,
+      });
 
-      await adapter.preflight(orgId, {
+      const res = await adapter.preflight(orgId, {
         integrationId: 'int_personal',
         content: 'Photo post',
         media: [{ path: '/uploads/photo.jpg' }],
-        settings: { content_posting_method: 'DIRECT_POST' } as any,
+        mediaDurationSeconds: 120,
+        settings: {
+          content_posting_method: 'DIRECT_POST',
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+        } as any,
       });
 
-      expect(provider.maxVideoLength).not.toHaveBeenCalled();
+      expect(res.valid).toBe(true);
     });
 
-    it('does NOT call maxVideoLength for UPLOAD method', async () => {
+    it('does NOT call creatorInfo for UPLOAD method', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
-      provider.maxVideoLength.mockClear();
+      provider.creatorInfo.mockClear();
 
       await adapter.preflight(orgId, {
         integrationId: 'int_personal',
@@ -662,26 +791,38 @@ describe('TikTokPublishAdapter', () => {
         settings: { content_posting_method: 'UPLOAD' } as any,
       });
 
-      expect(provider.maxVideoLength).not.toHaveBeenCalled();
+      expect(provider.creatorInfo).not.toHaveBeenCalled();
     });
 
-    it('does NOT call maxVideoLength for TikTok Business accounts', async () => {
+    it('does NOT call creatorInfo for TikTok Business accounts', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
-      provider.maxVideoLength.mockClear();
+      provider.creatorInfo.mockClear();
 
       await adapter.preflight(orgId, {
         integrationId: 'int_business',
         content: 'Business video post',
         media: [{ path: '/uploads/video.mp4' }],
-        settings: { content_posting_method: 'DIRECT_POST' } as any,
+        settings: {
+          content_posting_method: 'DIRECT_POST',
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+        } as any,
       });
 
-      expect(provider.maxVideoLength).not.toHaveBeenCalled();
+      expect(provider.creatorInfo).not.toHaveBeenCalled();
     });
 
     it('rejects when video duration exceeds maxVideoLength (TIKTOK_MEDIA_DURATION_EXCEEDED)', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
-      provider.maxVideoLength.mockResolvedValueOnce({ maxDurationSeconds: 60 });
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: false,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 60,
+      });
 
       await expect(
         adapter.preflight(orgId, {
@@ -689,6 +830,11 @@ describe('TikTokPublishAdapter', () => {
           content: 'Exceeded video',
           media: [{ path: '/uploads/video.mp4' }],
           mediaDurationSeconds: 120, // 120 > 60
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          } as any,
         })
       ).rejects.toMatchObject({
         response: {
@@ -697,24 +843,153 @@ describe('TikTokPublishAdapter', () => {
       });
     });
 
-    it('produces TIKTOK_CREATOR_INFO_UNAVAILABLE warning when creator info API fails', async () => {
+    it('rejects with TIKTOK_CREATOR_INFO_UNAVAILABLE when creator info API fails (fail-closed)', async () => {
       const provider = mockIntegrationManager.getSocialIntegration('tiktok');
-      provider.maxVideoLength.mockRejectedValueOnce(new Error('Network error calling TikTok API'));
+      provider.creatorInfo.mockRejectedValueOnce(new Error('Network error calling TikTok API'));
 
-      const res = await adapter.preflight(orgId, {
-        integrationId: 'int_personal',
-        content: 'Video with API failure',
-        media: [{ path: '/uploads/video.mp4' }],
+      await expect(
+        adapter.preflight(orgId, {
+          integrationId: 'int_personal',
+          content: 'Video with API failure',
+          media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            consentConfirmed: true,
+          } as any,
+        })
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
+        },
+      });
+    });
+
+    it('rejects when selected privacy level is not allowed for creator (TIKTOK_PRIVACY_LEVEL_NOT_ALLOWED)', async () => {
+      const provider = mockIntegrationManager.getSocialIntegration('tiktok');
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: false,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 600,
       });
 
-      expect(res.valid).toBe(true);
-      expect(res.warnings).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            code: 'TIKTOK_CREATOR_INFO_UNAVAILABLE',
-          }),
-        ])
-      );
+      await expect(
+        adapter.preflight(orgId, {
+          integrationId: 'int_personal',
+          content: 'Disallowed privacy post',
+          media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'FOLLOWER_OF_CREATOR',
+            consentConfirmed: true,
+          } as any,
+        })
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_PRIVACY_LEVEL_NOT_ALLOWED',
+        },
+      });
+    });
+
+    it('rejects when comments are disabled by creator (TIKTOK_COMMENT_DISABLED_BY_CREATOR)', async () => {
+      const provider = mockIntegrationManager.getSocialIntegration('tiktok');
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: true,
+        duet_disabled: false,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 600,
+      });
+
+      await expect(
+        adapter.preflight(orgId, {
+          integrationId: 'int_personal',
+          content: 'Comment test post',
+          media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            comment: true,
+            consentConfirmed: true,
+          } as any,
+        })
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_COMMENT_DISABLED_BY_CREATOR',
+        },
+      });
+    });
+
+    it('rejects when duet is disabled by creator (TIKTOK_DUET_DISABLED_BY_CREATOR)', async () => {
+      const provider = mockIntegrationManager.getSocialIntegration('tiktok');
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: true,
+        stitch_disabled: false,
+        max_video_post_duration_sec: 600,
+      });
+
+      await expect(
+        adapter.preflight(orgId, {
+          integrationId: 'int_personal',
+          content: 'Duet test post',
+          media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            duet: true,
+            consentConfirmed: true,
+          } as any,
+        })
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_DUET_DISABLED_BY_CREATOR',
+        },
+      });
+    });
+
+    it('rejects when stitch is disabled by creator (TIKTOK_STITCH_DISABLED_BY_CREATOR)', async () => {
+      const provider = mockIntegrationManager.getSocialIntegration('tiktok');
+      provider.creatorInfo.mockResolvedValueOnce({
+        creator_avatar_url: 'https://example.com/avatar.jpg',
+        creator_username: 'creator_user',
+        creator_nickname: 'Creator Nick',
+        privacy_level_options: ['PUBLIC_TO_EVERYONE'],
+        comment_disabled: false,
+        duet_disabled: false,
+        stitch_disabled: true,
+        max_video_post_duration_sec: 600,
+      });
+
+      await expect(
+        adapter.preflight(orgId, {
+          integrationId: 'int_personal',
+          content: 'Stitch test post',
+          media: [{ path: '/uploads/video.mp4' }],
+          settings: {
+            content_posting_method: 'DIRECT_POST',
+            privacy_level: 'PUBLIC_TO_EVERYONE',
+            stitch: true,
+            consentConfirmed: true,
+          } as any,
+        })
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_STITCH_DISABLED_BY_CREATOR',
+        },
+      });
     });
 
     it('serializes same-account publish requests and rechecks TikTok duplicate media', async () => {
@@ -746,6 +1021,11 @@ describe('TikTokPublishAdapter', () => {
         content: 'Concurrent post',
         media: [{ id: 'media-concurrent', path: '/uploads/concurrent.mp4' }],
         mode: 'now' as const,
+        settings: {
+          content_posting_method: 'DIRECT_POST',
+          privacy_level: 'PUBLIC_TO_EVERYONE',
+          consentConfirmed: true,
+        } as any,
       };
       const results = await Promise.allSettled([
         adapter.publish(orgId, input),
@@ -765,7 +1045,7 @@ describe('TikTokPublishAdapter', () => {
       mockPrisma.integration.findFirst.mockImplementation(async ({ where }: any) => ({
         ...testPersonalIntegration,
         id: where.id,
-        providerIdentifier: 'tiktok',
+        providerIdentifier: where.id === 'int_business' ? 'tiktok-business' : 'tiktok',
       }));
       mockPrisma.snsAppSetting.findUnique.mockResolvedValue({
         value: {
@@ -804,6 +1084,11 @@ describe('TikTokPublishAdapter', () => {
             content: 'Parallel account post',
             media: [],
             mode: 'now',
+            settings: {
+              content_posting_method: 'DIRECT_POST',
+              privacy_level: 'PUBLIC_TO_EVERYONE',
+              consentConfirmed: true,
+            } as any,
           })
         )
       );
@@ -811,6 +1096,30 @@ describe('TikTokPublishAdapter', () => {
       expect(results).toHaveLength(2);
       expect(mappingCalls).toBe(2);
       expect(mockPostsService.createPost).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // =========================================================================
+  // 7. Dedicated getCreatorInfo Method
+  // =========================================================================
+
+  describe('getCreatorInfo', () => {
+    it('returns creator info for Personal account', async () => {
+      const info = await adapter.getCreatorInfo(orgId, 'int_personal');
+      expect(info.creator_username).toBe('creator_user');
+      expect(info.privacy_level_options).toEqual(
+        expect.arrayContaining(['PUBLIC_TO_EVERYONE'])
+      );
+    });
+
+    it('rejects for Business account with TIKTOK_CREATOR_INFO_PERSONAL_ONLY', async () => {
+      await expect(
+        adapter.getCreatorInfo(orgId, 'int_business')
+      ).rejects.toMatchObject({
+        response: {
+          code: 'TIKTOK_CREATOR_INFO_PERSONAL_ONLY',
+        },
+      });
     });
   });
 });
