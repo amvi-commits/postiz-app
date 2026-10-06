@@ -55,10 +55,10 @@ function createHarness(options?: {
       profile: '@personal-test',
       providerIdentifier: 'tiktok',
       token: 'synthetic-test-token',
-      tokenExpiration: null,
+      tokenExpiration: null as any,
       disabled: false,
       refreshNeeded: false,
-      deletedAt: null,
+      deletedAt: null as any,
     },
     {
       id: businessIntegrationId,
@@ -67,10 +67,10 @@ function createHarness(options?: {
       profile: '@business-test',
       providerIdentifier: 'tiktok-business',
       token: 'synthetic-test-token',
-      tokenExpiration: null,
+      tokenExpiration: null as any,
       disabled: false,
       refreshNeeded: false,
-      deletedAt: null,
+      deletedAt: null as any,
     },
     {
       id: instagramIntegrationId,
@@ -79,10 +79,10 @@ function createHarness(options?: {
       profile: '@instagram-test',
       providerIdentifier: 'instagram',
       token: 'synthetic-test-token',
-      tokenExpiration: null,
+      tokenExpiration: null as any,
       disabled: false,
       refreshNeeded: false,
-      deletedAt: null,
+      deletedAt: null as any,
     },
   ];
   const integrationsById = new Map(integrations.map((item) => [item.id, item]));
@@ -90,8 +90,8 @@ function createHarness(options?: {
   const plan = {
     id: planId,
     organizationId,
-    originalAssetId: null,
-    variants: [],
+    originalAssetId: null as any,
+    variants: [] as any[],
     deliveries: integrations.map((integration, index) => ({
       id: `delivery-${index + 1}`,
       contentId: planId,
@@ -239,7 +239,7 @@ function createHarness(options?: {
     type: overrides?.type || 'now',
     shortLink: false,
     date: overrides?.publishDate || new Date().toISOString(),
-    tags: [],
+    tags: [] as any[],
     snsStudioContentPlanId: planId,
     posts: integrationIds.map((integrationId) => ({
       integration: { id: integrationId },
@@ -306,9 +306,9 @@ describe('PostsController TikTok Personal pre-create protection', () => {
       );
     jest
       .spyOn(harness.postsService, 'createPost')
-      .mockImplementation(async (...args) => {
+      .mockImplementation(async (...args: any[]) => {
         order.push('createPost');
-        return harness.createPostImplementation(...args);
+        return (harness.createPostImplementation as any)(...args);
       });
 
     await expect(
@@ -345,7 +345,7 @@ describe('PostsController TikTok Personal pre-create protection', () => {
     expect(
       harness.postsService.createPost.mock.invocationCallOrder[0]
     ).toBeGreaterThan(
-      harness.commonPublishingService.assertPlanAllowsPost.mock.invocationCallOrder[1]
+      (harness.commonPublishingService.assertPlanAllowsPost as any).mock.invocationCallOrder[1]
     );
   });
 
@@ -417,7 +417,7 @@ describe('PostsController TikTok Personal pre-create protection', () => {
     expect(policyCheck).toHaveBeenCalledTimes(2);
     expect(policyCheck.mock.calls[0][3]).toHaveLength(2);
     expect(policyCheck.mock.calls[1][3]).toHaveLength(1);
-    expect(policyCheck.mock.calls[1][3][0].integration.id).toBe(
+    expect((policyCheck.mock.calls[1][3] as any)[0].integration.id).toBe(
       tiktokIntegrationId
     );
     expect(harness.postsService.createPost).toHaveBeenCalledWith(
@@ -475,11 +475,11 @@ describe('PostsController TikTok Personal pre-create protection', () => {
     });
     jest
       .spyOn(harness.postsService, 'mapTypeToPost')
-      .mockImplementation(async (...args) => {
+      .mockImplementation(async (...args: any[]) => {
         mapCalls += 1;
         if (mapCalls === 2) releaseMapping();
         await bothMapped;
-        return harness.mapTypeToPostImplementation(...args);
+        return (harness.mapTypeToPostImplementation as any)(...args);
       });
     const results = await Promise.allSettled([
       harness.controller.createPost(
@@ -520,11 +520,11 @@ describe('PostsController TikTok Personal pre-create protection', () => {
     });
     jest
       .spyOn(harness.postsService, 'mapTypeToPost')
-      .mockImplementation(async (...args) => {
+      .mockImplementation(async (...args: any[]) => {
         mapCalls += 1;
         if (mapCalls === 2) releaseMapping();
         await bothMapped;
-        return harness.mapTypeToPostImplementation(...args);
+        return (harness.mapTypeToPostImplementation as any)(...args);
       });
     const results = await Promise.allSettled([
       harness.controller.createPost(
