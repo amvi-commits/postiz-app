@@ -1,0 +1,32 @@
+{
+  "result": "PASS",
+  "baseUrl": "https://sns-studio.sweet-honey-works.com",
+  "timestamp": "2026-10-06T16:09:48.256Z",
+  "metrics": {
+    "pageErrors": [],
+    "consoleErrors": [],
+    "unexpectedConsoleErrors": [],
+    "expectedPreAuth401": [
+      "Failed to load resource: the server responded with a status of 401 ()"
+    ],
+    "expectedNegativeAuth400": [
+      "Failed to load resource: the server responded with a status of 400 ()"
+    ],
+    "http404s": [],
+    "http500s": [],
+    "corsErrors": [],
+    "mixedContent": [],
+    "externalSnsCalls": [],
+    "testedScreens": [
+      "Landing Page (/)",
+      "Terms of Service (/terms)",
+      "Privacy Policy (/privacy)",
+      "Login & Auth Flow (/auth/login)",
+      "SNS Studio Dashboard (/sns-studio)",
+      "Launches & Composer (/launches)",
+      "TikTok Creator Info & Phase 1 Provider API (/api/sns-studio/tiktok/accounts/.../creator-info)"
+    ],
+    "classification401": "EXPECTED_PRE_AUTH_401",
+    "classification400": "EXPECTED_NEGATIVE_AUTH_400"
+  }
+}

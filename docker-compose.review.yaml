@@ -1,0 +1,124 @@
+services:
+  review-postgres:
+    image: postgres:16
+    container_name: sns-studio-review-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sns_studio_review
+      POSTGRES_USER: review_user
+      POSTGRES_PASSWORD: review_safe_password_2026
+    volumes:
+      - sns-studio-review-pgdata:/var/lib/postgresql/data
+    networks:
+      - review-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review_user -d sns_studio_review"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  review-redis:
+    image: redis:7.2
+    container_name: sns-studio-review-redis
+    restart: unless-stopped
+    volumes:
+      - sns-studio-review-redisdata:/data
+    networks:
+      - review-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  review-mock-tiktok:
+    image: node:22-bookworm-slim
+    container_name: sns-studio-review-mock-tiktok
+    restart: unless-stopped
+    volumes:
+      - ./services/mock-tiktok:/app
+    working_dir: /app
+    command: ["node", "server.mjs"]
+    networks:
+      review-network:
+        aliases:
+          - open.tiktokapis.com
+    healthcheck:
+      test: ["CMD", "node", "-e", "const https=require('https'); const req=https.request('https://127.0.0.1/v2/post/publish/creator_info/query/', {method:'POST', rejectUnauthorized:false}, res=>{process.exit(res.statusCode===200?0:1)}); req.on('error', ()=>process.exit(1)); req.end();"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  review-app:
+    image: sns-studio/review-runtime:e3d4a66
+    container_name: sns-studio-review-app
+    restart: unless-stopped
+    entrypoint: []
+    command: ["/bin/sh", "/app/scripts/start-review-runtime.sh"]
+    ports:
+      - "127.0.0.1:3000:5000"
+    env_file:
+      - path: .env.review
+        required: false
+    environment:
+      MAIN_URL: 'https://sns-studio.sweet-honey-works.com'
+      FRONTEND_URL: 'https://sns-studio.sweet-honey-works.com'
+      NEXT_PUBLIC_BACKEND_URL: 'https://sns-studio.sweet-honey-works.com/api'
+      JWT_SECRET: ${REVIEW_JWT_SECRET}
+      DATABASE_URL: 'postgresql://review_user:review_safe_password_2026@review-postgres:5432/sns_studio_review'
+      REDIS_URL: 'redis://review-redis:6379'
+      BACKEND_INTERNAL_URL: 'http://localhost:3000'
+      TEMPORAL_ADDRESS: 'temporal:7233'
+      IS_GENERAL: 'true'
+      DISABLE_REGISTRATION: 'true'
+      STORAGE_PROVIDER: 'local'
+      UPLOAD_DIRECTORY: '/uploads'
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: '/uploads'
+      NODE_TLS_REJECT_UNAUTHORIZED: '0'
+      TIKTOK_CLIENT_ID: 'mock_tiktok_client_id'
+      TIKTOK_CLIENT_SECRET: 'mock_tiktok_client_secret'
+      SNS_STUDIO_SERVICE_TOKEN: 'review_service_token_secure_2026'
+      REVIEW_USER_EMAIL: ${REVIEW_USER_EMAIL:-reviewer@sweet-honey-works.com}
+      REVIEW_USER_PASSWORD: ${REVIEW_USER_PASSWORD}
+      MEDIA_WORKER_URL: 'http://sns-media-worker:8001'
+      VOICEVOX_URL: 'http://sns-studio-voicevox:50021'
+      INSTAGRAM_WORKER_URL: 'http://sns-instagram-worker:8000'
+    volumes:
+      - ./scripts/start-review-runtime.sh:/app/scripts/start-review-runtime.sh:ro
+      - ./scripts/seed-review.cjs:/app/scripts/seed-review.cjs:ro
+      - sns-studio-review-uploads:/uploads
+      - sns-studio-review-data:/sns-studio-data
+      - sns-studio-review-config:/config
+    networks:
+      - review-network
+      - temporal-network
+      - postiz-network
+    depends_on:
+      review-postgres:
+        condition: service_healthy
+      review-redis:
+        condition: service_healthy
+      review-mock-tiktok:
+        condition: service_healthy
+
+networks:
+  review-network:
+    name: sns-studio-review-network
+  temporal-network:
+    external: true
+    name: temporal-network
+  postiz-network:
+    external: true
+    name: sns-studio-v1_postiz-network
+
+volumes:
+  sns-studio-review-pgdata:
+    name: sns-studio-review-pgdata
+  sns-studio-review-redisdata:
+    name: sns-studio-review-redisdata
+  sns-studio-review-uploads:
+    name: sns-studio-review-uploads
+  sns-studio-review-data:
+    name: sns-studio-review-data
+  sns-studio-review-config:
+    name: sns-studio-review-config
