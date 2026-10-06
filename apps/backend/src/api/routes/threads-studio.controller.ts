@@ -90,6 +90,16 @@ class SyncInboxDto {
   @IsOptional() @IsString() integrationId?: string;
 }
 
+class VerifyThreadsBrowserDto {
+  @IsOptional() @IsString() account?: string;
+  @IsOptional() @IsString() text?: string;
+  @IsOptional() @IsArray() mediaUrls?: string[];
+  @IsOptional() @IsBoolean() isGhost?: boolean;
+  @IsOptional() @IsBoolean() checkHealth?: boolean;
+  @IsOptional() @IsBoolean() checkSession?: boolean;
+  @IsOptional() @IsBoolean() dryRunPost?: boolean;
+}
+
 @ApiTags('Threads Studio')
 @Controller('/threads-studio')
 export class ThreadsStudioController {
@@ -283,4 +293,13 @@ export class ThreadsStudioController {
   ) {
     return this.threadsStudioService.checkAndTriggerAutoPlug(org, postId);
   }
+
+  @Post('/browser/verify')
+  verifyBrowserTransport(
+    @Body() body: VerifyThreadsBrowserDto,
+    @GetOrgFromRequest() org?: Organization
+  ) {
+    return this.threadsStudioService.verifyBrowserTransport(body, org);
+  }
 }
+

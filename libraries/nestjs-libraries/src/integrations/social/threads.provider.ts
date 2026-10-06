@@ -1290,12 +1290,16 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
       .map((m) => m.path)
       .filter((p): p is string => Boolean(p));
 
+    const allowRealPost =
+      process.env.THREADS_BROWSER_ALLOW_REAL_POST?.toLowerCase().trim() === 'true';
+    const isDryRun = !allowRealPost;
+
     const payload: Record<string, any> = {
       account: accountName,
       text: firstPost.message,
       is_ghost: Boolean((firstPost.settings as any)?.isGhostPost),
       request_id: makeSecureId(16),
-      dry_run: false,
+      dry_run: isDryRun,
     };
 
     if (mediaUrls.length > 0) {
@@ -1333,6 +1337,131 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
         status: responseStatus,
       },
     ];
+  }
+
+  /**
+   * Diagnostic verification for Threads Browser Transport sidecar connectivity and functionality.
+   * Strictly enforces dry_run=true for post verification, never creating real posts or DB records.
+   */
+  async verifyBrowserTransport(options?: {
+    account?: string;
+    text?: string;
+    mediaUrls?: string[];
+    isGhost?: boolean;
+    checkHealth?: boolean;
+    checkSession?: boolean;
+    dryRunPost?: boolean;
+  }): Promise<{
+    transport: string;
+    allowRealPost: boolean;
+    sidecarUrl: string;
+    health?: any;
+    session?: any;
+    post?: any;
+  }> {
+    const sidecarUrl =
+      process.env.THREADS_BROWSER_SERVICE_URL || 'http://127.0.0.1:8017';
+    const serviceKey = process.env.THREADS_BROWSER_SERVICE_KEY;
+    const allowRealPost =
+      process.env.THREADS_BROWSER_ALLOW_REAL_POST?.toLowerCase().trim() === 'true';
+    const transport = process.env.THREADS_PUBLISH_TRANSPORT || 'official_api';
+
+    const result: {
+      transport: string;
+      allowRealPost: boolean;
+      sidecarUrl: string;
+      health?: any;
+      session?: any;
+      post?: any;
+    } = {
+      transport,
+      allowRealPost,
+      sidecarUrl,
+    };
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (serviceKey) {
+      headers['X-Threads-Service-Key'] = serviceKey;
+    }
+
+    // 1. Health check
+    if (options?.checkHealth !== false) {
+      try {
+        const hRes = await this.fetch(`${sidecarUrl}/health`);
+        result.health = await hRes.json().catch(() => ({ status: 'invalid_json' }));
+      } catch (err: any) {
+        result.health = { status: 'error', error: err?.message || String(err) };
+      }
+    }
+
+    // 2. Session check
+    if (options?.checkSession) {
+      const account = options.account || 'main';
+      try {
+        const sRes = await this.fetch(`${sidecarUrl}/api/threads/session/check`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ account }),
+        });
+        result.session = await sRes.json().catch(() => ({ status: 'invalid_json' }));
+      } catch (err: any) {
+        result.session = { status: 'error', error: err?.message || String(err) };
+      }
+    }
+
+    // 3. Dry-run post verification (STRICTLY dry_run=true, NEVER real post)
+    if (options?.dryRunPost) {
+      const account = options.account || 'main';
+      const payload: Record<string, any> = {
+        account,
+        text: options.text || 'SNS Studio 4017 Threads browser dry-run test',
+        is_ghost: Boolean(options.isGhost),
+        request_id: makeSecureId(16),
+        dry_run: true, // STRICTLY TRUE for diagnostics
+      };
+      if (options.mediaUrls && options.mediaUrls.length > 0) {
+        payload.media_urls = options.mediaUrls;
+      }
+
+      try {
+        const pRes = await this.fetch(`${sidecarUrl}/api/threads/post`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+        const pData = await pRes.json().catch(() => ({}));
+        if (pRes.status === 409 && pData?.code === 'GHOST_NOT_AVAILABLE') {
+          result.post = {
+            status: 'unsupported',
+            code: 'GHOST_NOT_AVAILABLE',
+            message: pData?.message || 'Threads Web UI上でGhost Post操作が利用できません。',
+            httpStatus: 409,
+            dry_run: true,
+          };
+        } else if (!pRes.ok || pData?.status === 'error') {
+          result.post = {
+            status: 'error',
+            code: pData?.code || 'POST_FAILED',
+            message: pData?.message || `HTTP ${pRes.status}`,
+            httpStatus: pRes.status,
+            dry_run: true,
+          };
+        } else {
+          result.post = {
+            status: pData?.status || 'dry_run_ok',
+            post_id: pData?.post_id ?? null,
+            url: pData?.url ?? null,
+            dry_run: true,
+          };
+        }
+      } catch (err: any) {
+        result.post = { status: 'error', error: err?.message || String(err), dry_run: true };
+      }
+    }
+
+    return result;
   }
 }
 

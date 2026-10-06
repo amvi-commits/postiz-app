@@ -305,5 +305,183 @@ describe('Threads Browser Publish Transport', () => {
     expect(thrownError.message).toContain('[POST_STATUS_UNKNOWN]');
     expect(thrownError.nonRetryable).toBe(true);
   });
+
+  describe('THREADS_BROWSER_ALLOW_REAL_POST fail-closed guard', () => {
+    beforeEach(() => {
+      process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+    });
+
+    it('enforces dry_run=true when THREADS_BROWSER_ALLOW_REAL_POST is unset', async () => {
+      delete process.env.THREADS_BROWSER_ALLOW_REAL_POST;
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({ status: 'dry_run_ok', post_id: null, url: null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const result = await provider.post('user_1', 'token_1', samplePostDetails, mockIntegration);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8017/api/threads/post',
+        expect.objectContaining({
+          body: expect.stringContaining('"dry_run":true'),
+        })
+      );
+      expect(result[0].postId).toBeUndefined();
+      expect(result[0].releaseURL).toBeUndefined();
+    });
+
+    it('enforces dry_run=true when THREADS_BROWSER_ALLOW_REAL_POST is "false"', async () => {
+      process.env.THREADS_BROWSER_ALLOW_REAL_POST = 'false';
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({ status: 'dry_run_ok', post_id: null, url: null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await provider.post('user_1', 'token_1', samplePostDetails, mockIntegration);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8017/api/threads/post',
+        expect.objectContaining({
+          body: expect.stringContaining('"dry_run":true'),
+        })
+      );
+    });
+
+    it('enforces dry_run=true for ambiguous or invalid values (fail-closed)', async () => {
+      for (const invalidVal of ['1', 'yes', 'TRUE_MAYBE', 'enabled', '0']) {
+        process.env.THREADS_BROWSER_ALLOW_REAL_POST = invalidVal;
+        const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+          new Response(
+            JSON.stringify({ status: 'dry_run_ok', post_id: null, url: null }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+
+        await provider.post('user_1', 'token_1', samplePostDetails, mockIntegration);
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'http://127.0.0.1:8017/api/threads/post',
+          expect.objectContaining({
+            body: expect.stringContaining('"dry_run":true'),
+          })
+        );
+      }
+    });
+
+    it('only sets dry_run=false when THREADS_BROWSER_ALLOW_REAL_POST is explicitly "true"', async () => {
+      process.env.THREADS_BROWSER_ALLOW_REAL_POST = 'true';
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: 'ok',
+            account: 'threads_user',
+            post_id: 'real_id_123',
+            url: 'https://threads.net/p/123',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const result = await provider.post('user_1', 'token_1', samplePostDetails, mockIntegration);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8017/api/threads/post',
+        expect.objectContaining({
+          body: expect.stringContaining('"dry_run":false'),
+        })
+      );
+      expect(result[0].postId).toBe('real_id_123');
+      expect(result[0].status).toBe('completed');
+    });
+  });
+
+  describe('verifyBrowserTransport diagnostics', () => {
+    beforeEach(() => {
+      process.env.THREADS_PUBLISH_TRANSPORT = 'browser';
+      process.env.THREADS_BROWSER_SERVICE_URL = 'http://127.0.0.1:8017';
+      process.env.THREADS_BROWSER_SERVICE_KEY = 'test_secret_key';
+    });
+
+    it('performs health check and session check', async () => {
+      jest.spyOn(provider as any, 'fetch').mockImplementation(async (url: string) => {
+        if (url.includes('/health')) {
+          return new Response(JSON.stringify({ status: 'ok', playwright: true }), { status: 200 });
+        }
+        if (url.includes('/session/check')) {
+          return new Response(JSON.stringify({ account: 'main', status: 'SESSION_OK' }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+      });
+
+      const res = await provider.verifyBrowserTransport({
+        checkHealth: true,
+        checkSession: true,
+      });
+
+      expect(res.health).toEqual({ status: 'ok', playwright: true });
+      expect(res.session).toEqual({ account: 'main', status: 'SESSION_OK' });
+      expect(res.post).toBeUndefined();
+    });
+
+    it('performs dry-run post verification strictly with dry_run=true', async () => {
+      const fetchSpy = jest.spyOn(provider as any, 'fetch').mockImplementation(async (url: string, opts: any) => {
+        if (url.includes('/post')) {
+          const body = JSON.parse(opts.body);
+          expect(body.dry_run).toBe(true);
+          return new Response(
+            JSON.stringify({ status: 'dry_run_ok', post_id: null, url: null }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+      });
+
+      const res = await provider.verifyBrowserTransport({
+        checkHealth: false,
+        dryRunPost: true,
+        text: 'SNS Studio 4017 Threads browser dry-run test',
+      });
+
+      expect(res.post).toEqual({
+        status: 'dry_run_ok',
+        post_id: null,
+        url: null,
+        dry_run: true,
+      });
+    });
+
+    it('handles Ghost post rejection as unsupported with HTTP 409', async () => {
+      jest.spyOn(provider as any, 'fetch').mockImplementation(async (url: string) => {
+        if (url.includes('/post')) {
+          return new Response(
+            JSON.stringify({
+              status: 'error',
+              code: 'GHOST_NOT_AVAILABLE',
+              message: 'Threads Web UI上でGhost Post操作が利用できません。',
+            }),
+            { status: 409 }
+          );
+        }
+        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+      });
+
+      const res = await provider.verifyBrowserTransport({
+        checkHealth: false,
+        dryRunPost: true,
+        isGhost: true,
+      });
+
+      expect(res.post).toEqual({
+        status: 'unsupported',
+        code: 'GHOST_NOT_AVAILABLE',
+        message: 'Threads Web UI上でGhost Post操作が利用できません。',
+        httpStatus: 409,
+        dry_run: true,
+      });
+    });
+  });
 });
+
 

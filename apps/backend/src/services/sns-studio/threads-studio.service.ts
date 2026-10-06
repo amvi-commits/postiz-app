@@ -1120,4 +1120,22 @@ JSONフォーマットで回答してください:
 
     return { triggered: false, currentLikes: likes, threshold };
   }
+
+  // 13. Browser Transport Diagnostics & Verification
+  async verifyBrowserTransport(
+    dto?: {
+      account?: string;
+      text?: string;
+      mediaUrls?: string[];
+      isGhost?: boolean;
+      checkHealth?: boolean;
+      checkSession?: boolean;
+      dryRunPost?: boolean;
+    },
+    org?: Organization
+  ) {
+    const provider = this.getThreadsProvider();
+    return provider.verifyBrowserTransport(dto);
+  }
 }
+
