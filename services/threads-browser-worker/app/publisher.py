@@ -167,8 +167,35 @@ def _download_media_file_safe(url: str, dest_path: str) -> None:
                 raise MediaUploadFailedError(f"メディアURLのダウンロード中に通信エラーが発生しました: {e}")
 
 
+def _find_composer_textbox(page: Page):
+    """Find the active editable textbox inside the thread composer."""
+    # 1. Try role textbox with candidate names
+    for name in COMPOSER_TEXTBOX_NAMES:
+        loc = page.get_by_role("textbox", name=name)
+        if loc.count() > 0 and loc.first.is_visible():
+            return loc.first
+
+    # 2. Try contenteditable div selectors
+    for sel in COMPOSER_TEXTBOX_SELECTORS:
+        loc = page.locator(sel)
+        if loc.count() > 0 and loc.first.is_visible():
+            return loc.first
+
+    return None
+
+
 def _find_and_open_composer(page: Page) -> bool:
-    """Attempt to locate and click the thread composer button using prioritize locator strategies."""
+    """Attempt to locate and click the thread composer button using prioritized locator strategies."""
+    # 0. Check if an active editable textbox is already visible on screen (e.g. desktop inline composer)
+    existing_textbox = _find_composer_textbox(page)
+    if existing_textbox:
+        try:
+            if existing_textbox.is_visible():
+                existing_textbox.click()
+                return True
+        except Exception:
+            pass
+
     # 1. get_by_role
     for name in COMPOSER_BUTTON_NAMES:
         locator = page.get_by_role("button", name=name)
@@ -191,23 +218,6 @@ def _find_and_open_composer(page: Page) -> bool:
             return True
 
     return False
-
-
-def _find_composer_textbox(page: Page):
-    """Find the active editable textbox inside the thread composer."""
-    # 1. Try role textbox with candidate names
-    for name in COMPOSER_TEXTBOX_NAMES:
-        loc = page.get_by_role("textbox", name=name)
-        if loc.count() > 0 and loc.first.is_visible():
-            return loc.first
-
-    # 2. Try contenteditable div selectors
-    for sel in COMPOSER_TEXTBOX_SELECTORS:
-        loc = page.locator(sel)
-        if loc.count() > 0 and loc.first.is_visible():
-            return loc.first
-
-    return None
 
 
 def _find_post_submit_button(page: Page):
