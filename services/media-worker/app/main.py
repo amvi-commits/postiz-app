@@ -77,6 +77,79 @@ class ProbeRequest(BaseModel):
     path: str = Field(min_length=1, max_length=2048)
 
 
+class AnalyzeRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=2048)
+
+
+class SceneSegment(BaseModel):
+    index: int
+    startTime: float
+    endTime: float
+    duration: float
+    confidence: float = 1.0
+
+
+class VideoAnalysisResult(BaseModel):
+    fileName: str
+    durationSeconds: float
+    width: int
+    height: int
+    fps: float
+    aspectRatio: str
+    orientation: str
+    container: str | None
+    videoCodec: str | None
+    audioCodec: str | None
+    hasAudio: bool
+    scenes: list[SceneSegment]
+    cutCount: int
+    averageCutDurationSeconds: float
+    tempo: str
+    hasBgm: bool
+    bgmConfidence: str
+    isBgmEstimated: bool
+    estimatedSubtitles: bool
+    isSubtitlesEstimated: bool
+    summary: str
+
+
+class TextOverlayItem(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+    x: float = Field(default=0.5, ge=0, le=1)
+    y: float = Field(default=0.8, ge=0, le=1)
+    fontSize: int = Field(default=64, ge=18, le=160)
+    startTime: float = Field(default=0, ge=0)
+    endTime: float | None = Field(default=None, ge=0)
+
+
+class EditPlanSegment(BaseModel):
+    sourcePath: str | None = Field(default=None, max_length=2048)
+    trimStartSeconds: float = Field(default=0, ge=0)
+    trimEndSeconds: float | None = Field(default=None, ge=0)
+    playbackSpeed: float = Field(default=1.0, ge=0.5, le=2.0)
+    order: int = Field(default=0, ge=0)
+
+
+class EditPlanRequest(BaseModel):
+    sourcePath: str = Field(min_length=1, max_length=2048)
+    outputName: str = Field(default="sns-studio-plan-render.mp4", min_length=1, max_length=100)
+    segments: list[EditPlanSegment] = Field(default_factory=list)
+    width: int = Field(default=1080, ge=320, le=2160)
+    height: int = Field(default=1920, ge=320, le=3840)
+    fps: int = Field(default=30, ge=15, le=60)
+    cropPercent: float = Field(default=100, ge=95, le=100)
+    playbackSpeed: float = Field(default=1.0, ge=0.5, le=2.0)
+    sourceAudioVolume: float = Field(default=1.0, ge=0, le=2.0)
+    bgmPath: str | None = Field(default=None, max_length=2048)
+    bgmVolume: float = Field(default=0.15, ge=0, le=1.0)
+    subtitlesPath: str | None = Field(default=None, max_length=2048)
+    subtitleFontSize: int = Field(default=48, ge=18, le=120)
+    textOverlays: list[TextOverlayItem] = Field(default_factory=list)
+    narrationText: str | None = Field(default=None, max_length=5000)
+    narrationSpeakerId: int | None = Field(default=None, ge=0)
+
+
+
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
     speakerId: int = Field(ge=0)
@@ -391,6 +464,275 @@ def concatenate(body: ConcatenateRequest) -> dict:
     return {"path": str(output), "fileName": output.name, "sizeBytes": output.stat().st_size, "durationSeconds": result["durationSeconds"], "width": result["video"]["width"], "height": result["video"]["height"], "hasAudio": result["hasAudio"], "inputCount": len(inputs)}
 
 
+def analyze_video(path: Path) -> dict:
+    media = probe(path)
+    if media["kind"] != "video":
+        raise HTTPException(status_code=422, detail={"code": "VIDEO_SOURCE_REQUIRED"})
+
+    duration = float(media["durationSeconds"])
+    width = int(media["video"]["width"] or 1080)
+    height = int(media["video"]["height"] or 1920)
+
+    ratio = width / height if height > 0 else 1.0
+    if abs(ratio - 9 / 16) < 0.05:
+        aspect_ratio = "9:16"
+        orientation = "vertical"
+    elif abs(ratio - 16 / 9) < 0.05:
+        aspect_ratio = "16:9"
+        orientation = "horizontal"
+    elif abs(ratio - 1.0) < 0.05:
+        aspect_ratio = "1:1"
+        orientation = "square"
+    elif abs(ratio - 4 / 5) < 0.05:
+        aspect_ratio = "4:5"
+        orientation = "vertical"
+    else:
+        aspect_ratio = f"{width}:{height}"
+        orientation = "vertical" if height > width else "horizontal"
+
+    fps_raw = str(media["video"].get("frameRate") or "30/1")
+    try:
+        if "/" in fps_raw:
+            num, den = fps_raw.split("/")
+            fps = round(float(num) / float(den), 2)
+        else:
+            fps = round(float(fps_raw), 2)
+    except Exception:
+        fps = 30.0
+
+    cut_timestamps = []
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "info",
+                "-i", str(path),
+                "-filter:v", "select='gt(scene,0.35)',showinfo",
+                "-f", "null", "-"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        for match in re.finditer(r"pts_time:([0-9.]+)", proc.stderr or ""):
+            ts = float(match.group(1))
+            if 0.1 < ts < (duration - 0.1):
+                cut_timestamps.append(ts)
+    except Exception:
+        pass
+
+    cut_timestamps = sorted(list(set(cut_timestamps)))
+    points = [0.0] + [t for t in cut_timestamps if t < duration] + [duration]
+    scenes = []
+    for i in range(len(points) - 1):
+        start_t = points[i]
+        end_t = points[i + 1]
+        scenes.append({
+            "index": i + 1,
+            "startTime": round(start_t, 3),
+            "endTime": round(end_t, 3),
+            "duration": round(end_t - start_t, 3),
+            "confidence": 0.9 if cut_timestamps else 0.5,
+        })
+
+    cut_count = len(scenes)
+    avg_cut = round(duration / max(1, cut_count), 2)
+    if avg_cut <= 2.5:
+        tempo = "FAST"
+    elif avg_cut <= 5.0:
+        tempo = "MEDIUM"
+    else:
+        tempo = "SLOW"
+
+    has_audio = bool(media.get("hasAudio"))
+    has_bgm = has_audio
+    is_bgm_estimated = True
+    bgm_confidence = "MEDIUM" if has_audio else "HIGH"
+    estimated_subtitles = False
+    is_subtitles_estimated = True
+
+    summary = (
+        f"{media['fileName']}: {orientation} ({aspect_ratio}), {duration:.1f}秒, "
+        f"{cut_count}カット (平均 {avg_cut:.1f}秒/カット, テンポ: {tempo})"
+    )
+
+    return {
+        "fileName": media["fileName"],
+        "durationSeconds": duration,
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "aspectRatio": aspect_ratio,
+        "orientation": orientation,
+        "container": media.get("container"),
+        "videoCodec": media["video"].get("codec"),
+        "audioCodec": media["audio"].get("codec") if media.get("audio") else None,
+        "hasAudio": has_audio,
+        "scenes": scenes,
+        "cutCount": cut_count,
+        "averageCutDurationSeconds": avg_cut,
+        "tempo": tempo,
+        "hasBgm": has_bgm,
+        "bgmConfidence": bgm_confidence,
+        "isBgmEstimated": is_bgm_estimated,
+        "estimatedSubtitles": estimated_subtitles,
+        "isSubtitlesEstimated": is_subtitles_estimated,
+        "summary": summary,
+    }
+
+
+def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
+    source = resolve_media_path(body.sourcePath)
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp4", body.outputName, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail={"code": "OUTPUT_NAME_INVALID"})
+    root = root or _media_root() / "sns-studio" / "renders"
+    root.mkdir(parents=True, exist_ok=True)
+    output = root / f"{uuid4().hex[:12]}-{body.outputName}"
+
+    segments = body.segments
+    if not segments:
+        segments = [EditPlanSegment(sourcePath=body.sourcePath, trimStartSeconds=0, trimEndSeconds=None, playbackSpeed=body.playbackSpeed, order=0)]
+
+    narration_wav: Path | None = None
+    if body.narrationText and body.narrationSpeakerId is not None:
+        try:
+            audio_bytes = get_tts_provider().synthesize(body.narrationText, str(body.narrationSpeakerId))
+            tts_dir = Path(tempfile.gettempdir()) / "sns-studio-tts"
+            tts_dir.mkdir(parents=True, exist_ok=True)
+            narration_wav = tts_dir / f"{uuid4().hex}.wav"
+            narration_wav.write_bytes(audio_bytes)
+        except Exception:
+            pass
+
+    temp_dir = Path(tempfile.gettempdir()) / f"sns-plan-{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_segment_files: list[str] = []
+
+    try:
+        for idx, seg in enumerate(sorted(segments, key=lambda s: s.order)):
+            seg_source = resolve_media_path(seg.sourcePath) if seg.sourcePath else source
+            seg_out = temp_dir / f"seg_{idx:03d}.mp4"
+            seg_media = probe(seg_source)
+            seg_dur = seg_media["durationSeconds"]
+            start_s = max(0.0, seg.trimStartSeconds)
+            end_s = min(seg_dur, seg.trimEndSeconds) if (seg.trimEndSeconds is not None and seg.trimEndSeconds > 0) else seg_dur
+            clip_dur = max(0.1, (end_s - start_s) / max(0.5, seg.playbackSpeed))
+
+            crop_w = max(1, int(body.width * body.cropPercent / 100))
+            crop_h = max(1, int(body.height * body.cropPercent / 100))
+            v_filter = (
+                f"scale={body.width}:{body.height}:force_original_aspect_ratio=increase,"
+                f"crop={crop_w}:{crop_h},scale={body.width}:{body.height},setsar=1,"
+                f"fps={body.fps},setpts=PTS/{seg.playbackSpeed}"
+            )
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+            if start_s > 0:
+                cmd.extend(["-ss", str(start_s)])
+            cmd.extend(["-i", str(seg_source), "-t", str(clip_dur), "-vf", v_filter])
+            if seg_media["hasAudio"]:
+                cmd.extend(["-af", f"atempo={seg.playbackSpeed},volume={body.sourceAudioVolume}"])
+            else:
+                cmd.extend(["-f", "lavfi", "-t", str(clip_dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
+            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(seg_out)])
+            subprocess.run(cmd, capture_output=True, check=True, timeout=600)
+            temp_segment_files.append(str(seg_out))
+
+        combined_path = temp_dir / "combined.mp4"
+        if len(temp_segment_files) == 1:
+            shutil.copyfile(temp_segment_files[0], combined_path)
+        else:
+            concat_req = ConcatenateRequest(
+                paths=temp_segment_files,
+                outputName="concat.mp4",
+                width=body.width,
+                height=body.height,
+                fps=body.fps,
+            )
+            concat_res = concatenate(concat_req, root=temp_dir)
+            combined_path = Path(concat_res["path"])
+
+        final_cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(combined_path)]
+        combined_probe = probe(combined_path)
+        final_dur = combined_probe["durationSeconds"]
+
+        bgm = resolve_media_path(body.bgmPath) if body.bgmPath else None
+        audio_inputs = 1
+        if bgm:
+            final_cmd.extend(["-stream_loop", "-1", "-i", str(bgm)])
+            bgm_idx = audio_inputs
+            audio_inputs += 1
+        if narration_wav and narration_wav.exists():
+            final_cmd.extend(["-i", str(narration_wav)])
+            narr_idx = audio_inputs
+            audio_inputs += 1
+
+        v_filters = []
+        if body.subtitlesPath:
+            sub_path = resolve_media_path(body.subtitlesPath)
+            v_filters.append(
+                f"subtitles=filename='{_escape_filter_path(sub_path)}':"
+                f"force_style='FontName=Noto Sans CJK JP,FontSize={body.subtitleFontSize},"
+                "Outline=2,Shadow=0,Alignment=2,MarginV=100'"
+            )
+
+        overlay_dir = Path(tempfile.gettempdir()) / "sns-studio-text"
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+        for item in body.textOverlays:
+            tfile = overlay_dir / f"{uuid4().hex}.txt"
+            tfile.write_text(item.text.replace("\x00", "")[:300], encoding="utf-8")
+            draw = (
+                f"drawtext=fontfile='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc':"
+                f"textfile='{_escape_filter_path(tfile)}':x=w*{item.x}-text_w/2:"
+                f"y=h*{item.y}-text_h/2:fontsize={item.fontSize}:fontcolor=white:"
+                "box=1:boxcolor=black@0.45:boxborderw=18"
+            )
+            if item.startTime > 0 or (item.endTime is not None and item.endTime > 0):
+                end_clause = f":enable='between(t,{item.startTime},{item.endTime or final_dur})'"
+                draw += end_clause
+            v_filters.append(draw)
+
+        filter_complex_parts = []
+        if v_filters:
+            filter_complex_parts.append(f"[0:v]{','.join(v_filters)}[v_out]")
+        else:
+            filter_complex_parts.append("[0:v]null[v_out]")
+
+        if audio_inputs > 1:
+            a_mix_inputs = ["[0:a]volume=1.0[base_a]"]
+            mix_names = ["[base_a]"]
+            if bgm:
+                a_mix_inputs.append(f"[{bgm_idx}:a]volume={body.bgmVolume}[bgm_a]")
+                mix_names.append("[bgm_a]")
+            if narration_wav and narration_wav.exists():
+                a_mix_inputs.append(f"[{narr_idx}:a]volume=1.5[narr_a]")
+                mix_names.append("[narr_a]")
+            filter_complex_parts.append(";".join(a_mix_inputs) + f";{''.join(mix_names)}amix=inputs={len(mix_names)}:duration=first:dropout_transition=2[a_out]")
+            final_cmd.extend(["-filter_complex", ";".join(filter_complex_parts), "-map", "[v_out]", "-map", "[a_out]"])
+        else:
+            if v_filters:
+                final_cmd.extend(["-filter_complex", ";".join(filter_complex_parts), "-map", "[v_out]", "-map", "0:a?"])
+            else:
+                final_cmd.extend(["-c:v", "copy", "-c:a", "copy"])
+
+        final_cmd.extend(["-t", str(final_dur), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output)])
+        subprocess.run(final_cmd, capture_output=True, check=True, timeout=1800)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        if narration_wav and narration_wav.exists():
+            narration_wav.unlink(missing_ok=True)
+
+    result = probe(output)
+    return {
+        "path": str(output),
+        "fileName": output.name,
+        "sizeBytes": output.stat().st_size,
+        "durationSeconds": result["durationSeconds"],
+        "width": result["video"]["width"],
+        "height": result["video"]["height"],
+        "hasAudio": result["hasAudio"],
+        "segmentCount": len(segments),
+    }
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="SNS Studio Media Worker", version="1.0.0")
     app.state.token = _ensure_service_token()
@@ -412,9 +754,17 @@ def create_app() -> FastAPI:
     def media_probe(body: ProbeRequest):
         return probe(resolve_media_path(body.path))
 
+    @app.post("/analyze")
+    def video_analyze(body: AnalyzeRequest):
+        return analyze_video(resolve_media_path(body.path))
+
     @app.post("/render")
     def render_video(body: RenderRequest):
         return render(body)
+
+    @app.post("/render-plan")
+    def render_plan(body: EditPlanRequest):
+        return render_edit_plan(body)
 
     @app.post("/comic/render")
     def render_comic_video(body: ComicRenderRequest):
@@ -423,6 +773,7 @@ def create_app() -> FastAPI:
     @app.post("/concat")
     def concatenate_videos(body: ConcatenateRequest):
         return concatenate(body)
+
 
     @app.get("/voicevox/speakers")
     def voicevox_speakers():
