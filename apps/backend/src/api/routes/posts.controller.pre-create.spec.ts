@@ -608,7 +608,7 @@ describe('PostsController TikTok Personal pre-create protection', () => {
       content_posting_method: 'DIRECT_POST',
       privacy_level: 'PUBLIC_TO_EVERYONE',
       consentConfirmed: false,
-    };
+    } as any;
 
     await expect(
       harness.controller.createPost({ id: organizationId } as any, body)
@@ -625,7 +625,7 @@ describe('PostsController TikTok Personal pre-create protection', () => {
     body.posts[0].settings = {
       content_posting_method: 'DIRECT_POST',
       consentConfirmed: true,
-    };
+    } as any;
 
     await expect(
       harness.controller.createPost({ id: organizationId } as any, body)
