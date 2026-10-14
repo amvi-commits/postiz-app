@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { Organization, Prisma } from '@prisma/client';
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { createReadStream, existsSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { Readable } from 'stream';
@@ -178,6 +178,52 @@ class RenderDto {
   @IsOptional() @IsNumber() @Min(0) @Max(1) textY?: number;
   @IsOptional() @IsNumber() @Min(18) @Max(160) textFontSize?: number;
 }
+
+class VideoToolsAnalyzeDto {
+  @IsString() @MinLength(1) @MaxLength(2048) mediaPath!: string;
+}
+
+class VideoToolsEditPlanDto {
+  @IsString() @MinLength(1) @MaxLength(2048) sourcePath!: string;
+  @IsOptional() referenceAnalysis?: Record<string, unknown>;
+  @IsOptional() @IsString() @MaxLength(2000) instructionPrompt?: string;
+  @IsOptional() @IsString() @MaxLength(100) presetId?: string;
+  @IsOptional() @IsNumber() targetDurationSeconds?: number;
+  @IsOptional() @IsString() @MaxLength(20) aspectRatio?: string;
+}
+
+class VideoToolsRenderPlanDto {
+  @IsString() @MinLength(1) @MaxLength(2048) sourcePath!: string;
+  @IsOptional() @IsString() @MaxLength(100) outputName?: string;
+  @IsOptional() @IsArray() segments?: Array<{
+    sourcePath?: string;
+    trimStartSeconds: number;
+    trimEndSeconds?: number;
+    playbackSpeed: number;
+    order: number;
+  }>;
+  @IsOptional() @IsNumber() width?: number;
+  @IsOptional() @IsNumber() height?: number;
+  @IsOptional() @IsNumber() fps?: number;
+  @IsOptional() @IsNumber() cropPercent?: number;
+  @IsOptional() @IsNumber() playbackSpeed?: number;
+  @IsOptional() @IsNumber() sourceAudioVolume?: number;
+  @IsOptional() @IsString() @MaxLength(2048) bgmPath?: string;
+  @IsOptional() @IsNumber() bgmVolume?: number;
+  @IsOptional() @IsString() @MaxLength(2048) subtitlesPath?: string;
+  @IsOptional() @IsNumber() subtitleFontSize?: number;
+  @IsOptional() @IsArray() textOverlays?: Array<{
+    text: string;
+    x: number;
+    y: number;
+    fontSize: number;
+    startTime: number;
+    endTime?: number;
+  }>;
+  @IsOptional() @IsString() @MaxLength(5000) narrationText?: string;
+  @IsOptional() @IsNumber() narrationSpeakerId?: number;
+}
+
 
 class EditingPresetDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
@@ -808,6 +854,73 @@ export class SnsStudioController {
       }
     }
     return report;
+  }
+
+  @Post('/generation/jobs/:id/cancel')
+  async cancelGenerationJob(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    const job = await this.prisma.snsGenerationJob.findFirst({
+      where: { id, organizationId: org.id },
+    });
+    if (!job) {
+      throw new HttpException({ code: 'JOB_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    if (job.status === 'COMPLETE' || job.status === 'CANCELLED') {
+      return job;
+    }
+    return this.prisma.snsGenerationJob.update({
+      where: { id },
+      data: { status: 'CANCELLED', completedAt: new Date() },
+    });
+  }
+
+  @Post('/generation/jobs/:id/retry')
+  async retryGenerationJob(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    const job = await this.prisma.snsGenerationJob.findFirst({
+      where: { id, organizationId: org.id },
+    });
+    if (!job) {
+      throw new HttpException({ code: 'JOB_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    const folder = await this.googleDrive.selectedFolder(org.id);
+    if (!folder?.id) {
+      throw new HttpException({ code: 'GOOGLE_DRIVE_FOLDER_REQUIRED' }, HttpStatus.BAD_REQUEST);
+    }
+    const input = (job.inputManifest || {}) as Record<string, unknown>;
+    try {
+      const queued = await this.generationProvider.submit({
+        jobId: job.id,
+        organizationId: org.id,
+        createdAt: new Date().toISOString(),
+        input: { ...input, outputFolderId: folder.id },
+        resultFilePrefix: `sns-studio-result-${job.id}`,
+      });
+      return this.prisma.snsGenerationJob.update({
+        where: { id },
+        data: {
+          status: 'QUEUED',
+          queuePath: queued.queuePath,
+          submittedAt: new Date(),
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+    } catch {
+      await this.prisma.snsGenerationJob.update({
+        where: { id },
+        data: {
+          status: 'FAILED',
+          errorCode: 'GENERATION_QUEUE_UPLOAD_FAILED',
+          errorMessage: 'Google Drive could not store the job manifest.',
+        },
+      });
+      throw new ServiceUnavailableException({ code: 'GENERATION_QUEUE_UPLOAD_FAILED' });
+    }
   }
 
   @Post('/proxy/test')
@@ -1553,6 +1666,176 @@ export class SnsStudioController {
       },
     });
     return { ...result, mediaAssetId: saved.id };
+  }
+
+  @Post('/video-tools/analyze')
+  async videoToolsAnalyze(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsAnalyzeDto
+  ) {
+    if (!body.mediaPath) {
+      throw new HttpException({ code: 'MEDIA_PATH_REQUIRED' }, HttpStatus.BAD_REQUEST);
+    }
+    const [asset, inboxItem] = await Promise.all([
+      this.prisma.snsMediaAsset.findFirst({
+        where: { organizationId: org.id, storageKey: body.mediaPath },
+      }),
+      this.prisma.snsContentInboxItem.findFirst({
+        where: {
+          organizationId: org.id,
+          mediaAsset: { storageKey: body.mediaPath },
+        },
+      }),
+    ]);
+    if (!asset && !inboxItem) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    return this.mediaWorker('/analyze', 'POST', { path: body.mediaPath });
+  }
+
+  @Post('/video-tools/edit-plan')
+  async videoToolsGenerateEditPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsEditPlanDto
+  ) {
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { organizationId: org.id, storageKey: body.sourcePath },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    const ref = (body.referenceAnalysis || {}) as any;
+    const targetAspect = body.aspectRatio || ref.aspectRatio || '9:16';
+    const targetDuration = body.targetDurationSeconds || ref.durationSeconds || 15;
+    const tempo = ref.tempo || 'MEDIUM';
+
+    let speed = 1.0;
+    if (tempo === 'FAST') speed = 1.15;
+    else if (tempo === 'SLOW') speed = 0.95;
+
+    const segments: Array<{ trimStartSeconds: number; trimEndSeconds?: number; playbackSpeed: number; order: number }> = [];
+    if (Array.isArray(ref.scenes) && ref.scenes.length > 1) {
+      let currentStart = 0;
+      for (let i = 0; i < ref.scenes.length; i++) {
+        const sc = ref.scenes[i];
+        const segDur = Number(sc.duration || 3.0);
+        segments.push({
+          trimStartSeconds: Number(currentStart.toFixed(2)),
+          trimEndSeconds: Number((currentStart + segDur).toFixed(2)),
+          playbackSpeed: speed,
+          order: i,
+        });
+        currentStart += segDur;
+        if (currentStart >= targetDuration) break;
+      }
+    } else {
+      segments.push({
+        trimStartSeconds: 0,
+        trimEndSeconds: targetDuration,
+        playbackSpeed: speed,
+        order: 0,
+      });
+    }
+
+    const textOverlays = [];
+    if (body.instructionPrompt) {
+      textOverlays.push({
+        text: body.instructionPrompt.slice(0, 50),
+        x: 0.5,
+        y: 0.8,
+        fontSize: 54,
+        startTime: 0,
+        endTime: 4,
+      });
+    }
+
+    return {
+      sourcePath: body.sourcePath,
+      targetAspect,
+      targetDuration,
+      tempo,
+      segments,
+      playbackSpeed: speed,
+      cropPercent: 100,
+      textOverlays,
+      bgmVolume: ref.hasBgm ? 0.2 : 0.15,
+      sourceAudioVolume: 1.0,
+      recommendations: {
+        estimatedCuts: segments.length,
+        suggestedSpeed: speed,
+        orientation: targetAspect === '9:16' ? 'vertical' : 'horizontal',
+        tempoLabel: tempo === 'FAST' ? 'アップテンポ (短めカット推奨)' : tempo === 'SLOW' ? 'ゆったり (長めカット推奨)' : '標準テンポ',
+      },
+    };
+  }
+
+  @Post('/video-tools/render-plan')
+  async videoToolsRenderPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsRenderPlanDto
+  ) {
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { organizationId: org.id, storageKey: body.sourcePath },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    if (body.segments && body.segments.length > 0) {
+      for (const seg of body.segments) {
+        if (seg.sourcePath && seg.sourcePath !== body.sourcePath) {
+          const segAsset = await this.prisma.snsMediaAsset.findFirst({
+            where: { organizationId: org.id, storageKey: seg.sourcePath },
+          });
+          if (!segAsset) {
+            throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+          }
+        }
+      }
+    }
+
+    const result: any = await this.mediaWorker('/render-plan', 'POST', body);
+
+    const sizeBytes = result.sizeBytes && /^\d+$/.test(String(result.sizeBytes)) ? BigInt(result.sizeBytes) : null;
+    const saved = await this.prisma.snsMediaAsset.create({
+      data: {
+        organizationId: org.id,
+        source: 'AI_RE_EDIT',
+        storageKey: result.path,
+        fileName: result.fileName,
+        mimeType: 'video/mp4',
+        sizeBytes,
+        width: result.width,
+        height: result.height,
+        duration: result.durationSeconds,
+        isFinal: true,
+        metadata: {
+          sourcePath: body.sourcePath,
+          segmentCount: result.segmentCount || body.segments?.length || 1,
+          renderedAt: new Date().toISOString(),
+        } as any,
+      },
+    });
+
+    const inboxItem = await this.prisma.snsContentInboxItem.create({
+      data: {
+        organizationId: org.id,
+        fileName: result.fileName,
+        mediaType: 'video',
+        sizeBytes,
+        status: 'READY_FOR_REVIEW',
+        mediaAssetId: saved.id,
+        previewUrl: `/sns-studio/media/preview?path=${encodeURIComponent(result.path)}`,
+        metadata: { sourceAction: 'VIDEO_TOOLS_RE_EDIT', mediaAssetId: saved.id } as any,
+      },
+    });
+
+    return {
+      ...result,
+      mediaAssetId: saved.id,
+      inboxItemId: inboxItem.id,
+    };
   }
 
   @Post('/media/variants')
