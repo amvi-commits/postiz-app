@@ -103,6 +103,22 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
     }
   };
 
+  // --- Postiz Media Bridge ヘルパー ---
+  // SnsMediaAsset IDからPostizの共通投稿用Mediaを作成・取得する
+  const bridgeToPostizMedia = async (mediaAssetId: string) => {
+    const res = await request(`/sns-studio/media-assets/${mediaAssetId}/post-media`, {
+      method: 'POST',
+    });
+    if (!res?.media?.id) {
+      throw new Error('共通投稿用Postiz Mediaの生成に失敗しました。');
+    }
+    return {
+      postizMediaId: res.media.id as string,
+      path: res.media.path as string,
+      sourceAssetId: mediaAssetId,
+    };
+  };
+
   // --- AI新規生成 ハンドラ ---
   const handleCreateJob = async () => {
     if (!prompt.trim()) {
@@ -115,32 +131,36 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
     }
 
     await runAction(async () => {
-      const payload: Record<string, any> = {
+      // Backend契約: { input: { ... } } を維持
+      const inputPayload: Record<string, any> = {
         prompt: prompt.trim(),
+        mode: genMode,
+        modelName: selectedModel,
         mediaType: 'video',
-        model: selectedModel,
         aspectRatio,
         durationSeconds: Number(durationSeconds),
         resolution,
       };
       if (genMode === 'image-to-video') {
-        payload.referenceImage = referenceImagePath.trim();
+        inputPayload.referenceImage = referenceImagePath.trim();
       }
       if (seed.trim()) {
-        payload.seed = parseInt(seed.trim(), 10);
+        inputPayload.seed = parseInt(seed.trim(), 10);
       }
       if (analysisResult) {
-        payload.referenceAnalysis = analysisResult;
+        inputPayload.referenceAnalysis = analysisResult;
       }
 
       const res = await request('/sns-studio/generation/jobs', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ input: inputPayload }),
       });
 
       await refreshJobs();
       setSubTool('history');
-      setStatusMessage(`動画生成ジョブ #${res.id?.slice(0, 8) || ''} を投入しました。Google Drive/Colab Workerと連携して実行されます。`);
+      setStatusMessage(
+        `動画生成ジョブ #${res.id?.slice(0, 8) || ''} を投入しました。Google Drive/Colab Workerと連携して実行されます。`
+      );
     });
   };
 
@@ -157,14 +177,21 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
         body: JSON.stringify({ videoPath: analysisVideoPath.trim() }),
       });
       setAnalysisResult(res);
-      setStatusMessage('参考動画の解析が完了しました。');
+      setStatusMessage('参考動画の構造解析が完了しました（※BGM・字幕は推測値です）。');
     });
   };
 
   const applyAnalysisToPrompt = () => {
     if (!analysisResult) return;
-    const tempoDesc = analysisResult.tempo === 'FAST' ? '高速テンポ・リズミカルなカット割り' : analysisResult.tempo === 'SLOW' ? 'ゆったりとしたシネマティックなテンポ' : '標準テンポのテンポよい構成';
-    const addition = ` [参考動画構成: テンポ=${tempoDesc}, アスペクト比=${analysisResult.aspectRatio || '9:16'}, 平均カット=${analysisResult.averageCutDurationSeconds ? analysisResult.averageCutDurationSeconds.toFixed(1) + 's' : '3s'}]`;
+    const tempoDesc =
+      analysisResult.tempo === 'FAST'
+        ? '高速テンポ・リズミカルなカット割り'
+        : analysisResult.tempo === 'SLOW'
+        ? 'ゆったりとしたシネマティックなテンポ'
+        : '標準テンポのテンポよい構成';
+    const addition = ` [参考動画構成: テンポ=${tempoDesc}, アスペクト比=${analysisResult.aspectRatio || '9:16'}, 平均カット=${
+      analysisResult.averageCutDurationSeconds ? analysisResult.averageCutDurationSeconds.toFixed(1) + 's' : '3s'
+    }]`;
     setPrompt((prev) => (prev ? prev + addition : addition.trim()));
     if (analysisResult.aspectRatio === '9:16' || analysisResult.aspectRatio === '16:9' || analysisResult.aspectRatio === '1:1') {
       setAspectRatio(analysisResult.aspectRatio);
@@ -176,7 +203,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   const applyAnalysisToReEdit = () => {
     if (!analysisResult) return;
     setReEditReferencePath(analysisVideoPath);
-    setReEditPrompt(`参考動画のテンポ(${analysisResult.tempo || 'MEDIUM'})とカット割り(${analysisResult.sceneCount || 3}シーン)を模倣して再加工`);
+    setReEditPrompt(
+      `参考動画のテンポ(${analysisResult.tempo || 'MEDIUM'})とカット割り(${analysisResult.sceneCount || 3}シーン)を模倣して再加工`
+    );
     if (analysisResult.aspectRatio) {
       setReEditTargetRatio(analysisResult.aspectRatio === '16:9' ? '16:9' : '9:16');
     }
@@ -210,7 +239,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
       });
 
       setEditPlan(plan);
-      setStatusMessage('AIによる編集プラン(Edit Plan)を作成しました。各シーンの秒数やテロップを微調整してからレンダリングできます。');
+      setStatusMessage('編集プラン(Edit Plan)を作成しました。各シーンの秒数やテロップを微調整してからレンダリングできます。');
     });
   };
 
@@ -239,6 +268,44 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
       setLastRenderedAsset(res.asset);
       setStatusMessage('FFmpegによる元動画の再加工レンダリングが完了しました！素材一覧および制作Queueに登録されました。');
     });
+  };
+
+  // --- Aモード: 共通投稿への引き継ぎ ---
+  const handleSendReEditToPublish = async () => {
+    if (!lastRenderedAsset?.id) return;
+    await runAction(async () => {
+      const bridged = await bridgeToPostizMedia(lastRenderedAsset.id);
+      onNavigateToPublish({
+        content: `${reEditPrompt}\n\n#AIReEdit #VideoTools`,
+        sourceAssetId: bridged.sourceAssetId,
+        media: {
+          id: bridged.postizMediaId,
+          path: bridged.path,
+        },
+      });
+    }, '共通投稿に素材をセットしました。');
+  };
+
+  // --- Bモード: 共通投稿への引き継ぎ ---
+  const handleSendJobOutputToPublish = async (
+    out: { mediaAssetId: string; storageKey: string },
+    promptText: string
+  ) => {
+    if (!out.mediaAssetId) {
+      setErrorMessage('SnsMediaAsset IDが見つかりません。Google Driveとの同期を再実行してください。');
+      return;
+    }
+    await runAction(async () => {
+      const bridged = await bridgeToPostizMedia(out.mediaAssetId);
+      onNavigateToPublish({
+        content: `${promptText}\n\n#AIVideo #VideoTools`,
+        sourceAssetId: bridged.sourceAssetId,
+        media: {
+          id: bridged.postizMediaId,
+          path: bridged.path,
+        },
+      });
+    }, '共通投稿に生成動画をセットしました。');
   };
 
   // --- ジョブ管理 ハンドラ ---
@@ -360,7 +427,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   checked={genMode === 'image-to-video'}
                   onChange={() => {
                     setGenMode('image-to-video');
-                    setSelectedModel('wan-2.1-i2v-1.3b');
+                    setSelectedModel('ltx-video-0.9.1-i2v');
                   }}
                 />
                 Image-to-Video (画像から動画)
@@ -409,7 +476,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm font-semibold block mb-1">モデル選択</label>
+                  <label className="text-sm font-semibold block mb-1">モデル選択 (公式HFチェックポイント)</label>
                   <select
                     className={field}
                     value={selectedModel}
@@ -417,13 +484,13 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   >
                     {genMode === 'text-to-video' ? (
                       <>
-                        <option value="wan-2.1-t2v-1.3b">Wan2.1 T2V (1.3B) - 推奨</option>
-                        <option value="ltx-video-0.9.1">LTX-Video (0.9.1)</option>
+                        <option value="wan-2.1-t2v-1.3b">Wan2.1 T2V (1.3B) - Colab T4/L4/A100 推奨</option>
+                        <option value="ltx-video-0.9.1-t2v">LTX-Video T2V (0.9.1) - 高速・T4/L4/A100 推奨</option>
                       </>
                     ) : (
                       <>
-                        <option value="wan-2.1-i2v-1.3b">Wan2.1 I2V (1.3B) - 推奨</option>
-                        <option value="ltx-video-0.9.1">LTX-Video (0.9.1)</option>
+                        <option value="ltx-video-0.9.1-i2v">LTX-Video I2V (0.9.1) - Colab T4/L4/A100 推奨</option>
+                        <option value="wan-2.1-i2v-14b">Wan2.1 I2V (14B-480P) - ※要A100 GPU (VRAM 40GB+)</option>
                       </>
                     )}
                   </select>
@@ -543,7 +610,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
               </span>
             </div>
             <p className="mt-1 text-sm text-textItemBlur">
-              元動画をAIの編集プランとFFmpegにより再加工（トリミング、順序変更、9:16クロップ、速度変更、テロップ、BGM、ナレーション）します。
+              元動画を構造化された編集プランとFFmpegにより再加工（トリミング、順序変更、9:16クロップ、速度変更、テロップ、BGM、ナレーション）します。
             </p>
 
             <div className="mt-4 flex flex-col gap-4">
@@ -575,7 +642,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
               <div>
                 <label className="text-sm font-semibold block mb-1">
-                  編集指示プロンプト
+                  編集指示文 (プロンプト)
                 </label>
                 <textarea
                   className={`${field} min-h-[70px]`}
@@ -605,7 +672,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     onClick={handleGenerateEditPlan}
                     disabled={busy || !sourceVideoPath}
                   >
-                    💡 AI編集プランを自動生成
+                    💡 ルールベース編集プランを生成 (微調整可能)
                   </button>
                 </div>
               </div>
@@ -619,6 +686,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                       {editPlan.segments?.length || 0} シーン
                     </span>
                   </div>
+                  <p className="text-[11px] text-textItemBlur mb-2">
+                    ※ルールベースで提案されたシーン分割やテロップです。各シーンの秒数や文字を自由に手動修正できます。
+                  </p>
 
                   <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                     {editPlan.segments?.map((seg: any, idx: number) => (
@@ -797,24 +867,17 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     <button
                       type="button"
                       className={`${primaryButton} text-sm`}
-                      onClick={() =>
-                        onNavigateToPublish({
-                          content: `${reEditPrompt}\n\n#AIReEdit #VideoTools`,
-                          media: {
-                            id: lastRenderedAsset.id,
-                            path: lastRenderedAsset.path,
-                          },
-                        })
-                      }
+                      onClick={handleSendReEditToPublish}
+                      disabled={busy}
                     >
-                      🚀 共通投稿 (Cross Post) にセット
+                      🚀 共通投稿 (Cross Post) にセット (Postiz Media変換)
                     </button>
                     <button
                       type="button"
                       className={`${secondaryButton} text-sm`}
                       onClick={onNavigateToQueue}
                     >
-                      📬 制作Queueで確認
+                      📬 制作Queueで確認・承認
                     </button>
                   </div>
                 </div>
@@ -987,7 +1050,32 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
           <div className="mt-4 space-y-3">
             {jobs.length ? (
               jobs.map((job: any) => {
-                const isBlocked = job.status === 'FAILED' && job.error?.includes('BLOCKED_BY_GPU');
+                const isComplete = job.status === 'COMPLETE' || job.status === 'COMPLETED';
+                const isFailed = job.status === 'FAILED';
+                const isCancelled = job.status === 'CANCELLED';
+                const isBlocked =
+                  isFailed &&
+                  (job.errorMessage?.includes('BLOCKED_BY_GPU') ||
+                    job.errorCode?.includes('BLOCKED_BY_GPU') ||
+                    job.error?.includes('BLOCKED_BY_GPU'));
+
+                const inputPrompt =
+                  job.inputManifest?.prompt || job.prompt || '(プロンプト未指定)';
+                const modelLabel =
+                  job.inputManifest?.modelName || job.inputManifest?.model || job.model || 'wan-2.1-t2v-1.3b';
+                const modeLabel =
+                  job.inputManifest?.mode || job.mediaType || 'text-to-video';
+
+                // 出力成果物 (resultManifest.outputs: [{ mediaAssetId, storageKey, name, inboxItemId }])
+                const outputs: Array<{ mediaAssetId: string; storageKey: string; name?: string; inboxItemId?: string }> =
+                  Array.isArray(job.resultManifest?.outputs)
+                    ? job.resultManifest.outputs
+                    : Array.isArray(job.outputs)
+                    ? job.outputs.map((p: any) =>
+                        typeof p === 'string' ? { storageKey: p, mediaAssetId: '' } : p
+                      )
+                    : [];
+
                 return (
                   <div
                     key={job.id}
@@ -997,11 +1085,11 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                       <div className="flex items-center gap-2">
                         <span
                           className={`rounded px-2 py-0.5 text-xs font-bold ${
-                            job.status === 'COMPLETED'
+                            isComplete
                               ? 'bg-emerald-500/20 text-emerald-300'
-                              : job.status === 'FAILED'
+                              : isFailed
                               ? 'bg-red-500/20 text-red-300'
-                              : job.status === 'CANCELLED'
+                              : isCancelled
                               ? 'bg-gray-500/20 text-gray-300'
                               : 'bg-amber-500/20 text-amber-300 animate-pulse'
                           }`}
@@ -1010,7 +1098,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                         </span>
                         <strong className="text-sm">Job #{job.id.slice(0, 8)}</strong>
                         <span className="text-xs text-textItemBlur">
-                          {job.model || 'model'} • {job.mediaType || 'video'}
+                          {modelLabel} • {modeLabel}
                         </span>
                       </div>
                       <div className="text-xs text-textItemBlur">
@@ -1019,53 +1107,61 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     </div>
 
                     <div className="mt-2 text-xs text-newTextColor">
-                      <strong>プロンプト:</strong> {job.prompt}
+                      <strong>プロンプト:</strong> {inputPrompt}
                     </div>
 
-                    {job.error && (
+                    {(job.errorMessage || job.errorCode || job.error) && (
                       <div className="mt-2 rounded bg-red-500/10 p-2 text-xs text-red-300 border border-red-500/20">
                         {isBlocked ? (
                           <div>
-                            <strong>🛑 GPU環境制約 (Fail-closed):</strong> {job.error}
+                            <strong>🛑 GPU環境制約 (Fail-closed):</strong>{' '}
+                            {job.errorCode ? `[${job.errorCode}] ` : ''}{job.errorMessage || job.error}
                             <p className="mt-1 text-[11px] text-amber-200">
                               ※ローカルWindows環境での無断実行は防護されています。Google Colabワーカー（VRAM 12GB+）で実行してください。
                             </p>
                           </div>
                         ) : (
-                          <div>エラー: {job.error}</div>
+                          <div>
+                            <strong>エラー [{job.errorCode || 'ERROR'}]:</strong>{' '}
+                            {job.errorMessage || job.error}
+                          </div>
                         )}
                       </div>
                     )}
 
                     {/* 出力成果物 */}
-                    {job.outputs?.length > 0 && (
+                    {outputs.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-4 items-center">
-                        {job.outputs.map((outPath: string, i: number) => (
+                        {outputs.map((out, i) => (
                           <div key={i} className="flex flex-col gap-1">
                             <video
                               className="max-h-40 max-w-[200px] rounded border border-blockSeparator bg-black"
                               controls
                               preload="metadata"
-                              src={previewUrl(outPath)}
+                              src={previewUrl(out.storageKey)}
                             />
                             <span className="text-[10px] text-textItemBlur truncate max-w-[200px]">
-                              {outPath}
+                              {out.storageKey}
                             </span>
-                            <button
-                              type="button"
-                              className={`${primaryButton} text-xs py-1`}
-                              onClick={() =>
-                                onNavigateToPublish({
-                                  content: `${job.prompt}\n\n#AIVideo #Wan21`,
-                                  media: {
-                                    id: job.id,
-                                    path: outPath,
-                                  },
-                                })
-                              }
-                            >
-                              共通投稿へ送る
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                className={`${primaryButton} text-xs py-1`}
+                                onClick={() => handleSendJobOutputToPublish(out, inputPrompt)}
+                                disabled={busy}
+                              >
+                                🚀 共通投稿へ送る (Postiz Media変換)
+                              </button>
+                              {out.inboxItemId && (
+                                <button
+                                  type="button"
+                                  className={`${secondaryButton} text-xs py-1`}
+                                  onClick={onNavigateToQueue}
+                                >
+                                  制作Queue
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1073,7 +1169,10 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
                     {/* アクションボタン */}
                     <div className="mt-3 flex gap-2">
-                      {(job.status === 'PENDING' || job.status === 'RUNNING') && (
+                      {(job.status === 'PENDING' ||
+                        job.status === 'SUBMITTING' ||
+                        job.status === 'QUEUED' ||
+                        job.status === 'RUNNING') && (
                         <button
                           type="button"
                           className={`${dangerButton} text-xs py-1`}
@@ -1083,7 +1182,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                           キャンセル
                         </button>
                       )}
-                      {(job.status === 'FAILED' || job.status === 'CANCELLED') && (
+                      {(isFailed || isCancelled) && (
                         <button
                           type="button"
                           className={`${secondaryButton} text-xs py-1`}

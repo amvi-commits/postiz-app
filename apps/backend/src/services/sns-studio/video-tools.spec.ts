@@ -92,6 +92,11 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
         }),
       },
       snsGenerationJob: {
+        create: jest.fn(({ data }: any) => {
+          const newJob = { id: `job-${Date.now()}-${Math.random()}`, createdAt: new Date(), ...data };
+          jobs.push(newJob);
+          return Promise.resolve(newJob);
+        }),
         findFirst: jest.fn(({ where }: any) => {
           const match = jobs.find((j) => {
             if (where.organizationId && j.organizationId !== where.organizationId) return false;
@@ -119,11 +124,20 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
       submit: jest.fn((manifest: any) => Promise.resolve({ queuePath: `drive-path-${manifest.jobId}` })),
     };
 
+    const mediaService = {
+      getMediaStatus: jest.fn((orgId: string, mediaId: string) =>
+        Promise.resolve({ id: mediaId, path: `/uploads/media-${mediaId}.mp4` })
+      ),
+      saveFile: jest.fn((orgId: string, path: string) =>
+        Promise.resolve({ id: `postiz-${path}`, path })
+      ),
+    };
+
     const controller = new SnsStudioController(
       prisma as any,
       googleDrive as any,
       generationProvider as any,
-      {} as any,
+      mediaService as any,
       {} as any,
       {} as any,
       {} as any,
@@ -333,6 +347,91 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
       expect(retried.status).toBe('QUEUED');
       expect(retried.errorCode).toBeNull();
       expect(jobs[0].status).toBe('QUEUED');
+    });
+
+    it('creates a generation job with structured { input: ... } contract matching frontend', async () => {
+      const { controller, jobs } = createController();
+
+      const created = await controller.createGenerationJob(orgA, {
+        input: {
+          prompt: 'A futuristic sports car drifting in neon city',
+          mode: 'text-to-video',
+          modelName: 'wan-2.1-t2v-1.3b',
+          aspectRatio: '9:16',
+          durationSeconds: 5,
+        },
+      });
+
+      expect(created.status).toBe('QUEUED');
+      expect(jobs.length).toBe(1);
+      expect((jobs[0].inputManifest as any).modelName).toBe('wan-2.1-t2v-1.3b');
+      expect((jobs[0].inputManifest as any).prompt).toContain('futuristic sports car');
+    });
+
+    it('rejects creating generation job when input object is missing', async () => {
+      const { controller } = createController();
+
+      await expect(
+        controller.createGenerationJob(orgA, {} as any)
+      ).rejects.toThrow(
+        expect.objectContaining({ status: HttpStatus.BAD_REQUEST })
+      );
+    });
+  });
+
+  describe('Postiz Media Bridge Integration', () => {
+    it('bridges SnsMediaAsset to Postiz Media and returns valid Postiz Media ID for common publisher', async () => {
+      const { controller } = createController({
+        assets: [
+          {
+            id: 'asset-rendered-123',
+            organizationId: orgA.id,
+            storageKey: '/uploads/sns-studio/rendered/output.mp4',
+            fileName: 'output.mp4',
+            metadata: { postizMediaId: 'postiz-media-real-999' },
+          },
+        ],
+      });
+
+      const result = await controller.createPostMedia(orgA, 'asset-rendered-123');
+      expect(result).toBeDefined();
+      expect(result.sourceAssetId).toBe('asset-rendered-123');
+      expect(result.media.id).toBe('postiz-media-real-999');
+    });
+
+    it('rejects bridging when passed an invalid ID such as a Generation Job ID', async () => {
+      const { controller } = createController({
+        jobs: [
+          { id: 'job-xyz-not-asset', organizationId: orgA.id, status: 'COMPLETE', inputManifest: {} },
+        ],
+      });
+
+      await expect(
+        controller.createPostMedia(orgA, 'job-xyz-not-asset')
+      ).rejects.toThrow(
+        expect.objectContaining({ status: HttpStatus.NOT_FOUND })
+      );
+    });
+  });
+
+  describe('Mode A NLP Instruction Parser', () => {
+    it('extracts cut count, speed, and telop text from Japanese natural language prompt', async () => {
+      const { controller } = createController({
+        assets: [
+          { organizationId: orgA.id, storageKey: '/uploads/source.mp4', fileName: 'source.mp4' },
+        ],
+      });
+
+      const plan = await controller.videoToolsGenerateEditPlan(orgA, {
+        sourcePath: '/uploads/source.mp4',
+        instructionPrompt: '3カットでテンポよく高速に、テロップ: タイムセール開催中',
+        targetDurationSeconds: 12,
+      });
+
+      expect(plan.segments.length).toBe(3);
+      expect(plan.playbackSpeed).toBe(1.15); // 'テンポよく高速'
+      expect(plan.textOverlays.length).toBe(1);
+      expect(plan.textOverlays[0].text).toBe('タイムセール開催中');
     });
   });
 });

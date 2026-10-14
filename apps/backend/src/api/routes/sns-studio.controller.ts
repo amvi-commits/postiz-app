@@ -180,16 +180,20 @@ class RenderDto {
 }
 
 class VideoToolsAnalyzeDto {
-  @IsString() @MinLength(1) @MaxLength(2048) mediaPath!: string;
+  @IsOptional() @IsString() @MaxLength(2048) mediaPath?: string;
+  @IsOptional() @IsString() @MaxLength(2048) videoPath?: string;
 }
 
 class VideoToolsEditPlanDto {
-  @IsString() @MinLength(1) @MaxLength(2048) sourcePath!: string;
+  @IsOptional() @IsString() @MaxLength(2048) sourcePath?: string;
+  @IsOptional() @IsString() @MaxLength(2048) sourceVideoPath?: string;
   @IsOptional() referenceAnalysis?: Record<string, unknown>;
   @IsOptional() @IsString() @MaxLength(2000) instructionPrompt?: string;
+  @IsOptional() @IsString() @MaxLength(2000) instructions?: string;
   @IsOptional() @IsString() @MaxLength(100) presetId?: string;
   @IsOptional() @IsNumber() targetDurationSeconds?: number;
   @IsOptional() @IsString() @MaxLength(20) aspectRatio?: string;
+  @IsOptional() @IsString() @MaxLength(20) targetAspectRatio?: string;
 }
 
 class VideoToolsRenderPlanDto {
@@ -1673,24 +1677,25 @@ export class SnsStudioController {
     @GetOrgFromRequest() org: Organization,
     @Body() body: VideoToolsAnalyzeDto
   ) {
-    if (!body.mediaPath) {
+    const effectivePath = (body.mediaPath || body.videoPath || '').trim();
+    if (!effectivePath) {
       throw new HttpException({ code: 'MEDIA_PATH_REQUIRED' }, HttpStatus.BAD_REQUEST);
     }
     const [asset, inboxItem] = await Promise.all([
       this.prisma.snsMediaAsset.findFirst({
-        where: { organizationId: org.id, storageKey: body.mediaPath },
+        where: { organizationId: org.id, storageKey: effectivePath },
       }),
       this.prisma.snsContentInboxItem.findFirst({
         where: {
           organizationId: org.id,
-          mediaAsset: { storageKey: body.mediaPath },
+          mediaAsset: { storageKey: effectivePath },
         },
       }),
     ]);
     if (!asset && !inboxItem) {
       throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
     }
-    return this.mediaWorker('/analyze', 'POST', { path: body.mediaPath });
+    return this.mediaWorker('/analyze', 'POST', { path: effectivePath });
   }
 
   @Post('/video-tools/edit-plan')
@@ -1698,24 +1703,50 @@ export class SnsStudioController {
     @GetOrgFromRequest() org: Organization,
     @Body() body: VideoToolsEditPlanDto
   ) {
+    const effectiveSourcePath = (body.sourcePath || body.sourceVideoPath || '').trim();
+    if (!effectiveSourcePath) {
+      throw new HttpException({ code: 'SOURCE_PATH_REQUIRED' }, HttpStatus.BAD_REQUEST);
+    }
     const asset = await this.prisma.snsMediaAsset.findFirst({
-      where: { organizationId: org.id, storageKey: body.sourcePath },
+      where: { organizationId: org.id, storageKey: effectiveSourcePath },
     });
     if (!asset) {
       throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
     }
 
     const ref = (body.referenceAnalysis || {}) as any;
-    const targetAspect = body.aspectRatio || ref.aspectRatio || '9:16';
+    const targetAspect = body.aspectRatio || body.targetAspectRatio || ref.aspectRatio || '9:16';
     const targetDuration = body.targetDurationSeconds || ref.durationSeconds || 15;
     const tempo = ref.tempo || 'MEDIUM';
+    const instruction = (body.instructionPrompt || body.instructions || '').trim();
 
+    // 自然言語プロンプトの構造化解析 (Rule-based NLP Adapter)
     let speed = 1.0;
-    if (tempo === 'FAST') speed = 1.15;
-    else if (tempo === 'SLOW') speed = 0.95;
+    if (tempo === 'FAST' || /高速|アップテンポ|早く|1\.2/i.test(instruction)) {
+      speed = 1.15;
+    } else if (tempo === 'SLOW' || /スロー|ゆったり|遅く|0\.9/i.test(instruction)) {
+      speed = 0.95;
+    }
+
+    // カット数の解釈（プロンプトに「3カット」「3分割」「3つのシーン」などがある場合）
+    let requestedCutCount = 0;
+    const cutMatch = instruction.match(/(\d+)\s*(?:カット|シーン|分割|scene|cut)/i);
+    if (cutMatch) {
+      requestedCutCount = Math.max(1, Math.min(10, parseInt(cutMatch[1], 10)));
+    }
 
     const segments: Array<{ trimStartSeconds: number; trimEndSeconds?: number; playbackSpeed: number; order: number }> = [];
-    if (Array.isArray(ref.scenes) && ref.scenes.length > 1) {
+    if (requestedCutCount > 1) {
+      const segDur = Number((targetDuration / requestedCutCount).toFixed(2));
+      for (let i = 0; i < requestedCutCount; i++) {
+        segments.push({
+          trimStartSeconds: Number((i * segDur).toFixed(2)),
+          trimEndSeconds: Number(((i + 1) * segDur).toFixed(2)),
+          playbackSpeed: speed,
+          order: i,
+        });
+      }
+    } else if (Array.isArray(ref.scenes) && ref.scenes.length > 1) {
       let currentStart = 0;
       for (let i = 0; i < ref.scenes.length; i++) {
         const sc = ref.scenes[i];
@@ -1739,19 +1770,21 @@ export class SnsStudioController {
     }
 
     const textOverlays = [];
-    if (body.instructionPrompt) {
+    if (instruction) {
+      const telopMatch = instruction.match(/(?:テロップ|文字|字幕)[:：]\s*([^\s,，。]+)/i);
+      const textToOverlay = telopMatch ? telopMatch[1] : instruction.slice(0, 50);
       textOverlays.push({
-        text: body.instructionPrompt.slice(0, 50),
+        text: textToOverlay,
         x: 0.5,
         y: 0.8,
         fontSize: 54,
         startTime: 0,
-        endTime: 4,
+        endTime: Math.min(5, targetDuration),
       });
     }
 
     return {
-      sourcePath: body.sourcePath,
+      sourcePath: effectiveSourcePath,
       targetAspect,
       targetDuration,
       tempo,

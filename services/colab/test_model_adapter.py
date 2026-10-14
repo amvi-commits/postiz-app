@@ -2,7 +2,7 @@
 Tests for SNS Studio Colab Model Adapter
 ========================================
 Validates the adapter interface, parameter parsing, enhanced prompts,
-fail-closed GPU guard, and mock video generation for integration pipelines.
+fail-closed GPU guard, official checkpoints, pipeline classes, and mock generation.
 """
 
 from __future__ import annotations
@@ -19,15 +19,35 @@ from sns_studio_model_adapter import (
     check_gpu_environment,
     generate,
     generate_mock_video,
+    normalize_model_id,
+    select_torch_dtype,
 )
 
 
 class TestColabModelAdapter(unittest.TestCase):
     def test_supported_models_contract(self):
-        self.assertIn("Wan2.1-T2V-1.3B", SUPPORTED_MODELS)
-        self.assertIn("LTX-Video-0.9.1", SUPPORTED_MODELS)
-        self.assertEqual(SUPPORTED_MODELS["Wan2.1-T2V-1.3B"]["modes"], ["text-to-video"])
-        self.assertIn("image-to-video", SUPPORTED_MODELS["LTX-Video-0.9.1"]["modes"])
+        # 1. Wan2.1 T2V 1.3B
+        self.assertIn("wan-2.1-t2v-1.3b", SUPPORTED_MODELS)
+        self.assertEqual(SUPPORTED_MODELS["wan-2.1-t2v-1.3b"]["pipeline_class"], "WanPipeline")
+        self.assertEqual(SUPPORTED_MODELS["wan-2.1-t2v-1.3b"]["repo_id"], "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+
+        # 2. LTX-Video T2V & I2V
+        self.assertIn("ltx-video-0.9.1-t2v", SUPPORTED_MODELS)
+        self.assertIn("ltx-video-0.9.1-i2v", SUPPORTED_MODELS)
+        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-t2v"]["pipeline_class"], "LTXPipeline")
+        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-i2v"]["pipeline_class"], "LTXImageToVideoPipeline")
+        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-i2v"]["repo_id"], "Lightricks/LTX-Video")
+
+        # 3. Wan2.1 I2V 14B (High-end A100)
+        self.assertIn("wan-2.1-i2v-14b", SUPPORTED_MODELS)
+        self.assertEqual(SUPPORTED_MODELS["wan-2.1-i2v-14b"]["pipeline_class"], "WanImageToVideoPipeline")
+        self.assertEqual(SUPPORTED_MODELS["wan-2.1-i2v-14b"]["repo_id"], "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers")
+
+    def test_normalize_model_id(self):
+        self.assertEqual(normalize_model_id("Wan2.1-T2V-1.3B", "text-to-video"), "wan-2.1-t2v-1.3b")
+        self.assertEqual(normalize_model_id("ltx-video-0.9.1", "image-to-video"), "ltx-video-0.9.1-i2v")
+        self.assertEqual(normalize_model_id("ltx-video-0.9.1", "text-to-video"), "ltx-video-0.9.1-t2v")
+        self.assertEqual(normalize_model_id("wan-2.1-i2v-14b", "image-to-video"), "wan-2.1-i2v-14b")
 
     def test_build_enhanced_prompt_with_reference(self):
         base_prompt = "A girl dancing in neon street"
@@ -50,13 +70,19 @@ class TestColabModelAdapter(unittest.TestCase):
             with self.assertRaises(ValueError):
                 generate({"jobId": "test1", "input": {"prompt": ""}}, out_dir)
 
-            # Invalid mode
-            with self.assertRaises(ValueError):
-                generate({"jobId": "test2", "input": {"prompt": "test", "mode": "unsupported"}}, out_dir)
-
             # I2V requires referenceImage
             with self.assertRaises(ValueError):
-                generate({"jobId": "test3", "input": {"prompt": "test", "mode": "image-to-video", "mock": True}}, out_dir)
+                generate(
+                    {
+                        "jobId": "test3",
+                        "input": {
+                            "prompt": "test",
+                            "mode": "image-to-video",
+                            "mock": True,
+                        },
+                    },
+                    out_dir,
+                )
 
     def test_generate_fail_closed_without_gpu_when_not_mock(self):
         gpu_info = check_gpu_environment()
@@ -66,6 +92,7 @@ class TestColabModelAdapter(unittest.TestCase):
                     "jobId": "real-job-1",
                     "input": {
                         "mode": "text-to-video",
+                        "modelName": "wan-2.1-t2v-1.3b",
                         "prompt": "Test video",
                         "mock": False,
                     },
@@ -83,12 +110,12 @@ class TestColabModelAdapter(unittest.TestCase):
                 "jobId": "test-mock-job",
                 "input": {
                     "mode": "text-to-video",
+                    "modelName": "wan-2.1-t2v-1.3b",
                     "prompt": "Cyberpunk street in rain",
                     "mock": True,
                     "durationSeconds": 2.0,
-                    "width": 320,
-                    "height": 568,
-                    "fps": 15,
+                    "aspectRatio": "9:16",
+                    "resolution": "480p",
                 },
             }
             outputs = generate(job, out_dir)

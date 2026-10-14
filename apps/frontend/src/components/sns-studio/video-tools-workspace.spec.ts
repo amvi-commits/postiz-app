@@ -29,22 +29,37 @@ describe('VideoToolsWorkspace UI smoke', () => {
             {
               id: 'job-12345678',
               status: 'FAILED',
-              model: 'wan-2.1-t2v-1.3b',
-              mediaType: 'video',
-              prompt: 'A cyberpunk racing car in neon city',
-              error: 'BLOCKED_BY_GPU: CUDA GPU with >=12GB VRAM required for Wan2.1. Colab worker recommended.',
+              inputManifest: {
+                modelName: 'wan-2.1-t2v-1.3b',
+                mode: 'text-to-video',
+                prompt: 'A cyberpunk racing car in neon city',
+              },
+              errorCode: 'BLOCKED_BY_GPU',
+              errorMessage: 'CUDA GPU with >=12GB VRAM required for Wan2.1. Colab worker recommended.',
               createdAt: '2026-10-14T02:00:00.000Z',
-              outputs: [],
+              resultManifest: null,
             },
             {
               id: 'job-87654321',
-              status: 'COMPLETED',
-              model: 'ltx-video-0.9.1',
-              mediaType: 'video',
-              prompt: 'A calm mountain river at sunset',
-              error: null,
+              status: 'COMPLETE',
+              inputManifest: {
+                modelName: 'ltx-video-0.9.1-t2v',
+                mode: 'text-to-video',
+                prompt: 'A calm mountain river at sunset',
+              },
+              errorCode: null,
+              errorMessage: null,
               createdAt: '2026-10-14T01:00:00.000Z',
-              outputs: ['/outputs/job-87654321.mp4'],
+              resultManifest: {
+                outputs: [
+                  {
+                    mediaAssetId: 'asset-gen-1',
+                    storageKey: '/uploads/sns-studio/generated/job-87654321/river.mp4',
+                    name: 'river.mp4',
+                    inboxItemId: 'inbox-gen-1',
+                  },
+                ],
+              },
             },
           ],
           mutate: jest.fn(),
@@ -109,7 +124,7 @@ describe('VideoToolsWorkspace UI smoke', () => {
     expect(html).toContain('FFmpeg 編集エンジン');
     expect(html).toContain('元動画パス (必須)');
     expect(html).toContain('参考動画パス (任意: カット割りの手本にする動画)');
-    expect(html).toContain('AI編集プランを自動生成');
+    expect(html).toContain('ルールベース編集プランを生成');
   });
 
   it('renders reference video analysis workspace', () => {
@@ -146,8 +161,9 @@ describe('VideoToolsWorkspace UI smoke', () => {
     expect(html).toContain('GPU環境制約 (Fail-closed):');
     expect(html).toContain('BLOCKED_BY_GPU');
     expect(html).toContain('Job #job-8765');
-    expect(html).toContain('COMPLETED');
-    expect(html).toContain('共通投稿へ送る');
+    expect(html).toContain('COMPLETE');
+    expect(html).toContain('共通投稿へ送る (Postiz Media変換)');
+    expect(html).toContain('/uploads/sns-studio/generated/job-87654321/river.mp4');
   });
 
   it('renders saved templates view with preset list and creation form', () => {
