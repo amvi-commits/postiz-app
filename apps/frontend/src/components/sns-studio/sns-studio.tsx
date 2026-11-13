@@ -837,6 +837,7 @@ export const SnsStudio = () => {
 
       {activeTab === 'Video Tools' && (
         <VideoToolsWorkspace
+          key={user?.orgId}
           request={request}
           previewUrl={previewUrl}
           onNavigateToPublish={(prefill) => {

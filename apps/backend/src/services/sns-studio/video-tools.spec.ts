@@ -379,6 +379,32 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
     });
   });
 
+  describe('selected reference ownership', () => {
+    it('rejects another organization reference before calling the worker', async () => {
+      const { controller } = createController({ assets: [
+        { organizationId: orgA.id, storageKey: '/uploads/source-a.mp4', duration: 2 },
+        { organizationId: orgB.id, storageKey: '/uploads/reference-b.mp4', duration: 2 },
+      ] });
+      await expect(controller.videoToolsGenerateEditPlan(orgA, {
+        sourceVideoPath: '/uploads/source-a.mp4', referenceVideoPath: '/uploads/reference-b.mp4',
+      })).rejects.toMatchObject({ status: 404 });
+      expect((controller as any).mediaWorker).not.toHaveBeenCalled();
+    });
+    it('analyzes a distinct org-owned reference and bounds the plan to the source', async () => {
+      const { controller } = createController({ assets: [
+        { organizationId: orgA.id, storageKey: '/uploads/source-a.mp4', duration: 2 },
+        { organizationId: orgA.id, storageKey: '/uploads/reference-a.mp4', duration: 15 },
+      ] });
+      const plan = await controller.videoToolsGenerateEditPlan(orgA, {
+        sourceVideoPath: '/uploads/source-a.mp4', referenceVideoPath: '/uploads/reference-a.mp4',
+      });
+      expect((controller as any).mediaWorker).toHaveBeenCalledWith('/analyze', 'POST', { path: '/uploads/reference-a.mp4' });
+      expect(plan.sourcePath).toBe('/uploads/source-a.mp4');
+      expect(plan.targetDuration).toBe(2);
+      expect(plan.segments.every((segment) => (segment.trimEndSeconds || 0) <= 2)).toBe(true);
+    });
+  });
+
   describe('Postiz Media Bridge Integration', () => {
     it('bridges SnsMediaAsset to Postiz Media and returns valid Postiz Media ID for common publisher', async () => {
       const { controller } = createController({

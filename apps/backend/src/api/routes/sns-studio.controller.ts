@@ -38,6 +38,7 @@ import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.u
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 import { TikTokStatusAdapter } from '@gitroom/backend/services/sns-studio/tiktok-status.adapter';
+import { registerVideoInput } from '@gitroom/backend/services/sns-studio/video-input';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -185,6 +186,7 @@ class VideoToolsAnalyzeDto {
 }
 
 class VideoToolsEditPlanDto {
+  @IsOptional() @IsString() @MaxLength(2048) referenceVideoPath?: string;
   @IsOptional() @IsString() @MaxLength(2048) sourcePath?: string;
   @IsOptional() @IsString() @MaxLength(2048) sourceVideoPath?: string;
   @IsOptional() referenceAnalysis?: Record<string, unknown>;
@@ -1698,6 +1700,15 @@ export class SnsStudioController {
     return this.mediaWorker('/analyze', 'POST', { path: effectivePath });
   }
 
+  @Post('/video-tools/inputs/:mediaId')
+  async videoToolsRegisterInput(
+    @GetOrgFromRequest() org: Organization,
+    @Param('mediaId') mediaId: string,
+  ) {
+    return registerVideoInput(this.prisma, this.mediaService, org.id, mediaId,
+      (path) => this.mediaWorker('/probe', 'POST', { path }));
+  }
+
   @Post('/video-tools/edit-plan')
   async videoToolsGenerateEditPlan(
     @GetOrgFromRequest() org: Organization,
@@ -1714,9 +1725,13 @@ export class SnsStudioController {
       throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
     }
 
-    const ref = (body.referenceAnalysis || {}) as any;
+    // A selected reference is checked against this organization and actually analyzed.
+    const ref = body.referenceVideoPath
+      ? await this.videoToolsAnalyze(org, { videoPath: body.referenceVideoPath }) as any
+      : (body.referenceAnalysis || {}) as any;
     const targetAspect = body.aspectRatio || body.targetAspectRatio || ref.aspectRatio || '9:16';
-    const targetDuration = body.targetDurationSeconds || ref.durationSeconds || 15;
+    const targetDuration = Math.min(body.targetDurationSeconds || ref.durationSeconds || 15,
+      asset.duration && asset.duration > 0 ? asset.duration : Infinity);
     const tempo = ref.tempo || 'MEDIUM';
     const instruction = (body.instructionPrompt || body.instructions || '').trim();
 
@@ -1753,7 +1768,7 @@ export class SnsStudioController {
         const segDur = Number(sc.duration || 3.0);
         segments.push({
           trimStartSeconds: Number(currentStart.toFixed(2)),
-          trimEndSeconds: Number((currentStart + segDur).toFixed(2)),
+          trimEndSeconds: Number(Math.min(currentStart + segDur, targetDuration).toFixed(2)),
           playbackSpeed: speed,
           order: i,
         });

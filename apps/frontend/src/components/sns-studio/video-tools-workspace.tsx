@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import useSWR from 'swr';
 import type { CommonPublishPrefill } from './common-publisher';
+import { VideoInputPicker, VideoInput } from './video-input-picker';
 
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field =
@@ -36,7 +37,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   onNavigateToPublish,
   onNavigateToQueue,
   mediaWorkerHealth,
-  initialSubTool = 'ai-generation',
+  initialSubTool = 'ai-re-edit',
 }) => {
   const [subTool, setSubTool] = useState<SubTool>(initialSubTool);
   const [busy, setBusy] = useState(false);
@@ -54,18 +55,27 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   const [seed, setSeed] = useState<string>('');
 
   // 2. 元動画の再加工 State (Aモード)
-  const [sourceVideoPath, setSourceVideoPath] = useState('');
+  const [sourceVideo, setSourceVideo] = useState<VideoInput | null>(null);
+  const sourceVideoPath = sourceVideo?.storageKey || '';
+  const [referenceVideo, setReferenceVideo] = useState<VideoInput | null>(null);
+  const [inputBusy, setInputBusy] = useState({ source: false, reference: false });
+  const inputsPending = inputBusy.source || inputBusy.reference;
   const [reEditPrompt, setReEditPrompt] = useState('テンポよく3つのシーンにカットし、9:16の縦型動画に調整');
-  const [reEditReferencePath, setReEditReferencePath] = useState('');
+  const reEditReferencePath = referenceVideo?.storageKey || '';
   const [editPlan, setEditPlan] = useState<any | null>(null);
   const [reEditTargetRatio, setReEditTargetRatio] = useState('9:16');
   const [reEditBgmPath, setReEditBgmPath] = useState('');
   const [reEditBgmVolume, setReEditBgmVolume] = useState(0.2);
   const [reEditNarrationText, setReEditNarrationText] = useState('');
-  const [lastRenderedAsset, setLastRenderedAsset] = useState<any | null>(null);
+  const [lastRenderedAsset, setLastRenderedAsset] = useState<{
+    id: string;
+    path: string;
+    durationSeconds: number;
+    source: string;
+  } | null>(null);
 
   // 3. 参考動画解析 State
-  const [analysisVideoPath, setAnalysisVideoPath] = useState('');
+  const analysisVideoPath = referenceVideo?.storageKey || '';
   const [analysisResult, setAnalysisResult] = useState<any | null>(null);
 
   // 4. 保存済みテンプレート State
@@ -130,6 +140,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
       return;
     }
 
+    if (inputsPending) return;
     await runAction(async () => {
       // Backend契約: { input: { ... } } を維持
       const inputPayload: Record<string, any> = {
@@ -166,8 +177,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
   // --- 参考動画解析 ハンドラ ---
   const handleAnalyzeVideo = async () => {
+    if (inputsPending) return;
     if (!analysisVideoPath.trim()) {
-      setErrorMessage('解析対象の動画パスを入力してください。');
+      setErrorMessage('参考動画をアップロードするか、既存Mediaから選択してください。');
       return;
     }
 
@@ -202,7 +214,6 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
   const applyAnalysisToReEdit = () => {
     if (!analysisResult) return;
-    setReEditReferencePath(analysisVideoPath);
     setReEditPrompt(
       `参考動画のテンポ(${analysisResult.tempo || 'MEDIUM'})とカット割り(${analysisResult.sceneCount || 3}シーン)を模倣して再加工`
     );
@@ -215,8 +226,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
   // --- 元動画のAI再加工 ハンドラ (Aモード) ---
   const handleGenerateEditPlan = async () => {
+    if (inputsPending) return;
     if (!sourceVideoPath.trim()) {
-      setErrorMessage('元動画のパスを入力してください。');
+      setErrorMessage('元動画をアップロードするか、既存Mediaから選択してください。');
       return;
     }
 
@@ -251,13 +263,19 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
 
     await runAction(async () => {
       const payload = {
-        editPlan: {
-          ...editPlan,
-          targetAspectRatio: reEditTargetRatio,
-          bgmPath: reEditBgmPath.trim() || undefined,
-          bgmVolume: Number(reEditBgmVolume),
-          narrationText: reEditNarrationText.trim() || undefined,
-        },
+        sourcePath: sourceVideoPath,
+        segments: editPlan.segments.map((segment: any, order: number) => ({
+          trimStartSeconds: segment.trimStartSeconds,
+          trimEndSeconds: segment.trimEndSeconds,
+          playbackSpeed: segment.playbackSpeed,
+          order,
+        })),
+        textOverlays: editPlan.textOverlays || [],
+        width: reEditTargetRatio === '16:9' ? 1920 : 1080,
+        height: reEditTargetRatio === '9:16' ? 1920 : 1080,
+        bgmPath: reEditBgmPath.trim() || undefined,
+        bgmVolume: Number(reEditBgmVolume),
+        narrationText: reEditNarrationText.trim() || undefined,
       };
 
       const res = await request('/sns-studio/video-tools/render-plan', {
@@ -265,7 +283,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
         body: JSON.stringify(payload),
       });
 
-      setLastRenderedAsset(res.asset);
+      setLastRenderedAsset({ id: res.mediaAssetId, path: res.path, durationSeconds: res.durationSeconds, source: 'AI_RE_EDIT' });
       setStatusMessage('FFmpegによる元動画の再加工レンダリングが完了しました！素材一覧および制作Queueに登録されました。');
     });
   };
@@ -330,10 +348,16 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
     }, 'Google Driveとのジョブ同期が完了しました。');
   };
 
+  const referencePicker = <VideoInputPicker label="参考動画（任意）"
+    description="構成・テンポ・雰囲気のお手本です。参考動画なしでも通常の再加工ができます。AI新規生成では元動画は不要です。"
+    value={referenceVideo} request={request} previewUrl={previewUrl} disabled={busy || inputBusy.source}
+    onBusyChange={(value) => setInputBusy((prev) => ({ ...prev, reference: value }))}
+    onChange={(value) => { setReferenceVideo(value); setAnalysisResult(null); setEditPlan(null); setLastRenderedAsset(null); }} />;
+
   return (
     <div className="flex flex-col gap-5">
       {/* サブナビゲーション */}
-      <div className="flex flex-wrap gap-2 border-b border-blockSeparator pb-3">
+      <fieldset disabled={inputsPending} className="flex flex-wrap gap-2 border-b border-blockSeparator pb-3">
         <button
           type="button"
           onClick={() => setSubTool('ai-generation')}
@@ -350,7 +374,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
             subTool === 'ai-re-edit' ? 'bg-[#5145ff] text-white' : 'text-textItemBlur hover:bg-boxFocused'
           }`}
         >
-          ✂️ 元動画のAI再加工 (Aモード)
+          参考動画から生成
         </button>
         <button
           type="button"
@@ -379,7 +403,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
         >
           📐 保存済みテンプレート
         </button>
-      </div>
+      </fieldset>
 
       {/* ステータスメッセージ */}
       {statusMessage && (
@@ -455,6 +479,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   placeholder="例: 夕暮れのサイバーパンク都市を高速で駆け抜けるスポーツカー、ネオンの光線、映画のような質感、4k解像度"
                 />
               </div>
+
+              {referencePicker}
+              {referenceVideo && <button type="button" className={secondaryButton} disabled={busy || inputsPending} onClick={handleAnalyzeVideo}>参考動画を解析（AI生成は実行しません）</button>}
 
               {genMode === 'image-to-video' && (
                 <div>
@@ -604,7 +631,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
         <div className="grid gap-5 xl:grid-cols-2">
           <section className={card}>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">元動画のAI再加工 (Aモード)</h2>
+              <h2 className="text-lg font-bold">参考動画から生成 — 元動画の再加工</h2>
               <span className="rounded-full bg-emerald-500/20 px-3 py-0.5 text-xs text-emerald-300">
                 FFmpeg 編集エンジン
               </span>
@@ -614,31 +641,11 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
             </p>
 
             <div className="mt-4 flex flex-col gap-4">
-              <div>
-                <label className="text-sm font-semibold block mb-1">
-                  元動画パス (必須)
-                </label>
-                <input
-                  type="text"
-                  className={field}
-                  value={sourceVideoPath}
-                  onChange={(e) => setSourceVideoPath(e.target.value)}
-                  placeholder="/uploads/original-clip.mp4"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-semibold block mb-1">
-                  参考動画パス (任意: カット割りの手本にする動画)
-                </label>
-                <input
-                  type="text"
-                  className={field}
-                  value={reEditReferencePath}
-                  onChange={(e) => setReEditReferencePath(e.target.value)}
-                  placeholder="/uploads/reference-reel.mp4"
-                />
-              </div>
+              <VideoInputPicker label="元動画（再加工では必須）" description="実際に再加工する素材です。参考動画とは別の動画を選択できます。"
+                value={sourceVideo} request={request} previewUrl={previewUrl} disabled={busy || inputBusy.reference}
+                onBusyChange={(value) => setInputBusy((prev) => ({ ...prev, source: value }))}
+                onChange={(value) => { setSourceVideo(value); setEditPlan(null); setLastRenderedAsset(null); }} />
+              {referencePicker}
 
               <div>
                 <label className="text-sm font-semibold block mb-1">
@@ -670,7 +677,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     type="button"
                     className={`${secondaryButton} w-full`}
                     onClick={handleGenerateEditPlan}
-                    disabled={busy || !sourceVideoPath}
+                    disabled={busy || inputsPending || !sourceVideoPath}
                   >
                     💡 ルールベース編集プランを生成 (微調整可能)
                   </button>
@@ -717,10 +724,10 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                               type="number"
                               step="0.1"
                               className={field}
-                              value={seg.startSeconds}
+                              value={seg.trimStartSeconds}
                               onChange={(e) => {
                                 const next = [...editPlan.segments];
-                                next[idx].startSeconds = parseFloat(e.target.value) || 0;
+                                next[idx].trimStartSeconds = parseFloat(e.target.value) || 0;
                                 setEditPlan({ ...editPlan, segments: next });
                               }}
                             />
@@ -731,10 +738,10 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                               type="number"
                               step="0.1"
                               className={field}
-                              value={seg.endSeconds}
+                              value={seg.trimEndSeconds}
                               onChange={(e) => {
                                 const next = [...editPlan.segments];
-                                next[idx].endSeconds = parseFloat(e.target.value) || 0;
+                                next[idx].trimEndSeconds = parseFloat(e.target.value) || 0;
                                 setEditPlan({ ...editPlan, segments: next });
                               }}
                             />
@@ -782,8 +789,8 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                       const next = [...(editPlan.segments || [])];
                       next.push({
                         sourcePath: sourceVideoPath,
-                        startSeconds: 0,
-                        endSeconds: 3,
+                        trimStartSeconds: 0,
+                        trimEndSeconds: Math.min(3, sourceVideo?.duration || 3),
                         playbackSpeed: 1.0,
                         textOverlay: { text: '' },
                       });
@@ -901,24 +908,13 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
             </p>
 
             <div className="mt-4 flex flex-col gap-4">
-              <div>
-                <label className="text-sm font-semibold block mb-1">
-                  解析する動画パス (SnsMediaAsset または パス)
-                </label>
-                <input
-                  type="text"
-                  className={field}
-                  value={analysisVideoPath}
-                  onChange={(e) => setAnalysisVideoPath(e.target.value)}
-                  placeholder="/uploads/sample-viral-reel.mp4"
-                />
-              </div>
+              {referencePicker}
 
               <button
                 type="button"
                 className={primaryButton}
                 onClick={handleAnalyzeVideo}
-                disabled={busy || !analysisVideoPath}
+                disabled={busy || inputsPending || !analysisVideoPath}
               >
                 {busy ? '動画を解析中 (FFmpeg / ffprobe)...' : '🔍 解析を実行'}
               </button>

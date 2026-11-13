@@ -606,6 +606,7 @@ def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
     temp_dir = Path(tempfile.gettempdir()) / f"sns-plan-{uuid4().hex[:8]}"
     temp_dir.mkdir(parents=True, exist_ok=True)
     temp_segment_files: list[str] = []
+    overlay_files: list[Path] = []
 
     try:
         for idx, seg in enumerate(sorted(segments, key=lambda s: s.order)):
@@ -627,12 +628,15 @@ def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
             if start_s > 0:
                 cmd.extend(["-ss", str(start_s)])
-            cmd.extend(["-i", str(seg_source), "-t", str(clip_dur), "-vf", v_filter])
+            cmd.extend(["-i", str(seg_source)])
+            if not seg_media["hasAudio"]:
+                cmd.extend(["-f", "lavfi", "-t", str(clip_dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
+            cmd.extend(["-t", str(clip_dur), "-vf", v_filter])
             if seg_media["hasAudio"]:
                 cmd.extend(["-af", f"atempo={seg.playbackSpeed},volume={body.sourceAudioVolume}"])
             else:
-                cmd.extend(["-f", "lavfi", "-t", str(clip_dur), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"])
-            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(seg_out)])
+                cmd.extend(["-map", "0:v", "-map", "1:a"])
+            cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k", str(seg_out)])
             subprocess.run(cmd, capture_output=True, check=True, timeout=600)
             temp_segment_files.append(str(seg_out))
 
@@ -640,15 +644,10 @@ def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
         if len(temp_segment_files) == 1:
             shutil.copyfile(temp_segment_files[0], combined_path)
         else:
-            concat_req = ConcatenateRequest(
-                paths=temp_segment_files,
-                outputName="concat.mp4",
-                width=body.width,
-                height=body.height,
-                fps=body.fps,
-            )
-            concat_res = concatenate(concat_req, root=temp_dir)
-            combined_path = Path(concat_res["path"])
+            # All entries are generated segments owned by this request, not user paths.
+            concat_list = temp_dir / "segments.txt"
+            concat_list.write_text("\n".join(f"file '{name}'" for name in temp_segment_files), encoding="utf-8")
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(combined_path)], capture_output=True, check=True, timeout=600)
 
         final_cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(combined_path)]
         combined_probe = probe(combined_path)
@@ -679,6 +678,7 @@ def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
         for item in body.textOverlays:
             tfile = overlay_dir / f"{uuid4().hex}.txt"
             tfile.write_text(item.text.replace("\x00", "")[:300], encoding="utf-8")
+            overlay_files.append(tfile)
             draw = (
                 f"drawtext=fontfile='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc':"
                 f"textfile='{_escape_filter_path(tfile)}':x=w*{item.x}-text_w/2:"
@@ -717,6 +717,8 @@ def render_edit_plan(body: EditPlanRequest, root: Path | None = None) -> dict:
         subprocess.run(final_cmd, capture_output=True, check=True, timeout=1800)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+        for overlay_file in overlay_files:
+            overlay_file.unlink(missing_ok=True)
         if narration_wav and narration_wav.exists():
             narration_wav.unlink(missing_ok=True)
 

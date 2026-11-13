@@ -1,3 +1,4 @@
+jest.mock('./video-input-picker', () => ({ VideoInputPicker: (props: any) => require('react').createElement('section', null, props.label, ' PCからアップロード 既存Mediaから選択') }));
 const mockSWR = jest.fn();
 
 jest.mock(
@@ -90,12 +91,13 @@ describe('VideoToolsWorkspace UI smoke', () => {
         previewUrl: dummyPreviewUrl,
         onNavigateToPublish: dummyNavigatePublish,
         onNavigateToQueue: dummyNavigateQueue,
+        initialSubTool: 'ai-generation',
       })
     );
 
     // サブナビゲーションの5タブが存在すること
     expect(html).toContain('AI新規動画生成');
-    expect(html).toContain('元動画のAI再加工 (Aモード)');
+    expect(html).toContain('参考動画から生成');
     expect(html).toContain('参考動画の解析');
     expect(html).toContain('制作履歴 &amp; ジョブ一覧');
     expect(html).toContain('保存済みテンプレート');
@@ -120,10 +122,12 @@ describe('VideoToolsWorkspace UI smoke', () => {
       })
     );
 
-    expect(html).toContain('元動画のAI再加工 (Aモード)');
+    expect(html).toContain('参考動画から生成');
     expect(html).toContain('FFmpeg 編集エンジン');
-    expect(html).toContain('元動画パス (必須)');
-    expect(html).toContain('参考動画パス (任意: カット割りの手本にする動画)');
+    expect(html).toContain('元動画（再加工では必須）');
+    expect(html).toContain('参考動画（任意）');
+    expect(html).toContain('PCからアップロード');
+    expect(html).not.toContain('元動画パス');
     expect(html).toContain('ルールベース編集プランを生成');
   });
 
@@ -139,7 +143,7 @@ describe('VideoToolsWorkspace UI smoke', () => {
     );
 
     expect(html).toContain('参考動画の解析 (Structure Analyzer)');
-    expect(html).toContain('解析する動画パス');
+    expect(html).toContain('参考動画（任意）');
     expect(html).toContain('解析を実行');
     expect(html).toContain('解析結果レポート');
   });
