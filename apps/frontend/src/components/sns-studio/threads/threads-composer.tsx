@@ -322,7 +322,7 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
       )}
       {selected && integration && !draftLoading && (
         <CalendarWeekProvider integrations={[integration]}>
-          <LaunchStoreProvider key={accountId}><ExistingDataContextProvider value={editing}>
+          <LaunchStoreProvider key={`${accountId}:${revision}`}><ExistingDataContextProvider value={editing}>
             <AddEditModal
               key={`${accountId}:${revision}`}
               date={
