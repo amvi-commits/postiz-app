@@ -27,6 +27,8 @@ Use Python3.11/3.12 and requirements-colab.txt in a dedicated Colab venv. Versio
 
 The adapter requires CUDA, total VRAM>=12GiB, free CPU RAM>=16GiB(Wan)/12GiB(LTX), and free disk>=40GiB/25GiB. These are fail-closed preconditions, not memory guarantees. Actual dtype, VAE dtype, offload, elapsed time, peak allocated/reserved GPU memory, runtime versions and output metrics are recorded. OOM/timeouts remain failures. Outputs are silent; no fabricated audio is added.
 
+The initial real Wan/T4 probe on2026-11-14 failed with OOM after163.87s (peak allocated13,379,449,856 bytes; reserved13,753,122,816). This is a failed attempt, not E2E success. Sub-20GiB GPUs now use sequential CPU offload, with its performance reason recorded. BF16 selection requires native SM8+ support and explicitly excludes emulation; T4 uses FP16. Oversized tokenized prompts fail rather than being silently truncated. Retest results must be recorded separately from this policy change.
+
 ## API/Drive contract
 
 Create via POST /sns-studio/generation/jobs with an input object containing prompt, mode, modelName, durationSeconds, resolution, aspectRatio, seed and numInferenceSteps. For I2V select referenceImageAssetId from the current organization's image assets. No local path/URL, Drive token, mock string, client execution metadata or override is accepted. UI uses mock=false. seed=0 is retained.
@@ -45,9 +47,9 @@ If a valid completed local output survives, the same runtime can retry its inter
 
 1. Real Google Drive OAuth and a selected private folder must already be configured for the organization. A mock Drive is not eligible for real generation. Users perform Google login/consent; never paste secrets into chat/notebook.
 2. Build the minimal runner zip using build_bundle.py --output <local-evidence-directory>/sns-studio-runner-bundle.zip. Only the five fixed runner files are included, with normalized LF text, stable zip metadata and hashes. Never upload the private repository, .env, browser profiles or model weights.
-3. Open sns_studio_worker.ipynb in the existing user's Colab browser. Choose an existing/free GPU runtime; do not purchase or upgrade.
+3. Open sns_studio_worker.ipynb in the existing user's Colab browser. It retrieves only five public files from the fixed source commit and verifies each SHA-256 (no repository clone/token). The deterministic zip remains available for manual distribution. Choose an existing/free GPU runtime; do not purchase or upgrade.
 4. Create exactly one Job in SNS Studio, then copy its full Job ID, attempt and manifest file ID from the history details into the first Notebook cell. Do not run unrelated queued jobs.
-5. Run hardware preflight, isolated pinned dependency installation and checksum validation of the minimal bundle. The committed Notebook expects the exact source bundle hash; regenerate/update that hash when runner sources intentionally change.
+5. Run hardware preflight, isolated pinned dependency installation and checksum validation of the five source files. The Notebook records their hashes and the corresponding manual bundle hash; update source commit/file hashes together after intentional runner changes. Source download failure stops execution; do not add a token to bypass it.
 6. Complete Google auth/consent yourself. Confirm the selected Job, inputs, model/revision, adopted settings and resources.
 7. Execute the single-job cell once. Inspect generation-evidence.json or sanitized failure-evidence.json. ffprobe and all-frame decode, H.264 MP4, dimensions/fps/frame count, byte size and SHA are mandatory.
 8. Visually inspect motion/quality/black frames/loops, and play the result fully. A technical decode pass is not a quality assessment.

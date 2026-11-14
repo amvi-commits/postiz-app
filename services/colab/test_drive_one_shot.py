@@ -1,5 +1,6 @@
 """Deterministic transport/process fault injection, not real Drive or GPU proof."""
 import copy
+import ast
 import hashlib
 import json
 import shutil
@@ -146,6 +147,23 @@ class TestOneShot(unittest.TestCase):
             for name in FILES:
                 (destination/name).write_bytes((root/name).read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
             self.assertEqual(build_bundle(root)[1], build_bundle(destination)[1])
+
+    def test_notebook_python_syntax_and_public_source_hashes(self):
+        root = Path(__file__).parent
+        notebook = json.loads((root/'sns_studio_worker.ipynb').read_text())
+        found = False
+        for cell in notebook['cells']:
+            if cell['cell_type'] != 'code':
+                continue
+            tree = ast.parse(''.join(cell['source']))
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'EXPECTED_FILE_SHA256' for target in node.targets):
+                    found = True
+                    hashes = ast.literal_eval(node.value)
+                    self.assertEqual(set(hashes), set(FILES))
+                    for name, digest in hashes.items():
+                        self.assertEqual(hashlib.sha256((root/name).read_bytes().replace(b'\r\n', b'\n')).hexdigest(), digest)
+        self.assertTrue(found)
 
 
 if __name__ == '__main__':
