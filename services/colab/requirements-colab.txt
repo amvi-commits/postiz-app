@@ -1,0 +1,17 @@
+# Pinned candidate stack; actual GPU validation is recorded per execution, never inferred.
+torch==2.6.0
+torchvision==0.21.0
+diffusers==0.35.1
+transformers==4.51.3
+accelerate==1.6.0
+huggingface-hub==0.34.4
+safetensors==0.5.3
+sentencepiece==0.2.0
+protobuf==5.29.4
+Pillow==11.2.1
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+ftfy==6.3.1
+psutil==7.0.0
+google-api-python-client==2.170.0
+google-auth==2.40.1

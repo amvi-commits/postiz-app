@@ -1,494 +1,255 @@
-"""
-SNS Studio Colab Model Adapter
-==============================
-Provides the `generate(job: dict, output_dir: str) -> list[str]` interface required
-by `services/colab/sns_studio_worker.ipynb`.
-
-Supported Modes:
-1. text-to-video (T2V)
-2. image-to-video (I2V)
-
-Supported Official OSS Video Generation Models (Hugging Face Checkpoints):
-- Wan2.1-T2V-1.3B (Wan-AI/Wan2.1-T2V-1.3B-Diffusers): Lightweight T2V (Colab T4/L4/A100)
-- LTX-Video-0.9.1 (Lightricks/LTX-Video): Fast transformer-based T2V and I2V (Colab T4/L4/A100)
-- Wan2.1-I2V-14B-480P (Wan-AI/Wan2.1-I2V-14B-480P-Diffusers): High-fidelity I2V (Requires A100 GPU 40GB+)
-
-Hardware Requirements:
-- Google Colab GPU (NVIDIA T4 16GB, L4 24GB, or A100)
-- Windows PC integrated GPU is NOT supported for AI generation (Fail-closed guard activates).
-"""
-
+"""Pinned, bounded OSS video inference. Never substitutes a model or mock output."""
 from __future__ import annotations
-
+import hashlib
+import importlib.metadata
+import importlib.util
 import json
-import logging
+import math
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("sns_studio_model_adapter")
-
-# Model configuration constants with official Hugging Face repositories and pipeline classes
-SUPPORTED_MODELS: dict[str, dict[str, Any]] = {
-    # 1. Text-to-Video
-    "wan-2.1-t2v-1.3b": {
-        "name": "Wan2.1 T2V (1.3B)",
-        "modes": ["text-to-video"],
-        "min_vram_gb": 12,
-        "recommended_resolution": (480, 832),
-        "fps": 16,
-        "repo_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-        "pipeline_class": "WanPipeline",
-        "gpu_note": "Colab T4 (16GB) / L4 (24GB) / A100 推奨",
-    },
-    "ltx-video-0.9.1-t2v": {
-        "name": "LTX-Video (0.9.1 T2V)",
-        "modes": ["text-to-video"],
-        "min_vram_gb": 12,
-        "recommended_resolution": (480, 704),
-        "fps": 24,
-        "repo_id": "Lightricks/LTX-Video",
-        "pipeline_class": "LTXPipeline",
-        "gpu_note": "Colab T4 / L4 / A100 推奨 (高速推論)",
-    },
-    # 2. Image-to-Video
-    "ltx-video-0.9.1-i2v": {
-        "name": "LTX-Video (0.9.1 I2V)",
-        "modes": ["image-to-video"],
-        "min_vram_gb": 12,
-        "recommended_resolution": (480, 704),
-        "fps": 24,
-        "repo_id": "Lightricks/LTX-Video",
-        "pipeline_class": "LTXImageToVideoPipeline",
-        "gpu_note": "Colab T4 / L4 / A100 推奨 (I2V対応)",
-    },
-    "wan-2.1-i2v-14b": {
-        "name": "Wan2.1 I2V (14B-480P)",
-        "modes": ["image-to-video"],
-        "min_vram_gb": 32,
-        "recommended_resolution": (480, 832),
-        "fps": 16,
-        "repo_id": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        "pipeline_class": "WanImageToVideoPipeline",
-        "gpu_note": "要A100 GPU (VRAM 40GB+)。T4ではOOMするためColab Pro/Pro+専用",
-    },
-}
-
-# Alias mapping for backwards compatibility and user convenience
-MODEL_ALIASES: dict[str, str] = {
-    "Wan2.1-T2V-1.3B": "wan-2.1-t2v-1.3b",
-    "wan-2.1-t2v-1.3b": "wan-2.1-t2v-1.3b",
-    "LTX-Video-0.9.1": "ltx-video-0.9.1-t2v",
-    "ltx-video-0.9.1": "ltx-video-0.9.1-t2v",
-    "ltx-video": "ltx-video-0.9.1-t2v",
-    "ltx-video-i2v": "ltx-video-0.9.1-i2v",
-    "Wan2.1-I2V-14B": "wan-2.1-i2v-14b",
-    "wan-2.1-i2v-14b": "wan-2.1-i2v-14b",
-}
+CONTRACT = json.loads(Path(__file__).with_name('model-contract.json').read_text())
+SUPPORTED_MODELS = CONTRACT['models']
+MODEL_ALIASES = CONTRACT['aliases']
 
 
-def normalize_model_id(raw_name: str, mode: str) -> str:
-    """Normalize model identifier based on mode and aliases."""
-    if not raw_name:
-        return "wan-2.1-t2v-1.3b" if mode == "text-to-video" else "ltx-video-0.9.1-i2v"
+def canonical_hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
 
-    normalized = MODEL_ALIASES.get(raw_name, raw_name.lower())
-    if normalized == "ltx-video-0.9.1-t2v" and mode == "image-to-video":
-        return "ltx-video-0.9.1-i2v"
-    if normalized in SUPPORTED_MODELS:
-        return normalized
 
-    # Fallback to defaults
-    if mode == "image-to-video":
-        return "ltx-video-0.9.1-i2v"
-    return "wan-2.1-t2v-1.3b"
+def normalize_model_id(raw_name: str | None, mode: str) -> str:
+    if mode not in ('text-to-video', 'image-to-video'):
+        raise ValueError('GENERATION_INPUT_INVALID:mode')
+    if raw_name is None:
+        raw_name = 'wan-2.1-t2v-1.3b' if mode == 'text-to-video' else 'ltx-video-0.9.1-i2v'
+    if not isinstance(raw_name, str) or not raw_name:
+        raise ValueError('GENERATION_INPUT_INVALID:modelName')
+    model = MODEL_ALIASES.get(raw_name, raw_name)
+    if model not in SUPPORTED_MODELS or mode not in SUPPORTED_MODELS[model]['modes']:
+        raise ValueError('GENERATION_INPUT_INVALID:model_mode')
+    return model
+
+
+def validate_input(raw: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError('GENERATION_INPUT_INVALID:input')
+    allowed = {'mode', 'modelName', 'prompt', 'negativePrompt', 'durationSeconds', 'resolution', 'aspectRatio', 'seed', 'numInferenceSteps', 'count', 'mock', 'referenceImageAssetId', 'adopted', 'referenceImage'}
+    if set(raw) - allowed:
+        raise ValueError('GENERATION_INPUT_INVALID:unsupported_field')
+    mode = raw.get('mode', 'text-to-video')
+    model_id = normalize_model_id(raw.get('modelName'), mode)
+    model = SUPPORTED_MODELS[model_id]
+    prompt = raw.get('prompt')
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
+        raise ValueError('GENERATION_INPUT_INVALID:prompt')
+    negative = raw.get('negativePrompt', '')
+    if not isinstance(negative, str) or len(negative) > 2000:
+        raise ValueError('GENERATION_INPUT_INVALID:negativePrompt')
+    if 'mock' in raw and type(raw['mock']) is not bool:
+        raise ValueError('GENERATION_INPUT_INVALID:mock')
+
+    def integer(key, default, low, high):
+        value = raw.get(key, default)
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f'GENERATION_INPUT_INVALID:{key}')
+        return value
+
+    duration = integer('durationSeconds', 3, 2, 4)
+    steps = integer('numInferenceSteps', 30, 1, 50)
+    seed = integer('seed', 0, 0, 4294967295)
+    integer('count', 1, 1, 1)
+    ratio = raw.get('aspectRatio', '9:16')
+    if raw.get('resolution', '480p') != '480p' or not isinstance(ratio, str) or ratio not in model['sizes']:
+        raise ValueError('GENERATION_INPUT_INVALID:resolution_or_ratio')
+    width, height = model['sizes'][ratio]
+    frames = math.floor((duration * model['fps'] - 1) / model['frame_stride'] + 0.5) * model['frame_stride'] + 1
+    adopted = dict(width=width, height=height, fps=model['fps'], numFrames=frames, durationSeconds=frames/model['fps'], reasons=['Dimensions use the model spatial grid; frames use its temporal grid.'], repoId=model['repo_id'], revision=model['revision'], pipeline=model['pipeline_class'])
+    if 'adopted' in raw and raw['adopted'] != adopted:
+        raise ValueError('GENERATION_INPUT_INVALID:adopted_mismatch')
+    result = dict(mode=mode, modelName=model_id, prompt=prompt.strip(), negativePrompt=negative, durationSeconds=duration, resolution='480p', aspectRatio=ratio, numInferenceSteps=steps, seed=seed, count=1, mock=raw.get('mock', False), adopted=adopted)
+    if mode == 'image-to-video':
+        asset = raw.get('referenceImageAssetId')
+        if not isinstance(asset, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', asset):
+            raise ValueError('GENERATION_INPUT_INVALID:referenceImageAssetId')
+        result['referenceImageAssetId'] = asset
+        if 'referenceImage' in raw:
+            result['referenceImage'] = raw['referenceImage']
+    elif 'referenceImageAssetId' in raw or 'referenceImage' in raw:
+        raise ValueError('GENERATION_INPUT_INVALID:referenceImageAssetId')
+    return result
 
 
 def check_gpu_environment() -> dict[str, Any]:
-    """Detect available GPU, VRAM, and bfloat16 support."""
+    info = dict(cuda_available=False, device_name='None', vram_gb=0.0, free_vram_gb=0.0, bf16_supported=False, ram_free_gb=None, disk_free_gb=shutil.disk_usage(Path.cwd()).free/2**30)
+    try:
+        import psutil
+        info['ram_free_gb'] = psutil.virtual_memory().available/2**30
+    except ImportError:
+        pass
     try:
         import torch
-
-        if not torch.cuda.is_available():
-            return {
-                "cuda_available": False,
-                "device_name": "None",
-                "vram_gb": 0.0,
-                "bf16_supported": False,
-            }
-        device_name = torch.cuda.get_device_name(0)
-        vram_bytes = torch.cuda.get_device_properties(0).total_memory
-        vram_gb = round(vram_bytes / (1024**3), 2)
-        bf16_supported = torch.cuda.is_bf16_supported() if hasattr(torch.cuda, "is_bf16_supported") else False
-        return {
-            "cuda_available": True,
-            "device_name": device_name,
-            "vram_gb": vram_gb,
-            "bf16_supported": bf16_supported,
-        }
+        info.update(torch=torch.__version__, cuda=torch.version.cuda)
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            info.update(cuda_available=True, device_name=torch.cuda.get_device_name(0), vram_gb=total/2**30, free_vram_gb=free/2**30, bf16_supported=torch.cuda.is_bf16_supported())
     except ImportError:
-        return {
-            "cuda_available": False,
-            "device_name": "PyTorch not installed",
-            "vram_gb": 0.0,
-            "bf16_supported": False,
-        }
+        pass
+    return info
 
 
-def select_torch_dtype() -> Any:
-    """Safely select torch dtype according to CUDA hardware capability."""
+def select_torch_dtype():
     import torch
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-    gpu_info = check_gpu_environment()
-    if gpu_info.get("bf16_supported", False):
-        return torch.bfloat16
-    return torch.float16
+
+def runtime_versions() -> dict:
+    names = ['torch', 'torchvision', 'diffusers', 'transformers', 'accelerate', 'huggingface-hub', 'safetensors', 'sentencepiece', 'Pillow', 'imageio', 'imageio-ffmpeg', 'ftfy', 'psutil']
+    result = {}
+    for name in names:
+        try:
+            result[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            result[name] = None
+    return result
+
+
+def verify_runtime_versions():
+    if sys.version_info[:2] not in ((3, 11), (3, 12)):
+        raise RuntimeError('UNVERIFIED_PYTHON_VERSION_USE_PINNED_COLAB_RUNTIME')
+    required = dict(line.split('==', 1) for line in Path(__file__).with_name('requirements-colab.txt').read_text().splitlines() if line and not line.startswith('#'))
+    for name in ('torch', 'torchvision', 'diffusers', 'transformers', 'accelerate', 'huggingface-hub', 'safetensors', 'sentencepiece', 'Pillow'):
+        if (importlib.metadata.version(name).split('+')[0]) != required[name]:
+            raise RuntimeError('UNVERIFIED_DEPENDENCY_VERSION')
 
 
 def build_enhanced_prompt(prompt: str, reference_analysis: dict | None = None) -> str:
-    """Enhance user prompt using reference video analysis if available."""
-    if not reference_analysis or not isinstance(reference_analysis, dict):
-        return prompt
-
-    tempo = reference_analysis.get("tempo", "")
-    aspect_ratio = reference_analysis.get("aspectRatio", "")
-    enhancements = []
-    if aspect_ratio == "9:16":
-        enhancements.append("vertical 9:16 composition")
-    if tempo == "FAST":
-        enhancements.append("dynamic fast-paced movement, energetic motion")
-    elif tempo == "SLOW":
-        enhancements.append("smooth cinematic slow motion")
-
-    if enhancements:
-        return f"{prompt}, {', '.join(enhancements)}, high quality, 4k photorealistic"
+    # UI may explicitly append analysis; the adapter does not rewrite prompts.
     return prompt
 
 
-def generate_mock_video(
-    output_path: Path,
-    width: int = 480,
-    height: int = 848,
-    duration_seconds: float = 3.0,
-    fps: int = 16,
-    label: str = "AI Video Tools Mock",
-) -> Path:
-    """Generate a clean synthetic MP4 using FFmpeg (for automated tests and CI)."""
-    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
-    temp_raw = output_path.with_suffix(".mock.mp4")
+def validate_video(path: Path) -> dict:
+    if path.suffix.lower() != '.mp4' or not path.is_file() or not 1000 <= path.stat().st_size <= CONTRACT['limits']['outputBytes']:
+        raise ValueError('OUTPUT_VIDEO_INVALID')
+    probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames', '-show_entries', 'stream=codec_name,width,height,avg_frame_rate,nb_read_frames:format=duration', '-of', 'json', str(path)], check=True, capture_output=True, timeout=120)
+    data = json.loads(probe.stdout)
+    stream = data['streams'][0]
+    frames, duration = int(stream['nb_read_frames']), float(data['format']['duration'])
+    if stream['codec_name'] != 'h264' or frames < 2 or not math.isfinite(duration) or not 0 < duration <= 6:
+        raise ValueError('OUTPUT_VIDEO_INVALID')
+    subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-err_detect', 'explode', '-i', str(path), '-map', '0:v:0', '-f', 'null', '-'], check=True, capture_output=True, timeout=120)
+    a, b = map(int, stream['avg_frame_rate'].split('/'))
+    return dict(sizeBytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest(), durationSeconds=duration, width=stream['width'], height=stream['height'], fps=a/b, numFrames=frames, fullDecode=True, audioGenerated=False)
 
-    # Generate color test pattern with text overlay
-    cmd = [
-        ffmpeg_bin,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc=duration={duration_seconds}:size={width}x{height}:rate={fps}",
-        "-f",
-        "lavfi",
-        "-i",
-        f"sine=frequency=440:duration={duration_seconds}",
-        "-vf",
-        f"drawtext=text='{label}':fontcolor=white:fontsize=28:x=(w-text_w)/2:y=(h-text_h)/2",
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-shortest",
-        str(temp_raw),
-    ]
 
+def generate_mock_video(output_path: Path, width=480, height=848, duration_seconds=3.0, fps=16, label='TEST MOCK') -> Path:
+    temporary = output_path.with_suffix('.mock.mp4')
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-        temp_raw.replace(output_path)
-    except Exception as err:
-        logger.warning(f"FFmpeg synthetic video failed ({err}), creating minimal placeholder")
-        output_path.write_bytes(b"\x00\x00\x00\x20ftypmp42\x00\x00\x00\x00isommp42")
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f'testsrc2=size={width}x{height}:rate={fps}:duration={duration_seconds}', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(temporary)], check=True, capture_output=True, timeout=60)
+        validate_video(temporary)
+        temporary.replace(output_path)
+        return output_path
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError('MOCK_VIDEO_ENCODING_FAILED') from None
 
-    return output_path
+
+def validate_reference_image(job: dict, work_dir: Path) -> Path:
+    from PIL import Image
+    ref = job['input'].get('referenceImage')
+    if not isinstance(ref, dict) or not re.fullmatch(r'[a-f0-9]{64}', str(ref.get('sha256', ''))):
+        raise ValueError('REFERENCE_IMAGE_MANIFEST_INVALID')
+    path = Path(job.get('localReferenceImage', '')).resolve()
+    if not path.is_relative_to(work_dir.resolve()) or not path.is_file() or not 0 < path.stat().st_size <= CONTRACT['limits']['imageBytes']:
+        raise ValueError('REFERENCE_IMAGE_PATH_INVALID')
+    if path.stat().st_size != ref.get('sizeBytes') or hashlib.sha256(path.read_bytes()).hexdigest() != ref['sha256']:
+        raise ValueError('REFERENCE_IMAGE_HASH_MISMATCH')
+    with Image.open(path) as image:
+        expected = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp'}
+        if image.format not in expected or ref.get('mimeType') != expected[image.format] or image.width * image.height > CONTRACT['limits']['imagePixels']:
+            raise ValueError('REFERENCE_IMAGE_FORMAT_INVALID')
+        image.verify()
+    with Image.open(path) as image:
+        image.load()
+    return path
 
 
-def run_oss_pipeline(
-    model_id: str,
-    mode: str,
-    prompt: str,
-    negative_prompt: str,
-    output_path: Path,
-    image_path: str | None = None,
-    width: int = 480,
-    height: int = 832,
-    duration_seconds: float = 3.0,
-    fps: int = 16,
-    num_inference_steps: int = 25,
-    seed: int | None = None,
-) -> Path:
-    """
-    Run genuine OSS model pipeline with PyTorch and Diffusers.
-    Directs to the specific pipeline class according to model and mode.
-    """
+def run_oss_pipeline(input: dict, output_path: Path, image_path: Path | None = None, cancel_check=None) -> dict:
     import torch
-
-    model_config = SUPPORTED_MODELS[model_id]
-    num_frames = int(duration_seconds * fps)
+    import diffusers
+    from diffusers.utils import export_to_video
+    model = SUPPORTED_MODELS[input['modelName']]
+    adopted = input['adopted']
     dtype = select_torch_dtype()
-    generator = torch.Generator(device="cuda").manual_seed(seed) if seed is not None else None
-
-    logger.info(
-        f"Starting {model_config['name']} ({mode}) generation using {dtype}: prompt='{prompt[:50]}...', "
-        f"size={width}x{height}, frames={num_frames}, fps={fps}"
-    )
-
-    temp_video = output_path.with_suffix(".raw.mp4")
-
-    # 1. Wan2.1 T2V
-    if model_id == "wan-2.1-t2v-1.3b":
-        from diffusers import AutoModel, WanPipeline
-        from diffusers.utils import export_to_video
-
-        pipe = WanPipeline.from_pretrained(
-            model_config["repo_id"],
-            torch_dtype=dtype,
-        )
-        pipe.enable_model_cpu_offload()
-
-        output = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            guidance_scale=5.0,
-            generator=generator,
-        ).frames[0]
-
-        export_to_video(output, str(temp_video), fps=fps)
-
-    # 2. Wan2.1 I2V (14B)
-    elif model_id == "wan-2.1-i2v-14b":
-        from diffusers import WanImageToVideoPipeline
-        from diffusers.utils import export_to_video, load_image
-
-        if not image_path or not Path(image_path).exists():
-            raise ValueError(f"Valid reference image path is required for {model_id}")
-
-        pipe = WanImageToVideoPipeline.from_pretrained(
-            model_config["repo_id"],
-            torch_dtype=dtype,
-        )
-        pipe.enable_model_cpu_offload()
-
-        input_image = load_image(image_path).resize((width, height))
-
-        output = pipe(
-            image=input_image,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            guidance_scale=5.0,
-            generator=generator,
-        ).frames[0]
-
-        export_to_video(output, str(temp_video), fps=fps)
-
-    # 3. LTX-Video T2V
-    elif model_id == "ltx-video-0.9.1-t2v":
-        from diffusers import LTXPipeline
-        from diffusers.utils import export_to_video
-
-        pipe = LTXPipeline.from_pretrained(
-            model_config["repo_id"],
-            torch_dtype=dtype,
-        )
-        pipe.enable_model_cpu_offload()
-
-        output = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            generator=generator,
-        ).frames[0]
-
-        export_to_video(output, str(temp_video), fps=fps)
-
-    # 4. LTX-Video I2V
-    elif model_id == "ltx-video-0.9.1-i2v":
-        from diffusers import LTXImageToVideoPipeline
-        from diffusers.utils import export_to_video, load_image
-
-        if not image_path or not Path(image_path).exists():
-            raise ValueError(f"Valid reference image path is required for {model_id}")
-
-        pipe = LTXImageToVideoPipeline.from_pretrained(
-            model_config["repo_id"],
-            torch_dtype=dtype,
-        )
-        pipe.enable_model_cpu_offload()
-
-        input_image = load_image(image_path).resize((width, height))
-
-        output = pipe(
-            image=input_image,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            generator=generator,
-        ).frames[0]
-
-        export_to_video(output, str(temp_video), fps=fps)
-
+    torch.cuda.reset_peak_memory_stats()
+    kwargs = dict(revision=model['revision'], torch_dtype=dtype, use_safetensors=True)
+    if input['modelName'].startswith('wan-'):
+        kwargs['vae'] = diffusers.AutoencoderKLWan.from_pretrained(model['repo_id'], subfolder='vae', revision=model['revision'], torch_dtype=torch.float32, use_safetensors=True)
+    pipeline = getattr(diffusers, model['pipeline_class']).from_pretrained(model['repo_id'], **kwargs)
+    pipeline.enable_model_cpu_offload()
+    if hasattr(pipeline.vae, 'enable_tiling'):
+        pipeline.vae.enable_tiling()
+    args = dict(prompt=input['prompt'], negative_prompt=input['negativePrompt'], width=adopted['width'], height=adopted['height'], num_frames=adopted['numFrames'], num_inference_steps=input['numInferenceSteps'], generator=torch.Generator(device='cuda').manual_seed(input['seed']))
+    if input['modelName'].startswith('ltx-'):
+        args['frame_rate'] = adopted['fps']
     else:
-        raise ValueError(f"Unsupported model: {model_id}")
+        args['guidance_scale'] = 5.0
+    if image_path is not None:
+        from PIL import Image
+        with Image.open(image_path) as image:
+            args['image'] = image.convert('RGB').resize((adopted['width'], adopted['height']))
 
-    # Standardize output to SNS vertical 9:16 MP4 (H.264, AAC)
-    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
-    cmd = [
-        ffmpeg_bin,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(temp_video),
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-    temp_video.unlink(missing_ok=True)
-    return output_path
+    def step_end(pipe, step, timestep, values):
+        if cancel_check and step % 5 == 0:
+            cancel_check()
+        return values
+    args['callback_on_step_end'] = step_end
+    start = time.monotonic()
+    frames = pipeline(**args).frames[0]
+    torch.cuda.synchronize()
+    elapsed = time.monotonic() - start
+    raw = output_path.with_suffix('.raw.mp4')
+    export_to_video(frames, str(raw), fps=adopted['fps'])
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(raw), '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(output_path)], check=True, capture_output=True, timeout=120)
+    raw.unlink(missing_ok=True)
+    return dict(dtype=str(dtype), vaeDtype=str(pipeline.vae.dtype), cpuOffload=True, inferenceSeconds=elapsed, peakGpuMemoryBytes=torch.cuda.max_memory_allocated(), peakGpuReservedBytes=torch.cuda.max_memory_reserved(), inputImageUsed=image_path is not None)
 
 
 def generate(job: dict, output_dir: str) -> list[str]:
-    """
-    Standard Model Adapter entrypoint invoked by `sns_studio_worker.ipynb`.
-
-    Accepts structured job manifest matching SNS Studio backend:
-    - job['input'] contains: prompt, mode, modelName, durationSeconds, referenceImage, etc.
-    """
-    job_id = job.get("jobId") or job.get("id") or str(uuid4())[:8]
-    job_input = job.get("input", {})
-    if not isinstance(job_input, dict):
-        job_input = {}
-
-    prompt = (job_input.get("prompt") or job.get("prompt") or "").strip()
-    mode = (
-        job_input.get("mode")
-        or job.get("mode")
-        or ("image-to-video" if (job_input.get("referenceImage") or job.get("referenceImage")) else "text-to-video")
-    )
-    raw_model = (
-        job_input.get("modelName")
-        or job_input.get("model")
-        or job.get("model")
-        or "wan-2.1-t2v-1.3b"
-    )
-    model_id = normalize_model_id(raw_model, mode)
-    model_config = SUPPORTED_MODELS[model_id]
-
-    reference_image = job_input.get("referenceImage") or job.get("referenceImage")
-    duration_seconds = float(job_input.get("durationSeconds") or job.get("durationSeconds") or 3.0)
-    seed = job_input.get("seed") or job.get("seed")
-    if seed is not None:
-        try:
-            seed = int(seed)
-        except (ValueError, TypeError):
-            seed = None
-
-    reference_analysis = job_input.get("referenceAnalysis") or job.get("referenceAnalysis")
-    is_mock = bool(job_input.get("mock") or job.get("mock") or os.environ.get("MOCK_GENERATION") == "true")
-
-    # Manifest validation
-    if not prompt:
-        raise ValueError("Job input manifest requires a non-empty 'prompt'.")
-
-    # Image-to-Video validation
-    if mode == "image-to-video" and not reference_image:
-        raise ValueError("Image-to-Video generation requires a valid 'referenceImage' in input manifest.")
-
-    enhanced_prompt = build_enhanced_prompt(prompt, reference_analysis)
-    negative_prompt = (
-        job_input.get("negativePrompt")
-        or "worst quality, blurry, distorted, inconsistent motion, artifacts, deformed"
-    )
-
-    # Resolution & aspect ratio calculations
-    aspect_ratio = job_input.get("aspectRatio") or job.get("aspectRatio") or "9:16"
-    resolution = job_input.get("resolution") or job.get("resolution") or "480p"
-    if aspect_ratio == "9:16":
-        width, height = (480, 848) if resolution == "480p" else (720, 1280)
-    elif aspect_ratio == "16:9":
-        width, height = (848, 480) if resolution == "480p" else (1280, 720)
-    else:
-        width, height = (480, 480) if resolution == "480p" else (720, 720)
-
-    fps = model_config.get("fps", 16)
-    out_dir_path = Path(output_dir)
-    out_dir_path.mkdir(parents=True, exist_ok=True)
-    target_video_path = out_dir_path / f"sns_studio_{job_id}_{model_id}.mp4"
-
-    # MOCK MODE (For automated E2E testing without real GPU)
+    execution_start = time.monotonic()
+    if not isinstance(job, dict) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', str(job.get('jobId', ''))):
+        raise ValueError('JOB_ID_INVALID')
+    input = validate_input(job.get('input'))
+    is_mock = input['mock']
+    if os.getenv('MOCK_GENERATION', '').lower() not in ('', '0', 'false'):
+        raise ValueError('MOCK_ENVIRONMENT_FORBIDDEN')
+    if is_mock and os.getenv('SNS_STUDIO_ALLOW_TEST_MOCK') != '1':
+        raise ValueError('MOCK_NOT_ALLOWED')
+    work_dir = Path(output_dir).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    image = validate_reference_image(job, work_dir) if input['mode'] == 'image-to-video' else None
+    path = work_dir / f"sns_studio_{job['jobId']}_{input['modelName']}.mp4"
+    gpu = check_gpu_environment()
+    model = SUPPORTED_MODELS[input['modelName']]
+    if not is_mock:
+        if not gpu['cuda_available'] or gpu['vram_gb'] < model['min_vram_gb']:
+            raise RuntimeError('BLOCKED_BY_GPU')
+        if gpu['ram_free_gb'] is None or gpu['ram_free_gb'] < model['min_ram_free_gb'] or gpu['disk_free_gb'] < model['min_disk_free_gb']:
+            raise RuntimeError('BLOCKED_BY_RAM_OR_DISK')
+        verify_runtime_versions()
     if is_mock:
-        logger.info(f"[MOCK MODE] Generating synthetic video for Job #{job_id}")
-        generate_mock_video(
-            target_video_path,
-            width=width,
-            height=height,
-            duration_seconds=duration_seconds,
-            fps=fps,
-            label=f"Mock: {model_config['name']}",
-        )
-        return [str(target_video_path)]
-
-    # REAL GPU MODE - Guard against non-GPU / insufficient VRAM environments
-    gpu_info = check_gpu_environment()
-    min_vram = model_config.get("min_vram_gb", 12)
-    if not gpu_info["cuda_available"] or gpu_info["vram_gb"] < min_vram:
-        msg = (
-            f"BLOCKED_BY_GPU: CUDA GPU with >={min_vram}GB VRAM required for {model_config['name']}. "
-            f"Detected: {gpu_info['device_name']} (VRAM: {gpu_info['vram_gb']}GB). "
-            f"Please run services/colab/sns_studio_worker.ipynb on Google Colab GPU ({model_config['gpu_note']})."
-        )
-        logger.error(msg)
-        raise RuntimeError(msg)
-
-    # Run genuine OSS Diffusers pipeline
-    run_oss_pipeline(
-        model_id=model_id,
-        mode=mode,
-        prompt=enhanced_prompt,
-        negative_prompt=negative_prompt,
-        output_path=target_video_path,
-        image_path=reference_image,
-        width=width,
-        height=height,
-        duration_seconds=duration_seconds,
-        fps=fps,
-        seed=seed,
-    )
-
-    return [str(target_video_path)]
+        generate_mock_video(path, width=input['adopted']['width'], height=input['adopted']['height'], duration_seconds=input['durationSeconds'], fps=input['adopted']['fps'])
+        execution = {}
+    else:
+        execution = run_oss_pipeline(input, path, image, job.get('cancelCheck'))
+    video = validate_video(path)
+    if not is_mock and (video['width'], video['height'], video['numFrames']) != (input['adopted']['width'], input['adopted']['height'], input['adopted']['numFrames']):
+        raise ValueError('MODEL_OUTPUT_CONTRACT_MISMATCH')
+    evidence = dict(mock=is_mock, realInference=not is_mock, modelName=input['modelName'], mode=input['mode'], repoId=model['repo_id'], revision=model['revision'], pipeline=model['pipeline_class'], adopted=input['adopted'], requestedDurationSeconds=input['durationSeconds'], seed=input['seed'], gpu=gpu, python=sys.version.split()[0], versions=runtime_versions(), referenceImageSha256=input.get('referenceImage', {}).get('sha256'), executionSeconds=time.monotonic()-execution_start, **execution, output=video)
+    (work_dir / 'generation-evidence.json').write_text(json.dumps(evidence, indent=2))
+    return [str(path)]

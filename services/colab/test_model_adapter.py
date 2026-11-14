@@ -1,131 +1,103 @@
-"""
-Tests for SNS Studio Colab Model Adapter
-========================================
-Validates the adapter interface, parameter parsing, enhanced prompts,
-fail-closed GPU guard, official checkpoints, pipeline classes, and mock generation.
-"""
-
-from __future__ import annotations
-
+"""CPU contract tests. Synthetic encoding is explicitly not real AI E2E."""
+import hashlib
+import json
 import os
-import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest.mock import patch
 from sns_studio_model_adapter import (
-    SUPPORTED_MODELS,
-    build_enhanced_prompt,
-    check_gpu_environment,
-    generate,
-    generate_mock_video,
-    normalize_model_id,
-    select_torch_dtype,
+    SUPPORTED_MODELS, canonical_hash, normalize_model_id, validate_input,
+    generate, generate_mock_video, validate_reference_image, validate_video,
 )
 
 
 class TestColabModelAdapter(unittest.TestCase):
-    def test_supported_models_contract(self):
-        # 1. Wan2.1 T2V 1.3B
-        self.assertIn("wan-2.1-t2v-1.3b", SUPPORTED_MODELS)
-        self.assertEqual(SUPPORTED_MODELS["wan-2.1-t2v-1.3b"]["pipeline_class"], "WanPipeline")
-        self.assertEqual(SUPPORTED_MODELS["wan-2.1-t2v-1.3b"]["repo_id"], "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+    def test_exact_pinned_model_contract(self):
+        for model in SUPPORTED_MODELS.values():
+            self.assertRegex(model['revision'], r'^[0-9a-f]{40}$')
+            self.assertFalse(model['real_e2e_verified'])
+            for size in model['sizes'].values():
+                self.assertTrue(all(value % model['spatial_stride'] == 0 for value in size))
+        self.assertEqual(SUPPORTED_MODELS['ltx-video-0.9.1-i2v']['repo_id'], 'Lightricks/LTX-Video-0.9.1')
+        self.assertEqual(SUPPORTED_MODELS['ltx-video-0.9.1-i2v']['pipeline_class'], 'LTXImageToVideoPipeline')
 
-        # 2. LTX-Video T2V & I2V
-        self.assertIn("ltx-video-0.9.1-t2v", SUPPORTED_MODELS)
-        self.assertIn("ltx-video-0.9.1-i2v", SUPPORTED_MODELS)
-        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-t2v"]["pipeline_class"], "LTXPipeline")
-        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-i2v"]["pipeline_class"], "LTXImageToVideoPipeline")
-        self.assertEqual(SUPPORTED_MODELS["ltx-video-0.9.1-i2v"]["repo_id"], "Lightricks/LTX-Video")
+    def test_defaults_and_explicit_invalid_models_modes(self):
+        self.assertEqual(normalize_model_id(None, 'image-to-video'), 'ltx-video-0.9.1-i2v')
+        for model, mode in [('unknown', 'text-to-video'), ('', 'text-to-video'), ('wan-2.1-t2v-1.3b', 'image-to-video'), ('ltx-video-0.9.1-t2v', 'image-to-video'), (None, 'unknown')]:
+            with self.subTest(model=model, mode=mode), self.assertRaises(ValueError):
+                normalize_model_id(model, mode)
 
-        # 3. Wan2.1 I2V 14B (High-end A100)
-        self.assertIn("wan-2.1-i2v-14b", SUPPORTED_MODELS)
-        self.assertEqual(SUPPORTED_MODELS["wan-2.1-i2v-14b"]["pipeline_class"], "WanImageToVideoPipeline")
-        self.assertEqual(SUPPORTED_MODELS["wan-2.1-i2v-14b"]["repo_id"], "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers")
+    def test_input_bounds_types_seed_zero_and_model_grid(self):
+        normalized = validate_input({'prompt': 'A mug', 'seed': 0})
+        self.assertEqual(normalized['seed'], 0)
+        self.assertEqual(normalized['adopted']['numFrames'], 49)
+        for model in SUPPORTED_MODELS:
+            mode = SUPPORTED_MODELS[model]['modes'][0]
+            for duration in (2, 3, 4):
+                raw = dict(prompt='A mug', modelName=model, mode=mode, durationSeconds=duration)
+                if mode == 'image-to-video':
+                    raw['referenceImageAssetId'] = 'image-test'
+                result = validate_input(raw)
+                self.assertEqual((result['adopted']['numFrames']-1) % SUPPORTED_MODELS[model]['frame_stride'], 0)
+                self.assertEqual(validate_input(result), result)
+        for key, value in [('mock', 'false'), ('mock', 0), ('seed', '0'), ('seed', -1), ('seed', True), ('durationSeconds', 0), ('durationSeconds', 5), ('durationSeconds', '3'), ('count', 2), ('numInferenceSteps', 51), ('resolution', '720p'), ('prompt', []), ('referenceImage', '/etc/passwd'), ('width', 99999)]:
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                validate_input({'prompt': 'mug', key: value})
 
-    def test_normalize_model_id(self):
-        self.assertEqual(normalize_model_id("Wan2.1-T2V-1.3B", "text-to-video"), "wan-2.1-t2v-1.3b")
-        self.assertEqual(normalize_model_id("ltx-video-0.9.1", "image-to-video"), "ltx-video-0.9.1-i2v")
-        self.assertEqual(normalize_model_id("ltx-video-0.9.1", "text-to-video"), "ltx-video-0.9.1-t2v")
-        self.assertEqual(normalize_model_id("wan-2.1-i2v-14b", "image-to-video"), "wan-2.1-i2v-14b")
+    def test_mock_requires_explicit_test_permission_and_environment_is_not_truthy(self):
+        with tempfile.TemporaryDirectory() as out:
+            with patch.dict(os.environ, {'MOCK_GENERATION': 'true'}), self.assertRaisesRegex(ValueError, 'MOCK_ENVIRONMENT'):
+                generate({'jobId': 'test', 'input': {'prompt': 'mug', 'mock': False}}, out)
+            with patch.dict(os.environ, {'SNS_STUDIO_ALLOW_TEST_MOCK': '0', 'MOCK_GENERATION': 'false'}), self.assertRaisesRegex(ValueError, 'MOCK_NOT_ALLOWED'):
+                generate({'jobId': 'test', 'input': {'prompt': 'mug', 'mock': True}}, out)
 
-    def test_build_enhanced_prompt_with_reference(self):
-        base_prompt = "A girl dancing in neon street"
-        ref_analysis = {
-            "aspectRatio": "9:16",
-            "tempo": "FAST",
-        }
-        enhanced = build_enhanced_prompt(base_prompt, ref_analysis)
-        self.assertIn("vertical 9:16 composition", enhanced)
-        self.assertIn("dynamic fast-paced movement", enhanced)
-        self.assertIn(base_prompt, enhanced)
+    def test_real_generation_fails_closed_without_gpu(self):
+        with tempfile.TemporaryDirectory() as out, patch('sns_studio_model_adapter.check_gpu_environment', return_value={'cuda_available': False}), patch('sns_studio_model_adapter.run_oss_pipeline') as pipeline:
+            with self.assertRaisesRegex(RuntimeError, 'BLOCKED_BY_GPU'):
+                generate({'jobId': 'real-test', 'input': {'prompt': 'mug', 'mock': False}}, out)
+            pipeline.assert_not_called()
 
-    def test_build_enhanced_prompt_without_reference(self):
-        base_prompt = "Calm river flowing"
-        self.assertEqual(build_enhanced_prompt(base_prompt, None), base_prompt)
+    def test_mock_ffmpeg_failure_never_returns_header(self):
+        with tempfile.TemporaryDirectory() as out, patch('sns_studio_model_adapter.subprocess.run', side_effect=subprocess.CalledProcessError(1, ['ffmpeg'])):
+            path = Path(out)/'test.mp4'
+            with self.assertRaisesRegex(RuntimeError, 'MOCK_VIDEO_ENCODING_FAILED'):
+                generate_mock_video(path)
+            self.assertFalse(path.exists())
 
-    def test_generate_requires_valid_input(self):
-        with tempfile.TemporaryDirectory() as out_dir:
-            # Missing prompt
+    def test_synthetic_clip_requires_probe_and_full_decode(self):
+        with tempfile.TemporaryDirectory() as out, patch.dict(os.environ, {'SNS_STUDIO_ALLOW_TEST_MOCK': '1', 'MOCK_GENERATION': 'false'}):
+            paths = generate({'jobId': 'mock-test', 'input': {'prompt': 'mug', 'mock': True, 'durationSeconds': 2}}, out)
+            metadata = validate_video(Path(paths[0]))
+            self.assertTrue(metadata['fullDecode'])
+            self.assertGreater(metadata['numFrames'], 1)
+            self.assertEqual(metadata['sizeBytes'], Path(paths[0]).stat().st_size)
+            self.assertTrue(json.loads((Path(out)/'generation-evidence.json').read_text())['mock'])
+            bad = Path(out)/'header-only.mp4'
+            bad.write_bytes(b'\x00\x00\x00\x20ftypmp42')
             with self.assertRaises(ValueError):
-                generate({"jobId": "test1", "input": {"prompt": ""}}, out_dir)
+                validate_video(bad)
 
-            # I2V requires referenceImage
-            with self.assertRaises(ValueError):
-                generate(
-                    {
-                        "jobId": "test3",
-                        "input": {
-                            "prompt": "test",
-                            "mode": "image-to-video",
-                            "mock": True,
-                        },
-                    },
-                    out_dir,
-                )
+    def test_i2v_image_decode_hash_size_and_path(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as out:
+            root = Path(out)
+            image = root/'test.png'
+            Image.new('RGB', (64, 64), 'blue').save(image)
+            ref = dict(fileId='drive-image', sizeBytes=image.stat().st_size, sha256=hashlib.sha256(image.read_bytes()).hexdigest(), mimeType='image/png')
+            job = {'input': {'referenceImage': ref}, 'localReferenceImage': str(image)}
+            self.assertEqual(validate_reference_image(job, root), image)
+            with self.assertRaisesRegex(ValueError, 'HASH_MISMATCH'):
+                validate_reference_image({'input': {'referenceImage': {**ref, 'sha256': '0'*64}}, 'localReferenceImage': str(image)}, root)
+            with self.assertRaisesRegex(ValueError, 'PATH_INVALID'):
+                validate_reference_image({'input': {'referenceImage': ref}, 'localReferenceImage': '/etc/passwd'}, root)
 
-    def test_generate_fail_closed_without_gpu_when_not_mock(self):
-        gpu_info = check_gpu_environment()
-        if not gpu_info["cuda_available"]:
-            with tempfile.TemporaryDirectory() as out_dir:
-                job = {
-                    "jobId": "real-job-1",
-                    "input": {
-                        "mode": "text-to-video",
-                        "modelName": "wan-2.1-t2v-1.3b",
-                        "prompt": "Test video",
-                        "mock": False,
-                    },
-                }
-                with self.assertRaises(RuntimeError) as ctx:
-                    generate(job, out_dir)
-                self.assertIn("BLOCKED_BY_GPU", str(ctx.exception))
-
-    def test_generate_mock_mode_produces_mp4_in_output_dir(self):
-        if not shutil.which("ffmpeg"):
-            self.skipTest("ffmpeg not found in PATH")
-
-        with tempfile.TemporaryDirectory() as out_dir:
-            job = {
-                "jobId": "test-mock-job",
-                "input": {
-                    "mode": "text-to-video",
-                    "modelName": "wan-2.1-t2v-1.3b",
-                    "prompt": "Cyberpunk street in rain",
-                    "mock": True,
-                    "durationSeconds": 2.0,
-                    "aspectRatio": "9:16",
-                    "resolution": "480p",
-                },
-            }
-            outputs = generate(job, out_dir)
-            self.assertEqual(len(outputs), 1)
-            output_file = Path(outputs[0])
-            self.assertTrue(output_file.exists())
-            self.assertTrue(output_file.is_file())
-            self.assertGreater(output_file.stat().st_size, 1000)
-            self.assertTrue(str(output_file).endswith(".mp4"))
+    def test_hash_is_canonical_and_rejects_nonfinite(self):
+        self.assertEqual(canonical_hash({'z': 0, 'a': 'マグ'}), canonical_hash({'a': 'マグ', 'z': 0}))
+        with self.assertRaises(ValueError):
+            canonical_hash({'seed': float('nan')})
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

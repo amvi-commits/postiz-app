@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "limits": {"prompt": 4000, "negativePrompt": 2000, "durationMin": 2, "durationMax": 4, "stepsMin": 1, "stepsMax": 50, "imageBytes": 10485760, "imagePixels": 16777216, "outputBytes": 268435456},
+  "models": {
+    "wan-2.1-t2v-1.3b": {"repo_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "revision": "0fad780a534b6463e45facd96134c9f345acfa5b", "pipeline_class": "WanPipeline", "modes": ["text-to-video"], "license": "apache-2.0", "fps": 16, "frame_stride": 4, "spatial_stride": 16, "min_vram_gb": 12, "min_ram_free_gb": 16, "min_disk_free_gb": 40, "sizes": {"9:16": [480, 848], "16:9": [848, 480], "1:1": [480, 480]}, "real_e2e_verified": false},
+    "ltx-video-0.9.1-t2v": {"repo_id": "Lightricks/LTX-Video-0.9.1", "revision": "0dfb9a9b26f48256bbafc4e9fa337445ff76dc1c", "pipeline_class": "LTXPipeline", "modes": ["text-to-video"], "license": "LTX Video 0.9.1 RAIL-M (2024-11-22)", "fps": 25, "frame_stride": 8, "spatial_stride": 32, "min_vram_gb": 12, "min_ram_free_gb": 12, "min_disk_free_gb": 25, "sizes": {"9:16": [480, 864], "16:9": [864, 480], "1:1": [480, 480]}, "real_e2e_verified": false},
+    "ltx-video-0.9.1-i2v": {"repo_id": "Lightricks/LTX-Video-0.9.1", "revision": "0dfb9a9b26f48256bbafc4e9fa337445ff76dc1c", "pipeline_class": "LTXImageToVideoPipeline", "modes": ["image-to-video"], "license": "LTX Video 0.9.1 RAIL-M (2024-11-22)", "fps": 25, "frame_stride": 8, "spatial_stride": 32, "min_vram_gb": 12, "min_ram_free_gb": 12, "min_disk_free_gb": 25, "sizes": {"9:16": [480, 864], "16:9": [864, 480], "1:1": [480, 480]}, "real_e2e_verified": false}
+  },
+  "aliases": {"Wan2.1-T2V-1.3B": "wan-2.1-t2v-1.3b", "LTX-Video-0.9.1": "ltx-video-0.9.1-t2v", "ltx-video-0.9.1": "ltx-video-0.9.1-t2v", "ltx-video-i2v": "ltx-video-0.9.1-i2v"}
+}
