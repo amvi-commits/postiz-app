@@ -50,6 +50,9 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
   const ref = useRef(null);
   const existingData = useExistingData();
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
+  const registrationStarted = useRef(false);
+  const registrationAttempted = useRef(false);
   const toaster = useToaster();
   const modal = useModals();
   const [showSettings, setShowSettings] = useState(false);
@@ -192,6 +195,12 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
 
   const schedule = useCallback(
     (type: 'draft' | 'now' | 'schedule' | 'update') => async () => {
+      if (submitting.current || props.submissionBlocked || (props.embedded && registrationAttempted.current)) return;
+      submitting.current = true; registrationStarted.current = false;
+      try {
+      if (props.embedded && type !== 'draft') {
+        if (type === 'schedule' && (!date.isValid() || !date.isAfter(dayjs()))) throw new Error('予約日時は未来の日時を日本時間で指定してください。');
+      }
       let republish = false;
       if (
         (type === 'now' || type === 'schedule') &&
@@ -268,7 +277,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
       // Pull the local values to build the payload, but rely on the server
       // (`/posts/valid`) for the actual validation — checkValidity now lives
       // server-side so it can't be bypassed.
-      const allValues = await ref.current.getAllValues();
+      const allValues = structuredClone(await ref.current.getAllValues());
 
       const integrationById = (id: string) =>
         selectedIntegrations.find((p) => p.integration.id === id);
@@ -372,6 +381,15 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         }
       }
 
+      if (props.embedded && (type === 'now' || type === 'schedule')) {
+        const confirmed = await deleteDialog(
+          selectedIntegrations.map(p => p.integration.name).join(', ') + '\n' + posts.map((p: any) => p.value.map((v: any) => v.content.replace(/<[^>]*>/g, '') + '（添付 ' + v.image.length + '件）').join('\n')).join('\n') + '\n' + (type === 'now' ? '今すぐ投稿' : date.utcOffset(540).format('YYYY/MM/DD HH:mm') + ' 日本時間に予約'),
+          type === 'now' ? '今すぐ投稿を確定' : '予約を確定'
+        );
+        if (!confirmed) return;
+      }
+      if (props.embedded && type !== 'draft' && selectedIntegrations.some(p => p.integration.identifier === 'threads' && p.integration.transport !== 'official')) throw new Error('Browser Transportまたは接続方式未確認の実投稿・予約はロックされています。下書き保存を利用してください。');
+      const preparedPlanId = props.preparePost ? await props.preparePost(type, { posts, date: date.utc().format('YYYY-MM-DDTHH:mm:ss[Z]') }) : props.commonContentPlanId;
       const shortlinkPreference = shortlinkPreferenceData?.shortlink || 'ASK';
 
       let shortLink = false;
@@ -412,8 +430,8 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
 
       const data = {
         type,
-        ...(props.commonContentPlanId
-          ? { snsStudioContentPlanId: props.commonContentPlanId }
+        ...(preparedPlanId
+          ? { snsStudioContentPlanId: preparedPlanId }
           : {}),
         ...(republish ? { republish } : {}),
         ...(repeater ? { inter: repeater } : {}),
@@ -496,12 +514,16 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }> = [];
 
           for (const payload of payloads) {
+            if (props.isSubmissionCurrent && !props.isSubmissionCurrent()) throw new Error('Organizationが変更されました。');
+            registrationStarted.current = true;
+            registrationAttempted.current = true;
             const response = await fetch('/posts', {
               method: 'POST',
               body: JSON.stringify(payload),
             });
             const created = await response.json().catch(() => []);
             if (!response.ok) {
+              if (props.embedded) props.onSubmissionUncertain?.();
               if (postedItems.length && props.onPosted) {
                 try {
                   await props.onPosted({ type, items: postedItems });
@@ -526,6 +548,10 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
               );
               setLoading(false);
               return;
+            }
+            if (props.embedded && (!Array.isArray(created) || created.length !== payload.posts.length || created.some((item: any) => !item.postId || !item.integration))) {
+              props.onSubmissionUncertain?.();
+              throw new Error('受付結果のIDを確認できません。再送せず履歴を確認してください。');
             }
             if (Array.isArray(created)) {
               postedItems.push(
@@ -561,7 +587,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }
 
           mutate();
-          toaster.show(
+          if (!props.embedded) toaster.show(
             !existingData.integration
               ? t('added_successfully', 'Added successfully')
               : t('updated_successfully', 'Updated successfully')
@@ -573,21 +599,26 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }, 2000);
         }
 
-        if (!addEditSets) {
+        if (!addEditSets && !props.embedded) {
           modal.closeAll();
         }
       }
+      } catch (error) {
+        if (props.embedded && registrationStarted.current) props.onSubmissionUncertain?.();
+        toaster.show(error instanceof Error ? error.message : '保存・投稿処理に失敗しました。入力は保持されています。', 'warning');
+      } finally { submitting.current = false; setLoading(false); }
     },
-    [ref, repeater, tags, date, addEditSets, dummy, shortlinkPreferenceData]
+    [ref, repeater, tags, date, addEditSets, dummy, shortlinkPreferenceData, props, selectedIntegrations]
   );
 
   return (
-    <div className="w-full h-full flex-1 p-[40px] flex relative">
+    <fieldset disabled={loading} className={clsx('w-full min-w-0 border-0 flex relative', props.embedded ? 'studio-inline min-h-[850px]' : 'h-full flex-1 p-[40px]')}>
+      {props.embedded && <style>{`.studio-inline > div {min-width:0}.studio-inline #social-content {position:relative;overflow:visible}.studio-inline > div > div:first-child {flex-direction:column}.studio-inline > div > div:first-child > div {width:100%;min-height:320px}.studio-inline > div > div:last-child {height:auto;flex-wrap:wrap;gap:12px}.studio-inline .post-now {min-width:120px}`}</style>}
       <div className="flex flex-1 bg-newBgColorInner rounded-[20px] flex-col">
         <div className="flex-1 flex">
           <div className="flex flex-col flex-1 border-e border-newBorder">
             <div className="bg-newBgColor h-[65px] rounded-s-[20px] !rounded-b-[0] flex items-center gap-[12px] px-[20px] text-[20px] font-[600]">
-              {t('create_post_title', 'Create Post')}
+              {props.embedded ? '投稿本文・画像／動画' : t('create_post_title', 'Create Post')}
               <CreationMethodBadge
                 creationMethod={existingData?.posts?.[0]?.creationMethod}
                 size="sm"
@@ -595,7 +626,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             </div>
             <div className="flex-1 flex flex-col gap-[16px]">
               <div
-                className={clsx('flex-1 relative', showSettings && 'hidden')}
+                className={clsx('flex-1 relative', showSettings && !props.singleDestination && 'hidden')}
               >
                 <div
                   id="social-content"
@@ -603,10 +634,10 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                 >
                   <div className="flex w-full">
                     <div className="flex flex-1">
-                      <PicksSocialsComponent toolTip={true} />
+                      <PicksSocialsComponent toolTip={true} single={props.singleDestination} />
                     </div>
                     <div>
-                      {!dummy && (
+                      {!dummy && !props.singleDestination && (
                         <SelectCustomer
                           onChange={changeCustomer}
                           integrations={integrations}
@@ -615,7 +646,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                     </div>
                   </div>
                   <div className="flex flex-1 gap-[6px] flex-col">
-                    <div>{!existingData.integration && <SelectCurrent />}</div>
+                    <div>{!existingData.integration && !props.singleDestination && <SelectCurrent />}</div>
                     <div className="flex-1 flex">
                       {!hide && <EditorWrapper totalPosts={1} value="" />}
                     </div>
@@ -634,7 +665,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                 className={clsx(
                   'pb-[20px] px-[20px] select-none',
                   showSettings && 'flex-1 flex pt-[20px]',
-                  current === 'global' && 'hidden'
+                  current === 'global' && (!props.singleDestination || !selectedIntegrations.length) && 'hidden'
                 )}
               >
                 <div className="flex-1 flex flex-col rounded-[12px] gap-[12px] overflow-hidden bg-newSettings">
@@ -646,7 +677,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                     )}
                   >
                     <div className="flex-1 text-[14px] font-[600] text-white">
-                      {currentIntegrationText}
+                      {props.singleDestination ? '詳細設定' : currentIntegrationText}
                     </div>
                     <div>
                       <ChevronDownIcon
@@ -669,7 +700,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                     </div>
                   </div>
                   <style>
-                    {`#social-settings [data-id="${current}"] {display: block !important;}`}
+                    {`#social-settings [data-id="${props.singleDestination ? selectedIntegrations[0]?.integration.id : current}"] {display: block !important;}`}
                   </style>
                 </div>
               </div>
@@ -679,7 +710,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             <div className="bg-newBgColor h-[65px] rounded-e-[20px] !rounded-b-[0] flex items-center px-[20px] text-[20px] font-[600]">
               <div className="flex-1">{t('post_preview', 'Post Preview')}</div>
               <div className="cursor-pointer">
-                <CloseIcon onClick={askClose} className="text-[#A3A3A3]" />
+                {!props.embedded && <CloseIcon onClick={askClose} className="text-[#A3A3A3]" />}
               </div>
             </div>
             <div className="flex-1 relative">
@@ -710,7 +741,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
             )}
           </div>
           <div className="pe-[20px] flex items-center justify-end gap-[8px]">
-            {existingData?.integration && (
+            {existingData?.integration && !props.embedded && (
               <button
                 onClick={deletePost}
                 className="cursor-pointer flex text-[#FF3F3F] gap-[8px] items-center text-[15px] font-[600]"
@@ -721,11 +752,11 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                 <div>{t('delete_post', 'Delete Post')}</div>
               </button>
             )}
-            <DatePicker onChange={setDate} date={date} />
+            {props.embedded ? <label className="text-sm">予約日時（日本時間）<input type="datetime-local" className="ml-2 rounded border border-blockSeparator bg-newBgColorInner p-2" value={date.utcOffset(540).format('YYYY-MM-DDTHH:mm')} onChange={e => { if (e.target.value) setDate(dayjs.utc(e.target.value).subtract(9, 'hour').local()); }} /></label> : <DatePicker onChange={setDate} date={date} />}
             {!addEditSets && (
               <button
                 disabled={
-                  selectedIntegrations.length === 0 || loading || locked
+                  selectedIntegrations.length === 0 || loading || locked || props.submissionBlocked
                 }
                 onClick={schedule('draft')}
                 className="relative cursor-pointer disabled:cursor-not-allowed px-[20px] h-[44px] bg-btnSimple justify-center items-center flex rounded-[8px] text-[15px] font-[600]"
@@ -736,7 +767,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                   </div>
                 )}
                 <div className={clsx(loading && 'invisible')}>
-                  {t('save_as_draft', 'Save as Draft')}
+                  {props.embedded ? '下書き保存' : t('save_as_draft', 'Save as Draft')}
                 </div>
               </button>
             )}
@@ -744,7 +775,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
               <button
                 className="text-white text-[15px] font-[600] min-w-[180px] btnSub disabled:cursor-not-allowed disabled:opacity-80 outline-none gap-[8px] flex justify-center items-center h-[44px] rounded-[8px] bg-[#612BD3] ps-[20px] pe-[16px]"
                 disabled={
-                  selectedIntegrations.length === 0 || loading || locked
+                  selectedIntegrations.length === 0 || loading || locked || props.submissionBlocked
                 }
                 onClick={schedule('draft')}
               >
@@ -755,7 +786,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
               <div className="group cursor-pointer relative">
                 <button
                   disabled={
-                    selectedIntegrations.length === 0 || loading || locked
+                    selectedIntegrations.length === 0 || loading || locked || props.submissionBlocked
                   }
                   onClick={schedule('schedule')}
                   className="text-white relative min-w-[180px] btnSub disabled:cursor-not-allowed disabled:opacity-80 outline-none gap-[8px] flex justify-center items-center h-[44px] rounded-[8px] bg-[#612BD3] ps-[20px] pe-[16px]"
@@ -771,7 +802,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                       loading && 'invisible'
                     )}
                   >
-                    {selectedIntegrations.length === 0
+                    {props.embedded ? '予約する' : selectedIntegrations.length === 0
                       ? t('check_circles_above', 'Check the circles above')
                       : dummy
                       ? t('create_output', 'Create output')
@@ -792,12 +823,12 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                   <button
                     onClick={schedule('now')}
                     disabled={
-                      selectedIntegrations.length === 0 || loading || locked
+                      selectedIntegrations.length === 0 || loading || locked || props.submissionBlocked
                     }
-                    className="rounded-[8px] z-[300] disabled:cursor-not-allowed disabled:opacity-80 hidden group-hover:flex absolute bottom-[100%] -left-[12px] p-[12px] w-[206px] bg-newBgColorInner"
+                    className={clsx('rounded-[8px] disabled:opacity-50 p-2 bg-newBgColorInner', props.embedded ? 'flex' : 'hidden group-hover:flex absolute bottom-[100%] -left-[12px] w-[206px] z-[300]')}
                   >
                     <div className="text-white rounded-[8px] bg-[#D82D7E] h-[44px] w-full flex justify-center items-center post-now">
-                      {t('post_now', 'Post Now')}
+                      {props.embedded ? '今すぐ投稿' : t('post_now', 'Post Now')}
                     </div>
                   </button>
                 )}
@@ -806,7 +837,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           </div>
         </div>
       </div>
-      <CopilotPopup
+      {!props.embedded && <CopilotPopup
         hitEscapeToClose={false}
         clickOutsideToClose={true}
         instructions={`
@@ -827,8 +858,8 @@ After using the addPostFor{num} it will create a new addPostContentFor{num+ 1} f
             'Hi! I can help you to refine your social media posts.'
           ),
         }}
-      />
-    </div>
+      />}
+    </fieldset>
   );
 };
 

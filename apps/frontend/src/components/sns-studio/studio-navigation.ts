@@ -19,7 +19,7 @@ export const platformSections: Record<Platform, Array<{ label: string; tab: Tab 
     { label: 'Calendar', tab: 'Calendar' },
     { label: 'Analytics', tab: 'Common Analytics' },
     { label: 'Settings', tab: 'Settings' },
-    { label: 'Cross Post', tab: 'Publish' },
+    { label: '複数SNSに投稿', tab: 'Publish' },
     { label: 'History', tab: 'Common History' },
     { label: '制作Queue', tab: 'Queue' },
   ],
@@ -44,8 +44,8 @@ export const platformSections: Record<Platform, Array<{ label: string; tab: Tab 
     { label: 'Accounts', tab: 'Accounts' },
   ],
   threads: [
+    { label: '投稿作成', tab: 'Threads' },
     { label: 'Overview', tab: 'Threads Overview' },
-    { label: 'Workspace', tab: 'Threads' },
   ],
 };
 

@@ -11,6 +11,12 @@ import { useExistingData } from '@gitroom/frontend/components/launches/helpers/u
 import { newDayjs } from '@gitroom/frontend/components/layout/set.timezone';
 
 export interface AddEditModalProps {
+  isSubmissionCurrent?: () => boolean;
+  embedded?: boolean;
+  singleDestination?: boolean;
+  submissionBlocked?: boolean;
+  onSubmissionUncertain?: () => void;
+  preparePost?: (type: string, snapshot: any) => Promise<string>;
   dummy?: boolean;
   date: dayjs.Dayjs;
   integrations: Integrations[];

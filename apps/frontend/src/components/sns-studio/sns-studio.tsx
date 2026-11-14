@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
 import { useUser } from '@gitroom/frontend/components/layout/user.context';
+import { InlinePublisher } from './inline-publisher';
 import { SnsStudioCommonPublisher } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import { ThreadsWorkspace } from '@gitroom/frontend/components/sns-studio/threads/threads-workspace';
@@ -617,7 +618,7 @@ export const SnsStudio = () => {
       {activeTab === 'Threads Overview' && <section className={card}>
         <h2 className="text-lg font-bold">Threads Overview</h2>
         <p className="mt-2 text-sm text-textItemBlur">Threadsの投稿、カレンダー、Inbox、リサーチ、分析、アカウント設定を開きます。</p>
-        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', 'Workspace')}>Threads Workspaceを開く</button>
+        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', '投稿作成')}>Threads 投稿作成を開く</button>
       </section>}
 
       {activeTab === 'YouTube Overview' && <section className={card}>
@@ -849,13 +850,13 @@ export const SnsStudio = () => {
         />
       )}
 
-      {activeTab === 'Publish' && <SnsStudioCommonPublisher prefill={commonPostPrefill} />}
+      {activeTab === 'Publish' && <div key={user?.orgId} className="grid gap-5"><InlinePublisher prefill={commonPostPrefill} /><details><summary>保存済み配信計画・SNSごとの内容調整</summary><SnsStudioCommonPublisher prefill={commonPostPrefill} /></details></div>}
       {activeTab === 'Common Queue' && <CommonDeliveryWorkspace view="queue" />}
       {activeTab === 'Common History' && <CommonDeliveryWorkspace view="history" />}
       {activeTab === 'Common Analytics' && <CommonDeliveryWorkspace view="analytics" />}
 
       {activeTab === 'Threads' && (
-        <ThreadsWorkspace
+        <ThreadsWorkspace key={user?.orgId}
           onOpenPublish={(prefill) => {
             setCommonPostPrefill(prefill);
             setActiveTab('Publish');

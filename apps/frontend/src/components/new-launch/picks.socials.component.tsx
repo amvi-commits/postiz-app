@@ -9,18 +9,22 @@ import { useExistingData } from '@gitroom/frontend/components/launches/helpers/u
 import { makeId } from '@gitroom/nestjs-libraries/services/make.is';
 import ImageWithFallback from '@gitroom/react/helpers/image.with.fallback';
 
-export const PicksSocialsComponent: FC<{ toolTip?: boolean }> = ({
-  toolTip,
+export const PicksSocialsComponent: FC<{ toolTip?: boolean; single?: boolean }> = ({
+  toolTip, single,
 }) => {
   const exising = useExistingData();
 
   const {
+    setCurrent,
+    setSelectedIntegrations,
     locked,
     addOrRemoveSelectedIntegration,
     integrations,
     selectedIntegrations,
   } = useLaunchStore(
     useShallow((state) => ({
+      setCurrent: state.setCurrent,
+      setSelectedIntegrations: state.setSelectedIntegrations,
       integrations: state.integrations,
       selectedIntegrations: state.selectedIntegrations,
       addOrRemoveSelectedIntegration: state.addOrRemoveSelectedIntegration,
@@ -28,6 +32,15 @@ export const PicksSocialsComponent: FC<{ toolTip?: boolean }> = ({
     }))
   );
 
+  if (single) return <label className="grid w-full gap-2 text-sm">投稿先アカウント
+    <select className="rounded border border-blockSeparator bg-newBgColorInner p-3" disabled={locked || !!exising.integration} value={selectedIntegrations[0]?.integration.id || ''} onChange={event => {
+      const selected = integrations.find(i => i.id === event.target.value);
+      if (!selected) return;
+      setSelectedIntegrations([{ selectedIntegrations: selected, settings: selected.transport === 'browser' && selected.browserAccount ? { browserAccount: selected.browserAccount } : {} }]);
+      setCurrent('global');
+    }}><option value="" disabled>投稿先を選択してください</option>{integrations.filter(i => !i.disabled && !i.inBetweenSteps).map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select>
+    {selectedIntegrations[0]?.integration.transport === 'browser' && <span className="text-xs text-textItemBlur">Browser Transport</span>}
+  </label>;
   return (
     <div className={clsx('flex', locked && 'opacity-50 pointer-events-none')}>
       <div className="flex flex-1">
@@ -54,7 +67,7 @@ export const PicksSocialsComponent: FC<{ toolTip?: boolean }> = ({
                       if (exising.integration) {
                         return;
                       }
-                      addOrRemoveSelectedIntegration(integration, {});
+                      if (single) setSelectedIntegrations([{ selectedIntegrations: integration, settings: {} }]); else addOrRemoveSelectedIntegration(integration, integration.transport === 'browser' && integration.browserAccount ? { browserAccount: integration.browserAccount } : {});
                     }}
                     className={clsx(
                       'cursor-pointer border-[2px] relative rounded-full flex justify-center items-center bg-fifth filter transition-all duration-500',
@@ -96,6 +109,7 @@ export const PicksSocialsComponent: FC<{ toolTip?: boolean }> = ({
                       />
                     )}
                   </div>
+                  {single && <span className="text-sm">{integration.name}</span>}
                 </div>
               ))}
           </div>

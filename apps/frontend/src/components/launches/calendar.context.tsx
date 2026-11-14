@@ -99,6 +99,8 @@ export interface Integrations {
   picture: string;
   changeProfilePicture: boolean;
   additionalSettings: string;
+  transport?: 'browser' | 'official' | 'unknown';
+  browserAccount?: string;
   changeNickName: boolean;
   time: {
     time: number;
