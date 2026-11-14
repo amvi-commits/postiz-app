@@ -51,7 +51,15 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
     if (flag === undefined) delete process.env.SNS_STUDIO_READ_ONLY; else process.env.SNS_STUDIO_READ_ONLY = flag;
     const cleanup = jest.fn(async () => ({ deleted: 0 }));
     const runUpdate = jest.fn(async () => ({})), stepUpdate = jest.fn(async () => ({}));
-    const prisma = { snsInstagramAccount: { groupBy: async () => [] }, snsContentInboxItem: { groupBy: async () => [] }, snsPublishRecord: { findMany: async () => [] }, snsMediaAsset: { count: async () => 0 }, snsPipelineRun: { findMany: async (query: any) => query.select ? [{ id: 'held', currentStep: 'GENERATE' }] : [], update: runUpdate }, snsPipelineStep: { updateMany: stepUpdate }, $transaction: async (actions: any[]) => Promise.all(actions) };
+    const prisma = {
+      snsInstagramAccount: { groupBy: async (): Promise<unknown[]> => [] },
+      snsContentInboxItem: { groupBy: async (): Promise<unknown[]> => [] },
+      snsPublishRecord: { findMany: async (): Promise<unknown[]> => [] },
+      snsMediaAsset: { count: async () => 0 },
+      snsPipelineRun: { findMany: async (query: any) => query.select ? [{ id: 'held', currentStep: 'GENERATE' }] : [], update: runUpdate },
+      snsPipelineStep: { updateMany: stepUpdate },
+      $transaction: async (actions: any[]) => Promise.all(actions),
+    };
     const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     (controller as any).cleanupExpiredMedia = cleanup;
     try {
