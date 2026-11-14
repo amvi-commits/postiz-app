@@ -1,0 +1,71 @@
+name: Video Tools CPU contracts
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/sns-studio-video-tools-ai, feature/sns-studio-bmode-real-e2e]
+  pull_request:
+    paths: ['services/colab/**', 'services/media-worker/**', 'apps/backend/src/services/sns-studio/**', 'apps/backend/src/api/routes/sns-studio.controller.ts', 'apps/frontend/src/components/sns-studio/**', 'libraries/helpers/src/video-generation/**', '.github/workflows/video-tools-contract.yml']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sns_studio_bmode_e2e
+        ports: ['5548:5432']
+        options: --health-cmd "pg_isready -U postgres -d sns_studio_bmode_e2e" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5548/sns_studio_bmode_e2e?schema=public
+      BMODE_DB_E2E: '1'
+      BMODE_WORKER_URL: http://127.0.0.1:18117
+      STORAGE_PROVIDER: local
+      OTEL_ENABLED: 'false'
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 10.6.1
+      - name: Verify empty disposable database target
+        run: |
+          node -e 'const u=new URL(process.env.DATABASE_URL); if(u.hostname!=="localhost"||u.port!=="5548"||u.pathname!=="/sns_studio_bmode_e2e") throw Error("Unrecognized test DB");'
+      - run: pnpm install --frozen-lockfile
+      - name: Build standard Media Worker and CPU-only test image
+        run: |
+          docker build -t bmode-media-ci services/media-worker
+          docker build -t bmode-colab-contract-ci -f services/colab/Dockerfile.tests services/colab
+      - name: Run Python contracts without network or GPU
+        run: |
+          docker run --rm --network none -v "$PWD/services/colab:/tests:ro" bmode-colab-contract-ci python -m unittest -v test_model_adapter test_drive_one_shot
+          docker run --rm --network none bmode-media-ci python -m pytest -q -p no:cacheprovider tests
+      - name: Prepare test-only shared files and real decode validator
+        run: |
+          sudo mkdir -p /bmode-fixtures /bmode-uploads
+          sudo chmod 777 /bmode-fixtures /bmode-uploads
+          docker run --rm --network none -v /bmode-fixtures:/fixture bmode-colab-contract-ci ffmpeg -v error -y -f lavfi -i testsrc2=size=480x848:rate=16 -frames:v 49 -c:v libx264 -pix_fmt yuv420p /fixture/contract-video.mp4
+          docker run -d --name bmode-contract-validator -p 127.0.0.1:18117:8001 -e MEDIA_ROOT=/bmode-uploads -e SNS_STUDIO_SERVICE_TOKEN=isolated-fixture-token -v /bmode-uploads:/bmode-uploads bmode-media-ci
+          pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
+          pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
+      - name: Run transaction, approval, preview, input and handoff contracts
+        run: |
+          pnpm exec jest --runInBand --runTestsByPath \
+            apps/backend/src/services/sns-studio/generation-jobs.db-e2e.spec.ts \
+            apps/backend/src/services/sns-studio/generation-contract.spec.ts \
+            apps/backend/src/services/sns-studio/video-input.spec.ts \
+            apps/backend/src/services/sns-studio/video-tools.spec.ts \
+            apps/frontend/src/components/sns-studio/video-input-picker.spec.ts \
+            apps/frontend/src/components/sns-studio/video-tools-workspace.spec.ts \
+            apps/frontend/src/components/sns-studio/video-tools-input-flow.spec.ts \
+            apps/frontend/src/components/sns-studio/common-publisher.spec.ts
+      - name: Stop only this job's validator
+        if: always()
+        run: docker stop bmode-contract-validator || true
