@@ -1,5 +1,7 @@
 // Shared with the standalone Colab adapter; no model weights or credentials.
-const contract = require('../../../../services/colab/model-contract.json') as {
+import modelContract from '../../../../services/colab/model-contract.json';
+
+const contract = modelContract as {
   schemaVersion: number;
   limits: Record<string, number>;
   models: Record<string, { repo_id: string; revision: string; pipeline_class: string; modes: string[]; fps: number; frame_stride: number; spatial_stride: number; sizes: Record<string, number[]> }>;

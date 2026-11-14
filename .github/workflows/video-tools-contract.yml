@@ -40,6 +40,10 @@ jobs:
         run: |
           node -e 'const u=new URL(process.env.DATABASE_URL); if(u.hostname!=="localhost"||u.port!=="5548"||u.pathname!=="/sns_studio_bmode_e2e") throw Error("Unrecognized test DB");'
       - run: pnpm install --frozen-lockfile
+      - name: Verify compiled generation contracts are packaged
+        run: |
+          pnpm run build:backend
+          node -e 'const c=require("./apps/backend/dist/libraries/helpers/src/video-generation/contract.js"); if(Object.keys(c.generationModels).length!==3 || c.validateGenerationInput({prompt:"mug",seed:0}).seed!==0) throw Error("Compiled generation contract missing"); const g=require("./apps/backend/dist/apps/backend/src/services/sns-studio/generation-jobs.js"); if(typeof g.GenerationJobs!=="function") throw Error("Compiled generation service missing");'
       - name: Build standard Media Worker and CPU-only test image
         run: |
           docker build -t bmode-media-ci services/media-worker
