@@ -69,6 +69,23 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
       expect(stepUpdate).toHaveBeenCalledTimes(flag === '1' ? 0 : 1);
     } finally { if (previous === undefined) delete process.env.SNS_STUDIO_READ_ONLY; else process.env.SNS_STUDIO_READ_ONLY = previous; }
   });
+  it.each(['http://127.0.0.1:4027/api', 'http://127.0.0.1:4027/api/'])('routes Inbox local previews through the configured API without changing Drive links: %s', async backendUrl => {
+    const previous = process.env.NEXT_PUBLIC_BACKEND_URL;
+    process.env.NEXT_PUBLIC_BACKEND_URL = backendUrl;
+    const localPath = '/sns-studio/media/preview?path=%2Fuploads%2Fgenerated.mp4';
+    const driveLink = 'https://drive.google.com/file/d/owned-fixture/view';
+    const findMany = jest.fn().mockResolvedValue([
+      { id: 'local', previewUrl: localPath, sizeBytes: BigInt(1024) },
+      { id: 'drive', previewUrl: driveLink, sizeBytes: null },
+    ]);
+    const controller = new SnsStudioController({ snsContentInboxItem: { findMany } } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    try {
+      const result = await controller.listInbox({ id: 'org' } as any);
+      expect(result[0]).toMatchObject({ previewUrl: `http://127.0.0.1:4027/api${localPath}`, sizeBytes: '1024' });
+      expect(result[1].previewUrl).toBe(driveLink);
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'org' } }));
+    } finally { if (previous === undefined) delete process.env.NEXT_PUBLIC_BACKEND_URL; else process.env.NEXT_PUBLIC_BACKEND_URL = previous; }
+  });
   const orgA = { id: 'org-video-tools-a' } as any;
   const orgB = { id: 'org-video-tools-b' } as any;
 

@@ -2087,7 +2087,12 @@ export class SnsStudioController {
 
   @Get('/content-inbox')
   listInbox(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true, source: true, metadata: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
+    const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL || '/api').replace(/\/$/, '');
+    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true, source: true, metadata: true } } } }).then((rows) => rows.map((row) => ({
+      ...row,
+      sizeBytes: row.sizeBytes?.toString() ?? null,
+      previewUrl: row.previewUrl?.startsWith('/sns-studio/media/preview?') ? `${backendUrl}${row.previewUrl}` : row.previewUrl,
+    })));
   }
 
   @Get('/recipes')

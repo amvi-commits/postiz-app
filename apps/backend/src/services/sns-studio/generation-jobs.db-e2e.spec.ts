@@ -175,6 +175,7 @@ const enabled = process.env.BMODE_DB_E2E === '1';
     const inbox = await controller().listInbox({ id: org } as any);
     expect(inbox[0].mediaAsset?.source).toBe('AI_GENERATION');
     expect((inbox[0].mediaAsset?.metadata as any).prompt).toBe('mug');
+    expect(inbox[0].previewUrl).toContain('/api/sns-studio/media/preview?path=');
     const runId = (asset.metadata as any).pipelineRunId;
     await expect(controller().approvePipeline({ id: other } as any, runId)).rejects.toMatchObject({ status: 404 });
     await controller().approvePipeline({ id: org } as any, runId);
