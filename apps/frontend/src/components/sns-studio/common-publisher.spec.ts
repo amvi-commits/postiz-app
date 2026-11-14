@@ -4,11 +4,12 @@ import { createRoot, Root } from 'react-dom/client';
 const mockFetch = jest.fn();
 const mockIntegrations = jest.fn();
 const mockSWR = jest.fn();
+let mockPostEditorProps: any;
 jest.mock('@gitroom/helpers/utils/custom.fetch', () => ({ useFetch: () => mockFetch }));
 jest.mock('@gitroom/frontend/components/launches/helpers/use.integration.list', () => ({ useIntegrationList: () => mockIntegrations() }));
 jest.mock('swr', () => ({ __esModule: true, default: (...args: unknown[]) => mockSWR(...args) }));
 jest.mock('@gitroom/frontend/components/launches/calendar.context', () => ({ CalendarWeekProvider: ({ children }: any) => children }));
-jest.mock('@gitroom/frontend/components/launches/new.post', () => ({ NewPost: () => null }));
+jest.mock('@gitroom/frontend/components/launches/new.post', () => ({ NewPost: (props: any) => { mockPostEditorProps = props; return null; } }));
 jest.mock('@gitroom/frontend/components/layout/loading', () => ({ LoadingComponent: () => null }));
 jest.mock('./common-account-policy', () => ({ CommonAccountPolicyPanel: () => null }));
 import { SnsStudioCommonPublisher } from './common-publisher';
@@ -76,5 +77,20 @@ describe('common publisher destination prefill', () => {
     await mount({ initialDestinationId: 'x-1' });
     expect(checkboxes().map((item) => item.checked)).toEqual([false, true]);
     expect(renders).toBeLessThan(10);
+  });
+  it('selects only the explicit account when the platform is also provided', async () => {
+    accounts!.push({ id: 'threads-2', name: 'Threads two', identifier: 'threads' });
+    await mount({ initialDestinationId: 'threads-1', preferredPlatform: 'threads' });
+    expect(checkboxes().map((item) => item.checked)).toEqual([true, false]);
+  });
+  it('saves automatically before opening and uses fresh plan IDs for policy and tracking', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ id: 'new-plan' }) });
+    await mount({ initialDestinationId: 'threads-1', content: 'Body' });
+    let prepared: any;
+    await act(async () => { prepared = await mockPostEditorProps.beforeOpen(); });
+    expect(prepared.commonContentPlanId).toBe('new-plan');
+    await prepared.onBeforePost('now');
+    await act(async () => { await prepared.onPosted({ type: 'now', items: [{ postId: 'post-one', integration: 'threads-1' }] }); });
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/sns-studio/content-plans', '/sns-studio/common/content-plans/new-plan/preflight', '/sns-studio/content-plans/new-plan/post-links']);
   });
 });

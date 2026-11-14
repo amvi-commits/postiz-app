@@ -9,8 +9,8 @@ describe('SNS Studio integration navigation', () => {
   it('keeps every existing Integration workspace reachable', () => {
     const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Common Queue', 'Common History', 'Common Analytics', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings', 'Video Tools'];
     for (const tab of tabs) expect(navigationForTab(tab, 'common')).toBeDefined();
-    expect(navigationForTab('Publish', 'threads')).toEqual({ platform: 'common', section: 'Cross Post' });
-    expect(navigationForTab('Threads', 'common')).toEqual({ platform: 'threads', section: 'Workspace' });
+    expect(navigationForTab('Publish', 'threads')).toEqual({ platform: 'common', section: '複数SNSに投稿' });
+    expect(navigationForTab('Threads', 'common')).toEqual({ platform: 'threads', section: '投稿作成' });
     expect(navigationForTab('Video Tools', 'common')).toEqual({ platform: 'common', section: 'Video Tools' });
   });
 
@@ -18,6 +18,6 @@ describe('SNS Studio integration navigation', () => {
     expect(navigationForTab('Publish', 'tiktok')).toEqual({ platform: 'tiktok', section: 'Videos' });
     expect(navigationForTab('Accounts', 'tiktok')).toEqual({ platform: 'tiktok', section: 'Accounts' });
     expect(navigationForTab('Create', 'instagram')).toEqual({ platform: 'instagram', section: 'Reel' });
-    expect(platformSections.common.slice(0, 9).map(({ label }) => label)).toEqual(['Dashboard', 'Content Inbox', 'Video Tools', 'Automation', 'Queue', 'Calendar', 'Analytics', 'Settings', 'Cross Post']);
+    expect(platformSections.common.slice(0, 9).map(({ label }) => label)).toEqual(['Dashboard', 'Content Inbox', 'Video Tools', 'Automation', 'Queue', 'Calendar', 'Analytics', 'Settings', '複数SNSに投稿']);
   });
 });

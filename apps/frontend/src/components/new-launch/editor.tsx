@@ -22,6 +22,8 @@ import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import {
   SelectedIntegrations,
   useLaunchStore,
+  useLaunchScope,
+  launchEditorTarget,
 } from '@gitroom/frontend/components/new-launch/store';
 import { useShallow } from 'zustand/react/shallow';
 import { AddPostButton } from '@gitroom/frontend/components/new-launch/add.post.button';
@@ -102,6 +104,7 @@ export const EditorWrapper: FC<{
   totalPosts: number;
   value: string;
 }> = () => {
+  const scope = useLaunchScope();
   const t = useT();
   const {
     setGlobalValueText,
@@ -301,9 +304,8 @@ export const EditorWrapper: FC<{
     (index: number) => () => {
       setTimeout(() => {
         // scroll the the bottom
-        document.querySelector('#social-content').scrollTo({
-          top: document.querySelector('#social-content').scrollHeight,
-        });
+        const target = document.querySelector(launchEditorTarget(scope, '#social-content'));
+        target?.scrollTo({ top: target.scrollHeight });
       }, 20);
       if (internal) {
         return addInternalValue(index, current, [
