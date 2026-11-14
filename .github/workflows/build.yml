@@ -8,6 +8,11 @@ on:
   pull_request:
 
 jobs:
+  video-tools-contracts:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feature/sns-studio-video-tools-ai' || github.ref_name == 'feature/sns-studio-bmode-real-e2e' || github.event.pull_request.number == 27
+    uses: ./.github/workflows/video-tools-contract.yml
+    permissions:
+      contents: read
   build:
     runs-on: ubuntu-latest
     

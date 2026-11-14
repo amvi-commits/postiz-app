@@ -1,5 +1,6 @@
 name: Video Tools CPU contracts
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [feature/sns-studio-video-tools-ai, feature/sns-studio-bmode-real-e2e]
