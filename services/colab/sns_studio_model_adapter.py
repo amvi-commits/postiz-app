@@ -97,7 +97,8 @@ def check_gpu_environment() -> dict[str, Any]:
         info.update(torch=torch.__version__, cuda=torch.version.cuda)
         if torch.cuda.is_available():
             free, total = torch.cuda.mem_get_info()
-            info.update(cuda_available=True, device_name=torch.cuda.get_device_name(0), vram_gb=total/2**30, free_vram_gb=free/2**30, bf16_supported=torch.cuda.is_bf16_supported())
+            capability = torch.cuda.get_device_capability(0)
+            info.update(cuda_available=True, device_name=torch.cuda.get_device_name(0), vram_gb=total/2**30, free_vram_gb=free/2**30, compute_capability=list(capability), bf16_supported=capability[0] >= 8 and torch.cuda.is_bf16_supported(including_emulation=False))
     except ImportError:
         pass
     return info
@@ -105,7 +106,14 @@ def check_gpu_environment() -> dict[str, Any]:
 
 def select_torch_dtype():
     import torch
-    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    native = torch.cuda.get_device_capability(0)[0] >= 8 and torch.cuda.is_bf16_supported(including_emulation=False)
+    return torch.bfloat16 if native else torch.float16
+
+
+def execution_profile(gpu: dict, model_id: str) -> dict:
+    # A total-VRAM gate did not prevent real T4 OOM with whole-model offload.
+    low_memory = gpu['vram_gb'] < 20
+    return dict(dtype='bfloat16' if gpu['bf16_supported'] else 'float16', cpuOffloadMode='sequential_cpu' if low_memory else 'model_cpu', offloadReason='Sub-20GiB GPU: offload submodules to reduce measured T4 peak; slower transfer is expected.' if low_memory else 'Whole-model CPU offload on a >=20GiB GPU.', maxSequenceLength=512 if model_id.startswith('wan-') else 128)
 
 
 def runtime_versions() -> dict:
@@ -185,16 +193,23 @@ def run_oss_pipeline(input: dict, output_path: Path, image_path: Path | None = N
     from diffusers.utils import export_to_video
     model = SUPPORTED_MODELS[input['modelName']]
     adopted = input['adopted']
+    profile = execution_profile(check_gpu_environment(), input['modelName'])
     dtype = select_torch_dtype()
     torch.cuda.reset_peak_memory_stats()
     kwargs = dict(revision=model['revision'], torch_dtype=dtype, use_safetensors=True)
     if input['modelName'].startswith('wan-'):
         kwargs['vae'] = diffusers.AutoencoderKLWan.from_pretrained(model['repo_id'], subfolder='vae', revision=model['revision'], torch_dtype=torch.float32, use_safetensors=True)
     pipeline = getattr(diffusers, model['pipeline_class']).from_pretrained(model['repo_id'], **kwargs)
-    pipeline.enable_model_cpu_offload()
+    if profile['cpuOffloadMode'] == 'sequential_cpu':
+        pipeline.enable_sequential_cpu_offload()
+    else:
+        pipeline.enable_model_cpu_offload()
     if hasattr(pipeline.vae, 'enable_tiling'):
         pipeline.vae.enable_tiling()
-    args = dict(prompt=input['prompt'], negative_prompt=input['negativePrompt'], width=adopted['width'], height=adopted['height'], num_frames=adopted['numFrames'], num_inference_steps=input['numInferenceSteps'], generator=torch.Generator(device='cuda').manual_seed(input['seed']))
+    for text in (input['prompt'], input['negativePrompt']):
+        if len(pipeline.tokenizer(text, truncation=False, add_special_tokens=True).input_ids) > profile['maxSequenceLength']:
+            raise ValueError('PROMPT_EXCEEDS_MODEL_TOKEN_LIMIT')
+    args = dict(prompt=input['prompt'], negative_prompt=input['negativePrompt'], width=adopted['width'], height=adopted['height'], num_frames=adopted['numFrames'], num_inference_steps=input['numInferenceSteps'], max_sequence_length=profile['maxSequenceLength'], generator=torch.Generator(device='cuda').manual_seed(input['seed']))
     if input['modelName'].startswith('ltx-'):
         args['frame_rate'] = adopted['fps']
     else:
@@ -217,7 +232,7 @@ def run_oss_pipeline(input: dict, output_path: Path, image_path: Path | None = N
     export_to_video(frames, str(raw), fps=adopted['fps'])
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(raw), '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(output_path)], check=True, capture_output=True, timeout=120)
     raw.unlink(missing_ok=True)
-    return dict(dtype=str(dtype), vaeDtype=str(pipeline.vae.dtype), cpuOffload=True, inferenceSeconds=elapsed, peakGpuMemoryBytes=torch.cuda.max_memory_allocated(), peakGpuReservedBytes=torch.cuda.max_memory_reserved(), inputImageUsed=image_path is not None)
+    return dict(**profile, vaeDtype=str(pipeline.vae.dtype), cpuOffload=True, inferenceSeconds=elapsed, peakGpuMemoryBytes=torch.cuda.max_memory_allocated(), peakGpuReservedBytes=torch.cuda.max_memory_reserved(), inputImageUsed=image_path is not None)
 
 
 def generate(job: dict, output_dir: str) -> list[str]:

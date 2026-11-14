@@ -5,15 +5,32 @@ import os
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from sns_studio_model_adapter import (
     SUPPORTED_MODELS, canonical_hash, normalize_model_id, validate_input,
     generate, generate_mock_video, validate_reference_image, validate_video,
+    select_torch_dtype, execution_profile,
 )
 
 
 class TestColabModelAdapter(unittest.TestCase):
+    def test_t4_emulated_bfloat16_does_not_select_a_native_bfloat16_kernel(self):
+        fake = SimpleNamespace(float16='float16', bfloat16='bfloat16', cuda=SimpleNamespace(get_device_capability=lambda *_: (7, 5), is_bf16_supported=lambda **_: True))
+        with patch.dict('sys.modules', {'torch': fake}):
+            self.assertEqual(select_torch_dtype(), 'float16')
+        fake.cuda.get_device_capability = lambda *_: (8, 0)
+        with patch.dict('sys.modules', {'torch': fake}):
+            self.assertEqual(select_torch_dtype(), 'bfloat16')
+
+    def test_memory_policy_exposes_slow_offload_instead_of_claiming_vram_guarantees(self):
+        profile = execution_profile({'vram_gb': 14.56, 'bf16_supported': False}, 'wan-2.1-t2v-1.3b')
+        self.assertEqual(profile['cpuOffloadMode'], 'sequential_cpu')
+        self.assertEqual(profile['dtype'], 'float16')
+        self.assertEqual(profile['maxSequenceLength'], 512)
+        self.assertEqual(execution_profile({'vram_gb': 24, 'bf16_supported': True}, 'ltx-video-0.9.1-i2v')['cpuOffloadMode'], 'model_cpu')
+
     def test_exact_pinned_model_contract(self):
         for model in SUPPORTED_MODELS.values():
             self.assertRegex(model['revision'], r'^[0-9a-f]{40}$')

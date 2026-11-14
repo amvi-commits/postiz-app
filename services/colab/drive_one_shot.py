@@ -138,6 +138,11 @@ def run_one_job(transport, manifest_file_id: str, expected_job_id: str, expected
     except Exception as error:
         # Do not include request URLs, credentials, or arbitrary exception strings.
         code = 'GENERATION_TIMEOUT' if isinstance(error, subprocess.TimeoutExpired) else 'MODEL_ADAPTER_FAILED'
+        diagnostic_path = work / 'failure-evidence.json'
+        if diagnostic_path.exists() and not isinstance(error, subprocess.TimeoutExpired):
+            diagnostic = json.loads(diagnostic_path.read_text())
+            if diagnostic.get('errorCode') in {'MODEL_OUT_OF_MEMORY', 'BLOCKED_BY_GPU', 'BLOCKED_BY_RAM_OR_DISK', 'PROMPT_EXCEEDS_MODEL_TOKEN_LIMIT', 'MODEL_OUTPUT_CONTRACT_MISMATCH', 'UNVERIFIED_DEPENDENCY_VERSION', 'REFERENCE_IMAGE_HASH_MISMATCH'}:
+                code = diagnostic['errorCode']
         transport.create_json(job['resultFileId'], job['outputFolderId'], f"sns-studio-result-{expected_job_id}-a{expected_attempt}.json", dict(**result_base, status='FAILED', errorCode=code, errorMessage=code))
         raise
     # Upload failures preserve completed output for a same-runtime resync.
