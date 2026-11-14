@@ -62,6 +62,42 @@ describe('Threads inline wrapper / existing draft references', () => {
     await mockComposerProps.onBeforePost('now');
     expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/sns-studio/content-plans', '/sns-studio/common/content-plans/plan-one/preflight']);
   });
+  it('reads the returned Post ID to retain the server-assigned group after a first save', async () => {
+    localStorage.setItem(selectionKey, selected); await mount();
+    await act(async () => mockComposerProps.onPosted({ type: 'draft', group: 'client-proposal', items: [{ postId: 'saved-post', integration: selected }] }));
+    expect(mockFetch).toHaveBeenCalledWith('/posts/saved-post');
+    expect(mockFetch).not.toHaveBeenCalledWith('/posts/group/client-proposal');
+    expect(JSON.parse(localStorage.getItem(journalKey)!)).toEqual({ state: 'draft', group: 'saved-group', postId: 'saved-post' });
+    expect(mockExisting).toEqual(savedDraft);
+    expect(container.textContent).toContain('下書きを保存しました');
+    expect(mockComposerProps.inline.submissionBlocked).toBe(false);
+  });
+  it('recovers an accepted draft read on reload by Post ID without another create request', async () => {
+    localStorage.setItem(selectionKey, selected);
+    localStorage.setItem(journalKey, JSON.stringify({ state: 'accepted', group: 'client-proposal', result: { type: 'draft', items: [{ postId: 'saved-post' }] } }));
+    await mount();
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/posts/saved-post']);
+    expect(mockExisting).toEqual(savedDraft);
+    expect(JSON.parse(localStorage.getItem(journalKey)!)).toMatchObject({ state: 'draft', group: 'saved-group', postId: 'saved-post' });
+    expect(mockComposerProps.inline.submissionBlocked).toBe(false);
+  });
+  it('keeps the same Post ID when the existing dashboard API rotates its group on an edit', async () => {
+    localStorage.setItem(selectionKey, selected); await mount();
+    await act(async () => mockComposerProps.onPosted({ type: 'draft', group: 'client-proposal', items: [{ postId: 'saved-post' }] }));
+    const updated = { ...savedDraft, group: 'server-rotated-group', posts: [{ ...savedDraft.posts[0], content: 'Edited draft' }] };
+    mockFetch.mockResolvedValue({ ok: true, json: async () => updated });
+    await act(async () => mockComposerProps.onPosted({ type: 'draft', group: 'saved-group', items: [{ postId: 'saved-post' }] }));
+    expect(mockExisting).toEqual(updated);
+    expect(JSON.parse(localStorage.getItem(journalKey)!)).toEqual({ state: 'draft', group: 'server-rotated-group', postId: 'saved-post' });
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/posts/saved-post', '/posts/saved-post']);
+  });
+  it('retains accepted IDs and blocks another create when the canonical draft read fails', async () => {
+    localStorage.setItem(selectionKey, selected); await mount();
+    mockFetch.mockResolvedValue({ ok: false });
+    await expect(act(async () => mockComposerProps.onPosted({ type: 'draft', group: 'client-proposal', items: [{ postId: 'saved-post' }] }))).rejects.toThrow('保存済み下書き');
+    expect(JSON.parse(localStorage.getItem(journalKey)!)).toMatchObject({ state: 'accepted', result: { items: [{ postId: 'saved-post' }] } });
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/posts/saved-post']);
+  });
   it('does not carry selected accounts or draft values into another Organization', async () => {
     localStorage.setItem(selectionKey, selected); localStorage.setItem(journalKey, JSON.stringify({ state: 'draft', group: 'saved-group' })); await mount();
     mockOrganization = 'org-two'; mockFetch.mockClear(); await mount();

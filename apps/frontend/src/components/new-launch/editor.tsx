@@ -103,7 +103,8 @@ const InterceptUnderlineShortcut = Extension.create({
 export const EditorWrapper: FC<{
   totalPosts: number;
   value: string;
-}> = () => {
+  singleAccount?: boolean;
+}> = ({ singleAccount = false }) => {
   const scope = useLaunchScope();
   const t = useT();
   const {
@@ -187,8 +188,10 @@ export const EditorWrapper: FC<{
   }, [loaded, loadedState]);
 
   const canEdit = useMemo(() => {
-    return current === 'global' || !!internal;
-  }, [current, internal]);
+    // A single-account view edits its sole content directly. The existing
+    // global/internal setters still choose the correct saved draft values.
+    return singleAccount || current === 'global' || !!internal;
+  }, [singleAccount, current, internal]);
 
   const items = useMemo(() => {
     if (internal) {
@@ -467,7 +470,7 @@ export const EditorWrapper: FC<{
                             />
                           )}
                         </div>
-                        {!!internal && !existingData?.integration && (
+                        {!singleAccount && !!internal && !existingData?.integration && (
                           <div
                             className="mt-[12px] flex gap-[20px] items-center cursor-pointer select-none"
                             onClick={goBackToGlobal}

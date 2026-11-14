@@ -81,9 +81,11 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
     localStorage.setItem(storageKey, JSON.stringify(value));
   };
   const loadDraft = useCallback(
-    async (group: string) => {
+    async (group: string, postId?: string) => {
       const response = await request(
-        `/posts/group/${encodeURIComponent(group)}`
+        postId
+          ? `/posts/${encodeURIComponent(postId)}`
+          : `/posts/group/${encodeURIComponent(group)}`
       );
       if (!response.ok)
         throw new Error(
@@ -92,7 +94,9 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
       const data = await response.json();
       if (
         data.integration !== accountId ||
+        typeof data.group !== 'string' ||
         !data.posts?.length ||
+        (postId && !data.posts.some((post: any) => post.id === postId)) ||
         data.posts.some((post: any) => post.state !== 'DRAFT')
       )
         throw new Error(
@@ -120,15 +124,24 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
       );
       return;
     }
-    if (saved.state !== 'draft') {
+    // Postiz assigns the canonical group on creation. The returned Post ID
+    // also lets a saved draft recover after its first read response failed,
+    // without ever repeating the create request.
+    const postId = saved.state === 'draft'
+      ? saved.postId
+      : saved.state === 'accepted' && saved.result?.type === 'draft'
+        ? saved.result.items?.[0]?.postId
+        : undefined;
+    if (saved.state !== 'draft' && !postId) {
       setPending(saved);
       plan.current = saved.planId || null;
       return;
     }
     setDraftLoading(true);
-    loadDraft(saved.group)
+    loadDraft(saved.group, postId)
       .then((data) => {
         if (current) {
+          remember({ state: 'draft', group: data.group, postId: data.posts[0].id });
           setEditing(data);
           setRevision((value) => value + 1);
         }
@@ -194,8 +207,10 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
       );
       return;
     }
-    const data = await loadDraft(result.group);
-    remember({ state: 'draft', group: data.group });
+    const postId = result.items?.[0]?.postId;
+    if (!postId) throw new Error('保存済み下書きの投稿IDを確認できません。再送せず履歴を確認してください。');
+    const data = await loadDraft(result.group, postId);
+    remember({ state: 'draft', group: data.group, postId: data.posts[0].id });
     setEditing(data);
     setPending(null);
     setRevision((value) => value + 1);
@@ -347,7 +362,7 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
                   }),
                 onRequestRejected: () => {
                   if (editing.group)
-                    remember({ state: 'draft', group: editing.group });
+                    remember({ state: 'draft', group: editing.group, postId: editing.posts?.[0]?.id });
                   else localStorage.removeItem(storageKey);
                 },
               }}

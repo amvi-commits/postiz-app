@@ -650,7 +650,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
   if (props.inline) return <InlinePostLayout
     scope={scope}
     title={props.inline.title}
-    editor={!hide && <EditorWrapper totalPosts={1} value="" />}
+    editor={!hide && <EditorWrapper totalPosts={1} value="" singleAccount />}
     settings={null}
     preview={<ShowAllProviders ref={ref} />}
     busy={loading}
