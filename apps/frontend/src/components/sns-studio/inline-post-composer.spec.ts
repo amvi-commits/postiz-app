@@ -75,6 +75,32 @@ describe('embedded existing Postiz editor / fake executor', () => {
     expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: 'draft', group: expect.any(String), items: [expect.objectContaining({ postId: 'draft-post-1' })] }));
     expect(mockModal.openModal).not.toHaveBeenCalled(); expect(mockModal.closeAll).not.toHaveBeenCalled();
   });
+  it('reveals only the active provider settings in this editor scope', async () => {
+    const hiddenStyle = document.createElement('style');
+    hiddenStyle.textContent = '.hidden { display: none; }';
+    const otherEditor = document.createElement('div');
+    otherEditor.setAttribute('data-launch-editor-scope', 'other-editor');
+    otherEditor.innerHTML = '<div id="social-settings"><div data-id="threads-1" class="hidden">Other editor</div></div>';
+    document.body.append(hiddenStyle, otherEditor);
+    try {
+      await mount();
+      const target = container.querySelector('#social-settings')!;
+      const active = document.createElement('div');
+      active.dataset.id = 'threads-1'; active.className = 'hidden';
+      active.textContent = 'Browser settings explanation';
+      const inactive = document.createElement('div');
+      inactive.dataset.id = 'threads-2'; inactive.className = 'hidden';
+      target.append(active, inactive);
+      await act(async () => container.querySelector('summary')!.click());
+      expect(container.querySelector('details')!.open).toBe(true);
+      expect(getComputedStyle(active).display).toBe('block');
+      expect(getComputedStyle(inactive).display).toBe('none');
+      expect(getComputedStyle(otherEditor.querySelector('[data-id]')!).display).toBe('none');
+      expect(postRequests()).toHaveLength(0);
+    } finally {
+      hiddenStyle.remove(); otherEditor.remove();
+    }
+  });
   it('preserves the existing draft group and post ID when editing', async () => {
     mockPostId = 'saved-root'; mockExisting = { integration: 'threads-1', group: 'saved-group', posts: [{ state: 'DRAFT' }] };
     await mount(); await click('下書き保存');

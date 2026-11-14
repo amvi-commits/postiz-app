@@ -651,7 +651,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
     scope={scope}
     title={props.inline.title}
     editor={!hide && <EditorWrapper totalPosts={1} value="" singleAccount />}
-    settings={null}
+    settings={<style>{`${launchEditorTarget(scope, '#social-settings')} [data-id="${current}"] {display: block !important;}`}</style>}
     preview={<ShowAllProviders ref={ref} />}
     busy={loading}
     mediaProcessing={locked}
