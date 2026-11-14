@@ -39,6 +39,7 @@ import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tikto
 import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 import { TikTokStatusAdapter } from '@gitroom/backend/services/sns-studio/tiktok-status.adapter';
 import { registerVideoInput } from '@gitroom/backend/services/sns-studio/video-input';
+import { GenerationJobs } from '@gitroom/backend/services/sns-studio/generation-jobs';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -789,144 +790,33 @@ export class SnsStudioController {
     return report;
   }
 
+  private get generationJobsService() {
+    return new GenerationJobs(this.prisma, this.googleDrive, this.generationProvider, path => this.mediaWorker('/generation/validate-video', 'POST', { path }));
+  }
+
   @Get('/generation/jobs')
   generationJobs(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsGenerationJob.findMany({ where: { organizationId: org.id }, orderBy: { createdAt: 'desc' }, take: 100 });
+    return this.generationJobsService.list(org.id);
   }
 
   @Post('/generation/jobs')
-  async createGenerationJob(@GetOrgFromRequest() org: Organization, @Body() body: { input: Record<string, unknown> }) {
-    if (!body.input || typeof body.input !== 'object' || Array.isArray(body.input)) {
-      throw new HttpException({ code: 'GENERATION_INPUT_INVALID' }, HttpStatus.BAD_REQUEST);
-    }
-    const folder = await this.googleDrive.selectedFolder(org.id);
-    if (!folder?.id) throw new HttpException({ code: 'GOOGLE_DRIVE_FOLDER_REQUIRED' }, HttpStatus.BAD_REQUEST);
-    const job = await this.prisma.snsGenerationJob.create({ data: { organizationId: org.id, status: 'SUBMITTING', inputManifest: body.input as any } });
-    try {
-      const queued = await this.generationProvider.submit({
-        jobId: job.id,
-        organizationId: org.id,
-        createdAt: job.createdAt.toISOString(),
-        input: { ...body.input, outputFolderId: folder.id },
-        resultFilePrefix: `sns-studio-result-${job.id}`,
-      });
-      return this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'QUEUED', queuePath: queued.queuePath, submittedAt: new Date() } });
-    } catch {
-      await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'FAILED', errorCode: 'GENERATION_QUEUE_UPLOAD_FAILED', errorMessage: 'Google Drive could not store the job manifest.' } });
-      throw new ServiceUnavailableException({ code: 'GENERATION_QUEUE_UPLOAD_FAILED' });
-    }
+  createGenerationJob(@GetOrgFromRequest() org: Organization, @Body() body: { input: Record<string, unknown> }) {
+    return this.generationJobsService.create(org.id, body?.input);
   }
 
   @Post('/generation/jobs/sync')
-  async syncGenerationResults(@GetOrgFromRequest() org: Organization) {
-    const resultFiles = await this.googleDrive.listGenerationResults(org.id);
-    const report = { completed: 0, imported: 0, skipped: 0, failed: 0 };
-    const uploadRoot = resolve(process.env.UPLOAD_DIRECTORY || './uploads');
-    for (const resultFile of resultFiles) {
-      if (!resultFile.id) continue;
-      try {
-        const manifest = await this.googleDrive.readJson(org.id, resultFile.id);
-        const jobId = typeof manifest.jobId === 'string' ? manifest.jobId : '';
-        const job = jobId ? await this.prisma.snsGenerationJob.findFirst({ where: { id: jobId, organizationId: org.id } }) : null;
-        if (!job || job.status === 'COMPLETE') { report.skipped += 1; continue; }
-        if (manifest.status === 'FAILED') {
-          await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'FAILED', errorCode: String(manifest.errorCode || 'GENERATION_FAILED'), errorMessage: String(manifest.errorMessage || 'Colab generation failed.').slice(0, 500), resultManifest: manifest as any, completedAt: new Date() } });
-          report.failed += 1;
-          continue;
-        }
-        const outputs = Array.isArray(manifest.outputs) ? manifest.outputs : [];
-        if (!outputs.length) { report.skipped += 1; continue; }
-        const imported = [];
-        for (const output of outputs) {
-          if (!output || typeof output.fileId !== 'string') continue;
-          const file = await this.googleDrive.fileMetadata(org.id, output.fileId);
-          if (!file.id || !file.name || !(file.mimeType?.startsWith('image/') || file.mimeType?.startsWith('video/'))) continue;
-          const cleanName = file.name.replace(/[^\p{L}\p{N}._() -]/gu, '_').slice(0, 120) || 'generated-media';
-          const extension = extname(cleanName).replace(/[^.A-Za-z0-9]/g, '').slice(0, 12);
-          const diskPath = resolve(uploadRoot, 'sns-studio', 'generated', job.id, `${randomUUID()}${extension}`);
-          const storageKey = `/uploads/sns-studio/generated/${job.id}/${diskPath.split(/[\\/]/).pop()}`;
-          await this.googleDrive.download(org.id, file.id, diskPath);
-          const sizeBytes = file.size && /^\d+$/.test(file.size) ? BigInt(file.size) : null;
-          const media = await this.prisma.snsMediaAsset.create({ data: { organizationId: org.id, source: 'AI_GENERATION', storageKey, fileName: cleanName, mimeType: file.mimeType, sizeBytes, isOriginal: false, metadata: { generationJobId: job.id, driveFileId: file.id } as any } });
-          const inboxItem = await this.prisma.snsContentInboxItem.create({ data: { organizationId: org.id, driveFileId: null, fileName: cleanName, mediaType: file.mimeType.startsWith('video/') ? 'video' : 'image', sizeBytes, sourceCreatedAt: file.createdTime ? new Date(file.createdTime) : null, status: 'READY_FOR_REVIEW', previewUrl: file.webViewLink || null, mediaAssetId: media.id, metadata: { generationJobId: job.id } as any } });
-          imported.push({ mediaAssetId: media.id, inboxItemId: inboxItem.id, name: cleanName, storageKey });
-        }
-        if (!imported.length) { report.skipped += 1; continue; }
-        await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'COMPLETE', resultManifest: { resultFileId: resultFile.id, outputs: imported } as any, completedAt: new Date() } });
-        report.completed += 1;
-        report.imported += imported.length;
-      } catch {
-        report.failed += 1;
-      }
-    }
-    return report;
+  syncGenerationResults(@GetOrgFromRequest() org: Organization) {
+    return this.generationJobsService.sync(org.id);
   }
 
   @Post('/generation/jobs/:id/cancel')
-  async cancelGenerationJob(
-    @GetOrgFromRequest() org: Organization,
-    @Param('id') id: string
-  ) {
-    const job = await this.prisma.snsGenerationJob.findFirst({
-      where: { id, organizationId: org.id },
-    });
-    if (!job) {
-      throw new HttpException({ code: 'JOB_NOT_FOUND' }, HttpStatus.NOT_FOUND);
-    }
-    if (job.status === 'COMPLETE' || job.status === 'CANCELLED') {
-      return job;
-    }
-    return this.prisma.snsGenerationJob.update({
-      where: { id },
-      data: { status: 'CANCELLED', completedAt: new Date() },
-    });
+  cancelGenerationJob(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    return this.generationJobsService.cancel(org.id, id);
   }
 
   @Post('/generation/jobs/:id/retry')
-  async retryGenerationJob(
-    @GetOrgFromRequest() org: Organization,
-    @Param('id') id: string
-  ) {
-    const job = await this.prisma.snsGenerationJob.findFirst({
-      where: { id, organizationId: org.id },
-    });
-    if (!job) {
-      throw new HttpException({ code: 'JOB_NOT_FOUND' }, HttpStatus.NOT_FOUND);
-    }
-    const folder = await this.googleDrive.selectedFolder(org.id);
-    if (!folder?.id) {
-      throw new HttpException({ code: 'GOOGLE_DRIVE_FOLDER_REQUIRED' }, HttpStatus.BAD_REQUEST);
-    }
-    const input = (job.inputManifest || {}) as Record<string, unknown>;
-    try {
-      const queued = await this.generationProvider.submit({
-        jobId: job.id,
-        organizationId: org.id,
-        createdAt: new Date().toISOString(),
-        input: { ...input, outputFolderId: folder.id },
-        resultFilePrefix: `sns-studio-result-${job.id}`,
-      });
-      return this.prisma.snsGenerationJob.update({
-        where: { id },
-        data: {
-          status: 'QUEUED',
-          queuePath: queued.queuePath,
-          submittedAt: new Date(),
-          errorCode: null,
-          errorMessage: null,
-        },
-      });
-    } catch {
-      await this.prisma.snsGenerationJob.update({
-        where: { id },
-        data: {
-          status: 'FAILED',
-          errorCode: 'GENERATION_QUEUE_UPLOAD_FAILED',
-          errorMessage: 'Google Drive could not store the job manifest.',
-        },
-      });
-      throw new ServiceUnavailableException({ code: 'GENERATION_QUEUE_UPLOAD_FAILED' });
-    }
+  retryGenerationJob(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    return this.generationJobsService.retry(org.id, id);
   }
 
   @Post('/proxy/test')
@@ -1444,6 +1334,13 @@ export class SnsStudioController {
       asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
         ? (asset.metadata as Record<string, unknown>)
         : {};
+
+    if (asset.source === 'AI_GENERATION') {
+      const run = typeof metadata.pipelineRunId === 'string' ? await this.prisma.snsPipelineRun.findFirst({ where: { id: metadata.pipelineRunId, organizationId: org.id } }) : null;
+      if (!run || run.status !== 'APPROVED' || !run.approvedAt || (run.output as any)?.mediaAssetId !== asset.id) {
+        throw new HttpException({ code: 'GENERATION_APPROVAL_REQUIRED' }, HttpStatus.CONFLICT);
+      }
+    }
 
     const cachedMediaId =
       typeof metadata.postizMediaId === 'string' ? metadata.postizMediaId : undefined;

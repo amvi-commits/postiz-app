@@ -24,7 +24,7 @@ describe('VideoToolsWorkspace UI smoke', () => {
   beforeEach(() => {
     mockSWR.mockReset();
     mockSWR.mockImplementation((key: unknown) => {
-      if (key === '/sns-studio/generation/jobs') {
+      if ((Array.isArray(key) ? key[0] : key) === '/sns-studio/generation/jobs') {
         return {
           data: [
             {
@@ -166,7 +166,7 @@ describe('VideoToolsWorkspace UI smoke', () => {
     expect(html).toContain('BLOCKED_BY_GPU');
     expect(html).toContain('Job #job-8765');
     expect(html).toContain('COMPLETE');
-    expect(html).toContain('共通投稿へ送る (Postiz Media変換)');
+    expect(html).toContain('制作Queueでの承認が必要です');
     expect(html).toContain('/uploads/sns-studio/generated/job-87654321/river.mp4');
   });
 

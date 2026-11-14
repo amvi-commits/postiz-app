@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import re
 import secrets
 import shutil
@@ -755,6 +756,24 @@ def create_app() -> FastAPI:
     @app.post("/probe")
     def media_probe(body: ProbeRequest):
         return probe(resolve_media_path(body.path))
+
+    @app.post("/generation/validate-video")
+    def validate_generated_video(body: ProbeRequest):
+        path = resolve_media_path(body.path)
+        if path.suffix.lower() != '.mp4' or not 1000 <= path.stat().st_size <= 268435456:
+            raise HTTPException(status_code=422, detail={"code": "GENERATION_VIDEO_INVALID"})
+        details = probe(path)
+        if details['video']['codec'] != 'h264' or not 0 < details['durationSeconds'] <= 6:
+            raise HTTPException(status_code=422, detail={"code": "GENERATION_VIDEO_INVALID"})
+        try:
+            subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-err_detect', 'explode', '-i', str(path), '-map', '0:v:0', '-f', 'null', '-'], check=True, capture_output=True, timeout=120)
+            counted = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_frames', '-show_entries', 'stream=nb_read_frames', '-of', 'default=noprint_wrappers=1:nokey=1', str(path)], check=True, capture_output=True, text=True, timeout=120)
+            frames = int(counted.stdout.strip())
+            if frames < 2:
+                raise ValueError('No video frames')
+        except (subprocess.SubprocessError, OSError, ValueError):
+            raise HTTPException(status_code=422, detail={"code": "GENERATION_VIDEO_DECODE_FAILED"}) from None
+        return {**details, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'numFrames': frames, 'fullDecode': True}
 
     @app.post("/analyze")
     def video_analyze(body: AnalyzeRequest):

@@ -57,7 +57,7 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
   } = {}) => {
     const assets = (options.assets || []).map((a) => ({ ...a }));
     const inboxItems = (options.inboxItems || []).map((i) => ({ ...i }));
-    const jobs = (options.jobs || []).map((j) => ({ ...j }));
+    const jobs = (options.jobs || []).map((j) => ({ createdAt: new Date(), updatedAt: new Date(), ...j }));
 
     const prisma = {
       snsMediaAsset: {
@@ -93,7 +93,7 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
       },
       snsGenerationJob: {
         create: jest.fn(({ data }: any) => {
-          const newJob = { id: `job-${Date.now()}-${Math.random()}`, createdAt: new Date(), ...data };
+          const newJob = { id: `job-${Date.now()}-${Math.random()}`, createdAt: new Date(), updatedAt: new Date(), ...data };
           jobs.push(newJob);
           return Promise.resolve(newJob);
         }),
@@ -104,6 +104,11 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
             return true;
           });
           return Promise.resolve(match || null);
+        }),
+        updateMany: jest.fn(({ where, data }: any) => {
+          const match = jobs.find((j) => j.id === where.id && j.organizationId === where.organizationId && j.status === where.status && j.updatedAt === where.updatedAt);
+          if (match) Object.assign(match, data, { updatedAt: new Date() });
+          return Promise.resolve({ count: match ? 1 : 0 });
         }),
         update: jest.fn(({ where, data }: any) => {
           const match = jobs.find((j) => j.id === where.id);
@@ -117,11 +122,12 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
     };
 
     const googleDrive = {
+      realGenerationEnabled: () => true,
       selectedFolder: jest.fn((orgId: string) => Promise.resolve({ id: `folder-${orgId}` })),
     };
 
     const generationProvider = {
-      submit: jest.fn((manifest: any) => Promise.resolve({ queuePath: `drive-path-${manifest.jobId}` })),
+      submit: jest.fn((manifest: any) => { const { outputFolderId, ...input } = manifest.input; return Promise.resolve({ queuePath: `drive-path-${manifest.jobId}`, input, execution: { attempt: manifest.attempt } }); }),
     };
 
     const mediaService = {
@@ -358,7 +364,7 @@ describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
           mode: 'text-to-video',
           modelName: 'wan-2.1-t2v-1.3b',
           aspectRatio: '9:16',
-          durationSeconds: 5,
+          durationSeconds: 3,
         },
       });
 

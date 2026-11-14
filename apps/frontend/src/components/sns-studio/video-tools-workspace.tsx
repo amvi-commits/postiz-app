@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import useSWR from 'swr';
 import type { CommonPublishPrefill } from './common-publisher';
 import { VideoInputPicker, VideoInput } from './video-input-picker';
+import { validateGenerationInput, generationModels } from '@gitroom/helpers/video-generation/contract';
 
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field =
@@ -29,6 +30,7 @@ export type VideoToolsWorkspaceProps = {
   onNavigateToQueue: () => void;
   mediaWorkerHealth?: any;
   initialSubTool?: SubTool;
+  organizationId?: string;
 };
 
 export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
@@ -38,6 +40,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   onNavigateToQueue,
   mediaWorkerHealth,
   initialSubTool = 'ai-re-edit',
+  organizationId,
 }) => {
   const [subTool, setSubTool] = useState<SubTool>(initialSubTool);
   const [busy, setBusy] = useState(false);
@@ -47,11 +50,11 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   // 1. AI新規生成 State
   const [genMode, setGenMode] = useState<'text-to-video' | 'image-to-video'>('text-to-video');
   const [prompt, setPrompt] = useState('');
-  const [referenceImagePath, setReferenceImagePath] = useState('');
+  const [referenceImageAssetId, setReferenceImageAssetId] = useState('');
   const [selectedModel, setSelectedModel] = useState('wan-2.1-t2v-1.3b');
   const [aspectRatio, setAspectRatio] = useState('9:16');
-  const [durationSeconds, setDurationSeconds] = useState(5);
-  const [resolution, setResolution] = useState('720p');
+  const [durationSeconds, setDurationSeconds] = useState(3);
+  const [resolution, setResolution] = useState('480p');
   const [seed, setSeed] = useState<string>('');
 
   // 2. 元動画の再加工 State (Aモード)
@@ -88,9 +91,13 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
   });
 
   // データロード
+  const { data: imageAssets = [] } = useSWR(['/sns-studio/media-assets', organizationId], ([url]: [string, string?]) => request(url));
+  const previewModel = generationModels[selectedModel];
+  const previewSize = previewModel?.sizes[aspectRatio];
+  const previewFrames = previewModel ? Math.round((durationSeconds * previewModel.fps - 1) / previewModel.frame_stride) * previewModel.frame_stride + 1 : 0;
   const { data: jobs = [], mutate: refreshJobs } = useSWR(
-    '/sns-studio/generation/jobs',
-    (url: string) => request(url),
+    ['/sns-studio/generation/jobs', organizationId],
+    ([url]: [string, string?]) => request(url),
     { refreshInterval: 4000 }
   );
 
@@ -135,8 +142,8 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
       setErrorMessage('プロンプトを入力してください。');
       return;
     }
-    if (genMode === 'image-to-video' && !referenceImagePath.trim()) {
-      setErrorMessage('Image-to-Videoでは参考画像のパスが必要です。');
+    if (genMode === 'image-to-video' && !referenceImageAssetId) {
+      setErrorMessage('Image-to-Videoでは現在Organizationの参考画像を選択してください。');
       return;
     }
 
@@ -147,20 +154,20 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
         prompt: prompt.trim(),
         mode: genMode,
         modelName: selectedModel,
-        mediaType: 'video',
+        mock: false,
+        count: 1,
+        numInferenceSteps: 30,
         aspectRatio,
         durationSeconds: Number(durationSeconds),
         resolution,
       };
       if (genMode === 'image-to-video') {
-        inputPayload.referenceImage = referenceImagePath.trim();
+        inputPayload.referenceImageAssetId = referenceImageAssetId;
       }
       if (seed.trim()) {
-        inputPayload.seed = parseInt(seed.trim(), 10);
+        inputPayload.seed = Number(seed.trim());
       }
-      if (analysisResult) {
-        inputPayload.referenceAnalysis = analysisResult;
-      }
+      validateGenerationInput(inputPayload);
 
       const res = await request('/sns-studio/generation/jobs', {
         method: 'POST',
@@ -331,7 +338,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
     await runAction(async () => {
       await request(`/sns-studio/generation/jobs/${jobId}/cancel`, { method: 'POST' });
       await refreshJobs();
-    }, 'ジョブをキャンセルしました。');
+    }, '結果の取り込みを取り消しました。実行中のGPU推論は即停止できない場合があります。');
   };
 
   const handleRetryJob = async (jobId: string) => {
@@ -428,8 +435,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
               </span>
             </div>
             <p className="mt-1 text-sm text-textItemBlur">
-              プロンプトや画像から生成AIで新しい映像を作ります。生成処理はGoogle Colab Worker等のGPU環境で非同期に実行されます。
+              プロンプトや画像から生成AIで新しい映像を作ります。指定JobをColabで1件実行します。以下のモデルは実GPU検証候補で、検証済みの保証ではありません。
             </p>
+            {previewSize && <p className="mt-2 text-xs text-textItemBlur">採用設定: {previewSize[0]}×{previewSize[1]} / {previewFrames} frames / {previewModel.fps} fps / 約{(previewFrames / previewModel.fps).toFixed(2)}秒 / 30 steps。モデル固有の画素・フレーム単位に合わせます。音声生成なし。revision {previewModel.revision.slice(0, 8)}。</p>}
 
             <div className="mt-4 flex gap-4 border-b border-blockSeparator pb-3">
               <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
@@ -476,7 +484,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   className={`${field} min-h-[90px]`}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="例: 夕暮れのサイバーパンク都市を高速で駆け抜けるスポーツカー、ネオンの光線、映画のような質感、4k解像度"
+                  placeholder="例: 木製テーブルの上のマグカップ。柔らかい朝の光。ゆっくり近づくカメラ。文字・人物なし。"
                 />
               </div>
 
@@ -486,17 +494,16 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
               {genMode === 'image-to-video' && (
                 <div>
                   <label className="text-sm font-semibold block mb-1">
-                    参考画像パス (SnsMediaAsset または ローカルパス)
+                    参考画像（現在Organizationの素材）
                   </label>
-                  <input
-                    type="text"
+                  <select
+                    aria-label="I2V参考画像"
                     className={field}
-                    value={referenceImagePath}
-                    onChange={(e) => setReferenceImagePath(e.target.value)}
-                    placeholder="/uploads/my-character.png"
-                  />
+                    value={referenceImageAssetId}
+                    onChange={(e) => setReferenceImageAssetId(e.target.value)}
+                  ><option value="">画像を選択</option>{imageAssets.filter((asset: any) => ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType)).map((asset: any) => <option key={asset.id} value={asset.id}>{asset.fileName}</option>)}</select>
                   <p className="mt-1 text-xs text-textItemBlur">
-                    ※動きを付与したい静止画像のファイルパスを指定してください。
+                    選択画像は所有権・実体を確認してJob専用Driveフォルダへ転送します。元画像は変更しません。
                   </p>
                 </div>
               )}
@@ -511,13 +518,12 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   >
                     {genMode === 'text-to-video' ? (
                       <>
-                        <option value="wan-2.1-t2v-1.3b">Wan2.1 T2V (1.3B) - Colab T4/L4/A100 推奨</option>
-                        <option value="ltx-video-0.9.1-t2v">LTX-Video T2V (0.9.1) - 高速・T4/L4/A100 推奨</option>
+                        <option value="wan-2.1-t2v-1.3b">Wan2.1 T2V (1.3B) - 実GPU検証候補</option>
+                        <option value="ltx-video-0.9.1-t2v">LTX-Video T2V (0.9.1) - 実GPU検証候補</option>
                       </>
                     ) : (
                       <>
-                        <option value="ltx-video-0.9.1-i2v">LTX-Video I2V (0.9.1) - Colab T4/L4/A100 推奨</option>
-                        <option value="wan-2.1-i2v-14b">Wan2.1 I2V (14B-480P) - ※要A100 GPU (VRAM 40GB+)</option>
+                        <option value="ltx-video-0.9.1-i2v">LTX-Video I2V (0.9.1) - 実GPU検証候補</option>
                       </>
                     )}
                   </select>
@@ -545,9 +551,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     value={durationSeconds}
                     onChange={(e) => setDurationSeconds(Number(e.target.value))}
                   >
-                    <option value={3}>3秒</option>
-                    <option value={5}>5秒</option>
-                    <option value={8}>8秒</option>
+                    <option value={2}>2秒</option><option value={3}>3秒</option><option value={4}>4秒</option>
                   </select>
                 </div>
                 <div>
@@ -558,7 +562,6 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     onChange={(e) => setResolution(e.target.value)}
                   >
                     <option value="480p">480p (高速)</option>
-                    <option value="720p">720p (標準HD)</option>
                   </select>
                 </div>
                 <div>
@@ -1046,7 +1049,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
           <div className="mt-4 space-y-3">
             {jobs.length ? (
               jobs.map((job: any) => {
-                const isComplete = job.status === 'COMPLETE' || job.status === 'COMPLETED';
+              const isComplete = job.status === 'COMPLETE';
                 const isFailed = job.status === 'FAILED';
                 const isCancelled = job.status === 'CANCELLED';
                 const isBlocked =
@@ -1063,7 +1066,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                   job.inputManifest?.mode || job.mediaType || 'text-to-video';
 
                 // 出力成果物 (resultManifest.outputs: [{ mediaAssetId, storageKey, name, inboxItemId }])
-                const outputs: Array<{ mediaAssetId: string; storageKey: string; name?: string; inboxItemId?: string }> =
+                const outputs: Array<{ mediaAssetId: string; storageKey: string; name?: string; inboxItemId?: string; approvalStatus?: string }> =
                   Array.isArray(job.resultManifest?.outputs)
                     ? job.resultManifest.outputs
                     : Array.isArray(job.outputs)
@@ -1105,6 +1108,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                     <div className="mt-2 text-xs text-newTextColor">
                       <strong>プロンプト:</strong> {inputPrompt}
                     </div>
+                    {job.inputManifest?._generation && <details className="mt-2 text-xs text-textItemBlur"><summary>Colabで実行するJob情報</summary><div>Job ID: {job.id}</div><div>attempt: {job.inputManifest._generation.attempt}</div><div>manifest file ID: {job.inputManifest._generation.manifestFileId || 'アップロード未完了'}</div><div>入力hash: {job.inputManifest._generation.inputHash}</div></details>}
 
                     {(job.errorMessage || job.errorCode || job.error) && (
                       <div className="mt-2 rounded bg-red-500/10 p-2 text-xs text-red-300 border border-red-500/20">
@@ -1144,9 +1148,9 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                                 type="button"
                                 className={`${primaryButton} text-xs py-1`}
                                 onClick={() => handleSendJobOutputToPublish(out, inputPrompt)}
-                                disabled={busy}
+                                disabled={busy || out.approvalStatus !== 'APPROVED'}
                               >
-                                🚀 共通投稿へ送る (Postiz Media変換)
+                                {out.approvalStatus === 'APPROVED' ? '🚀 共通投稿へ送る (Postiz Media変換)' : '制作Queueでの承認が必要です'}
                               </button>
                               {out.inboxItemId && (
                                 <button
@@ -1168,7 +1172,7 @@ export const VideoToolsWorkspace: React.FC<VideoToolsWorkspaceProps> = ({
                       {(job.status === 'PENDING' ||
                         job.status === 'SUBMITTING' ||
                         job.status === 'QUEUED' ||
-                        job.status === 'RUNNING') && (
+                        job.status === 'RUNNING' || job.status === 'SYNCING') && (
                         <button
                           type="button"
                           className={`${dangerButton} text-xs py-1`}
