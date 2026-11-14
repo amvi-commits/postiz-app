@@ -827,7 +827,7 @@ export class SnsStudioController {
 
   @Get('/dashboard')
   async dashboard(@GetOrgFromRequest() org: Organization) {
-    await this.cleanupExpiredMedia(org.id);
+    if (process.env.SNS_STUDIO_READ_ONLY !== '1') await this.cleanupExpiredMedia(org.id);
     const [accounts, inbox, queue, recent, cleanup] = await Promise.all([
       this.prisma.snsInstagramAccount.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
       this.prisma.snsContentInboxItem.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
@@ -2087,7 +2087,7 @@ export class SnsStudioController {
 
   @Get('/content-inbox')
   listInbox(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
+    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true, source: true, metadata: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
   }
 
   @Get('/recipes')
@@ -2103,7 +2103,7 @@ export class SnsStudioController {
   @Get('/queue')
   async queue(@GetOrgFromRequest() org: Organization) {
     const working = await this.prisma.snsPipelineRun.findMany({ where: { organizationId: org.id, status: { in: ['GENERATING', 'EDITING'] } }, select: { id: true, currentStep: true } });
-    const abandoned = working.filter((run) => !this.activePipelines.has(run.id));
+    const abandoned = process.env.SNS_STUDIO_READ_ONLY === '1' ? [] : working.filter((run) => !this.activePipelines.has(run.id));
     for (const run of abandoned) {
       const failedStep = run.currentStep || 'GENERATE';
       await this.prisma.$transaction([

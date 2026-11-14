@@ -149,6 +149,22 @@ const enabled = process.env.BMODE_DB_E2E === '1';
     expect(await p.post.count()).toBe(0); expect(await p.snsDelivery.count()).toBe(0);
   });
 
+  it('reports measured OOM without persisting untrusted error strings', async () => {
+    const job: any = await service.create(org, { prompt: 'mug' }); register(job, true);
+    const result = manifests.get(job.inputManifest._generation.resultFileId); result.errorCode = 'MODEL_OUT_OF_MEMORY';
+    await service.sync(org);
+    expect((await p.snsGenerationJob.findUniqueOrThrow({ where: { id: job.id } })).errorCode).toBe('MODEL_OUT_OF_MEMORY');
+  });
+
+  it('preserves a failed manifest upload as a retryable failed attempt', async () => {
+    provider.submit.mockRejectedValueOnce(Error('Injected queue upload failure'));
+    await expect(service.create(org, { prompt: 'mug' })).rejects.toMatchObject({ status: 503 });
+    const job = await p.snsGenerationJob.findFirstOrThrow({ where: { organizationId: org } });
+    expect(job.status).toBe('FAILED');
+    expect((await service.retry(org, job.id)).status).toBe('QUEUED');
+    expect(await count()).toEqual({ assets: 0, inbox: 0, queue: 0 });
+  });
+
   it('persists actual Queue approval across reload and gates the existing Postiz bridge', async () => {
     const job: any = await service.create(org, { prompt: 'mug' }); register(job); await service.sync(org);
     const asset = await p.snsMediaAsset.findFirstOrThrow({ where: { organizationId: org } });
@@ -156,6 +172,9 @@ const enabled = process.env.BMODE_DB_E2E === '1';
     process.env.FRONTEND_URL = 'http://localhost:4027';
     const controller = () => new SnsStudioController(p as any, drive, provider, mediaService as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     await expect(controller().createPostMedia({ id: org } as any, asset.id)).rejects.toMatchObject({ status: 409 });
+    const inbox = await controller().listInbox({ id: org } as any);
+    expect(inbox[0].mediaAsset?.source).toBe('AI_GENERATION');
+    expect((inbox[0].mediaAsset?.metadata as any).prompt).toBe('mug');
     const runId = (asset.metadata as any).pipelineRunId;
     await expect(controller().approvePipeline({ id: other } as any, runId)).rejects.toMatchObject({ status: 404 });
     await controller().approvePipeline({ id: org } as any, runId);

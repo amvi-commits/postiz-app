@@ -46,6 +46,21 @@ jest.mock('@gitroom/backend/services/sns-studio/instagram-metrics', () => ({ nor
 import { SnsStudioController } from '../../api/routes/sns-studio.controller';
 
 describe('SnsStudioController.videoTools A & B Mode Regression Gate', () => {
+  it.each(['1', '0', undefined])('preserves the live read-only cleanup/abandoned-run policy: %s', async flag => {
+    const previous = process.env.SNS_STUDIO_READ_ONLY;
+    if (flag === undefined) delete process.env.SNS_STUDIO_READ_ONLY; else process.env.SNS_STUDIO_READ_ONLY = flag;
+    const cleanup = jest.fn(async () => ({ deleted: 0 }));
+    const runUpdate = jest.fn(async () => ({})), stepUpdate = jest.fn(async () => ({}));
+    const prisma = { snsInstagramAccount: { groupBy: async () => [] }, snsContentInboxItem: { groupBy: async () => [] }, snsPublishRecord: { findMany: async () => [] }, snsMediaAsset: { count: async () => 0 }, snsPipelineRun: { findMany: async (query: any) => query.select ? [{ id: 'held', currentStep: 'GENERATE' }] : [], update: runUpdate }, snsPipelineStep: { updateMany: stepUpdate }, $transaction: async (actions: any[]) => Promise.all(actions) };
+    const controller = new SnsStudioController(prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    (controller as any).cleanupExpiredMedia = cleanup;
+    try {
+      await controller.dashboard({ id: 'org' } as any); await controller.queue({ id: 'org' } as any);
+      expect(cleanup).toHaveBeenCalledTimes(flag === '1' ? 0 : 1);
+      expect(runUpdate).toHaveBeenCalledTimes(flag === '1' ? 0 : 1);
+      expect(stepUpdate).toHaveBeenCalledTimes(flag === '1' ? 0 : 1);
+    } finally { if (previous === undefined) delete process.env.SNS_STUDIO_READ_ONLY; else process.env.SNS_STUDIO_READ_ONLY = previous; }
+  });
   const orgA = { id: 'org-video-tools-a' } as any;
   const orgB = { id: 'org-video-tools-b' } as any;
 

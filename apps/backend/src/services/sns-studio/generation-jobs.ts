@@ -126,7 +126,8 @@ export class GenerationJobs {
         const job = typeof manifest.jobId === 'string' ? await this.prisma.snsGenerationJob.findFirst({ where: { id: manifest.jobId, organizationId: org } }) : null;
         if (!job || !['QUEUED', 'RUNNING'].includes(job.status) || !this.matches(job, manifest, file.id)) { report.skipped++; continue; }
         if (manifest.status === 'FAILED') {
-          const changed = await this.prisma.snsGenerationJob.updateMany({ where: { id: job.id, organizationId: org, status: job.status, updatedAt: job.updatedAt }, data: { status: 'FAILED', resultManifest: { resultFileId: file.id, attempt: manifest.attempt, inputHash: manifest.inputHash }, errorCode: manifest.errorCode === 'GENERATION_TIMEOUT' ? 'GENERATION_TIMEOUT' : 'MODEL_ADAPTER_FAILED', errorMessage: 'Colab generation failed; review local execution diagnostics.', completedAt: new Date() } });
+          const safeCode = ['GENERATION_TIMEOUT', 'MODEL_OUT_OF_MEMORY', 'BLOCKED_BY_GPU', 'BLOCKED_BY_RAM_OR_DISK', 'PROMPT_EXCEEDS_MODEL_TOKEN_LIMIT', 'MODEL_OUTPUT_CONTRACT_MISMATCH', 'UNVERIFIED_DEPENDENCY_VERSION', 'REFERENCE_IMAGE_HASH_MISMATCH'].includes(manifest.errorCode) ? manifest.errorCode : 'MODEL_ADAPTER_FAILED';
+          const changed = await this.prisma.snsGenerationJob.updateMany({ where: { id: job.id, organizationId: org, status: job.status, updatedAt: job.updatedAt }, data: { status: 'FAILED', resultManifest: { resultFileId: file.id, attempt: manifest.attempt, inputHash: manifest.inputHash }, errorCode: safeCode, errorMessage: safeCode, completedAt: new Date() } });
           if (changed.count) report.failed++; else report.skipped++;
           continue;
         }
