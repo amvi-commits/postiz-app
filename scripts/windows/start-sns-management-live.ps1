@@ -103,7 +103,16 @@ do {
 } while ($true)
 if ((DockerRead @('exec','sns-live-redis','redis-cli','ping')).Trim() -cne 'PONG') { throw 'Dedicated Redis is not ready.' }
 if ((DockerRead @('exec','sns-live-temporal','temporal','operator','cluster','health','--address','127.0.0.1:7233')).Trim() -cne 'SERVING') { throw 'Dedicated Temporal is not ready.' }
-$api = Invoke-WebRequest -Uri 'http://localhost:4017/api/auth/can-register' -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10
-if ([int]$api.StatusCode -ne 200 -or -not (($api.Content | ConvertFrom-Json).PSObject.Properties['register'])) { throw 'Backend authentication readiness check failed.' }
+$deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+do {
+    $backendReady = $false
+    try {
+        $api = Invoke-WebRequest -Uri 'http://localhost:4017/api/auth/can-register' -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 5
+        $backendReady = ([int]$api.StatusCode -eq 200 -and ($api.Content | ConvertFrom-Json).PSObject.Properties['register'])
+    } catch {}
+    if ($backendReady) { break }
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'Backend authentication readiness check failed.' }
+    Start-Sleep -Seconds 2
+} while ($true)
 Write-Output 'Management login, backend, dedicated Redis and Temporal are ready. This is not proof of posting delivery success.'
 if ($OpenBrowser -and -not $NoOpen) { Start-Process 'http://localhost:4017/sns-studio' }
