@@ -29,6 +29,8 @@ The adapter requires CUDA, total VRAM>=12GiB, free CPU RAM>=16GiB(Wan)/12GiB(LTX
 
 The initial real Wan/T4 probe on2026-11-14 failed with OOM after163.87s (peak allocated13,379,449,856 bytes; reserved13,753,122,816). This is a failed attempt, not E2E success. Sub-20GiB GPUs now use sequential CPU offload, with its performance reason recorded. BF16 selection requires native SM8+ support and explicitly excludes emulation; T4 uses FP16. Oversized tokenized prompts fail rather than being silently truncated. Retest results must be recorded separately from this policy change.
 
+The bounded real T4 retest and I2V diagnostic succeeded with the pinned environment; see [measured results and scope](REAL_MODEL_DIAGNOSTICS_2026-11-14.md). These are actual model outputs, while the real organization/Drive/SNS Studio chain remains unverified. `real_e2e_verified` therefore remains false.
+
 ## API/Drive contract
 
 Create via POST /sns-studio/generation/jobs with an input object containing prompt, mode, modelName, durationSeconds, resolution, aspectRatio, seed and numInferenceSteps. For I2V select referenceImageAssetId from the current organization's image assets. No local path/URL, Drive token, mock string, client execution metadata or override is accepted. UI uses mock=false. seed=0 is retained.
