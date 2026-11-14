@@ -60,7 +60,8 @@ function VerifyContainer($Spec) {
     if ($Spec.name -eq 'sns-studio-management-live') {
         $sourceCommit = [string]$m.videoInputsDeployment.appSourceCommit
         if ($sourceCommit -cnotmatch '^[0-9a-f]{40}$' -or $Spec.imageRef -cne "sns-studio/integration-4017:video-inputs-$($sourceCommit.Substring(0, 8))") { throw 'Unapproved application source/image reference.' }
-        $revision = (DockerRead @('image', 'inspect', '--format', '{{ index .Config.Labels "org.opencontainers.image.revision" }}', $c.Image)).Trim()
+        $labels = (DockerRead @('image', 'inspect', '--format', '{{json .Config.Labels}}', $c.Image)) | ConvertFrom-Json
+        $revision = [string]$labels.'org.opencontainers.image.revision'
         if ($revision -cne $sourceCommit) { throw 'Application image source revision mismatch.' }
     }
     if (-not $Spec.PSObject.Properties['command'] -or -not $Spec.PSObject.Properties['entrypoint']) { throw 'Explicit command and entrypoint are required.' }
