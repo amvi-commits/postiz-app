@@ -377,6 +377,17 @@ describeDb('Account Protection database and browser E2E', () => {
       app.use(cookieParser());
       const authMiddleware = app.get(AuthMiddleware);
       app.use((request: Request, response: Response, next: NextFunction) => authMiddleware.use(request, response, next));
+      // The production layout needs authenticated identity/organization data.
+      // Keep these fixture-only routes behind the real AuthMiddleware instead
+      // of booting unrelated production controllers and provider executors.
+      app.getHttpAdapter().get('/user/self', (_request: Request, response: Response) => response.json({
+        id: userId, name: 'Account Protection E2E User',
+        email: 'account-protection-e2e-' + userId + '@example.invalid',
+        orgId: organizationId, tier: 'FREE', role: 'USER', totalChannels: 2,
+      }));
+      app.getHttpAdapter().get('/user/organizations', (_request: Request, response: Response) => response.json([
+        { id: organizationId, name: 'Account Protection E2E', users: [{ role: 'USER' }] },
+      ]));
       await app.listen(3000, '127.0.0.1');
 
       browser = await chromium.launch({ headless: true });
