@@ -30,6 +30,17 @@ jobs:
       NODE_ENV: test
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record the exact head under test
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          printf 'event=%s pr=%s base=%s head=%s checkout=%s\n' "$EVENT" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA" "$(git rev-parse HEAD)"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.20.0
@@ -62,15 +73,8 @@ jobs:
           pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
       - name: Run transaction, approval, preview, input and handoff contracts
         run: |
-          pnpm exec jest --runInBand --runTestsByPath \
-            apps/backend/src/services/sns-studio/generation-jobs.db-e2e.spec.ts \
-            apps/backend/src/services/sns-studio/generation-contract.spec.ts \
-            apps/backend/src/services/sns-studio/video-input.spec.ts \
-            apps/backend/src/services/sns-studio/video-tools.spec.ts \
-            apps/frontend/src/components/sns-studio/video-input-picker.spec.ts \
-            apps/frontend/src/components/sns-studio/video-tools-workspace.spec.ts \
-            apps/frontend/src/components/sns-studio/video-tools-input-flow.spec.ts \
-            apps/frontend/src/components/sns-studio/common-publisher.spec.ts
+          pnpm exec jest --runInBand --runTestsByPath apps/backend/src/services/sns-studio/generation-jobs.db-e2e.spec.ts
+          node .github/scripts/sns-studio-regression-tests.cjs
       - name: Stop only this job's validator
         if: always()
         run: docker stop bmode-contract-validator || true

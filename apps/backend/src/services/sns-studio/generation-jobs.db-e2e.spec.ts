@@ -3,7 +3,7 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID, createHash } from 'crypto';
 import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import sharp from 'sharp';
 import { GenerationJobs } from './generation-jobs';
 import { generationInputHash } from './generation-manifest';
@@ -16,7 +16,8 @@ import { createServer, Server } from 'http';
 const enabled = process.env.BMODE_DB_E2E === '1';
 (enabled ? describe : describe.skip)('B-mode isolated DB integrity (fixture Drive, not real AI E2E)', () => {
   const p = new PrismaClient();
-  const fixture = '/bmode-fixtures/contract-video.mp4';
+  const fixture = join(process.env.BMODE_TEST_FIXTURE_ROOT || '/bmode-fixtures', 'contract-video.mp4');
+  const uploadRoot = process.env.BMODE_TEST_UPLOAD_ROOT || '/bmode-uploads';
   let sha: string;
   let org: string, other: string, service: GenerationJobs, drive: any, provider: any;
   let manifests: Map<string, any>;
@@ -24,9 +25,10 @@ const enabled = process.env.BMODE_DB_E2E === '1';
   beforeAll(async () => {
     const url = new URL(process.env.DATABASE_URL || '');
     if (!['bmode-db', 'localhost', '127.0.0.1'].includes(url.hostname) || !/^\/sns_studio_bmode_e2e(?:_[0-9]+)?$/.test(url.pathname)) throw Error('Unrecognized isolated B-mode DB');
+    if (uploadRoot !== '/bmode-uploads' && !basename(resolve(uploadRoot)).startsWith('sns-bmode-test-')) throw Error('Unrecognized isolated B-mode uploads');
     if (await p.organization.count()) throw Error('Disposable B-mode DB must start empty');
     sha = createHash('sha256').update(readFileSync(fixture)).digest('hex');
-    process.env.UPLOAD_DIRECTORY = '/bmode-uploads';
+    process.env.UPLOAD_DIRECTORY = uploadRoot;
   });
   beforeEach(async () => {
     org = randomUUID(); other = randomUUID();
@@ -52,7 +54,7 @@ const enabled = process.env.BMODE_DB_E2E === '1';
       return { queuePath: execution.jobFolderId, input, execution };
     }) };
     validate = jest.fn(async (path: string) => {
-      const response = await fetch(`${process.env.BMODE_WORKER_URL || 'http://bmode-worker:8001'}/generation/validate-video`, { method: 'POST', headers: { authorization: 'Bearer isolated-fixture-token', 'content-type': 'application/json' }, body: JSON.stringify({ path: path.replace('/uploads/', '/bmode-uploads/') }), signal: AbortSignal.timeout(120000) });
+      const response = await fetch(`${process.env.BMODE_WORKER_URL || 'http://bmode-worker:8001'}/generation/validate-video`, { method: 'POST', headers: { authorization: 'Bearer isolated-fixture-token', 'content-type': 'application/json' }, body: JSON.stringify({ path: join(uploadRoot, path.slice('/uploads/'.length)) }), signal: AbortSignal.timeout(120000) });
       if (!response.ok) throw Error('Real isolated Worker validation failed');
       return response.json();
     });
@@ -79,9 +81,10 @@ const enabled = process.env.BMODE_DB_E2E === '1';
   });
   it('passes decoded owned image bytes/hash to the Drive adapter without mutating the input', async () => {
     const bytes = await sharp({ create: { width: 64, height: 64, channels: 3, background: 'blue' } }).png().toBuffer();
-    mkdirSync('/bmode-uploads/images', { recursive: true });
-    const path = join('/bmode-uploads/images', `${randomUUID()}.png`); writeFileSync(path, bytes);
-    const asset = await p.snsMediaAsset.create({ data: { organizationId: org, source: 'FIXTURE', fileName: 'own.png', storageKey: path.replace('/bmode-uploads/', '/uploads/'), mimeType: 'image/png' } });
+    mkdirSync(join(uploadRoot, 'images'), { recursive: true });
+    const imageName = `${randomUUID()}.png`;
+    const path = join(uploadRoot, 'images', imageName); writeFileSync(path, bytes);
+    const asset = await p.snsMediaAsset.create({ data: { organizationId: org, source: 'FIXTURE', fileName: 'own.png', storageKey: `/uploads/images/${imageName}`, mimeType: 'image/png' } });
     const job: any = await service.create(org, { prompt: 'mug', mode: 'image-to-video', referenceImageAssetId: asset.id, seed: 0 });
     expect(provider.submit.mock.calls[0][1].data.equals(bytes)).toBe(true);
     expect(job.inputManifest.referenceImage.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));

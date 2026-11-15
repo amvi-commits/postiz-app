@@ -7,14 +7,18 @@ on:
   merge_group:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   video-tools-contracts:
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feature/sns-studio-video-tools-ai' || github.ref_name == 'feature/sns-studio-bmode-real-e2e' || github.event.pull_request.number == 27
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feature/sns-studio-video-tools-ai' || github.ref_name == 'feature/sns-studio-bmode-real-e2e' || github.ref_name == 'feature/sns-studio-threads-inline-ui' || github.event.pull_request.number == 27 || github.event.pull_request.number == 29
     uses: ./.github/workflows/video-tools-contract.yml
     permissions:
       contents: read
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     
 
     strategy:
@@ -26,6 +30,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Record the source under test
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          printf 'event=%s pr=%s base=%s head=%s checkout=%s\n' "$EVENT" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA" "$(git rev-parse HEAD)"
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -35,7 +50,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 10
+          version: 10.6.1
           run_install: false
 
       - name: Get pnpm store directory
@@ -54,7 +69,19 @@ jobs:
 #            ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate and generate Prisma without connecting to a database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5548/sns_studio_bmode_e2e?schema=public
+        run: |
+          pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
+          pnpm exec prisma generate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
 
       - name: Build
         run: pnpm run build
+
+      - name: Backend strict and frontend typecheck
+        run: |
+          pnpm exec tsc --noEmit -p apps/backend/tsconfig.json
+          pnpm exec tsc --noEmit -p apps/frontend/tsconfig.json
