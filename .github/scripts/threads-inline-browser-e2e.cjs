@@ -5,7 +5,7 @@ process.env.TZ = 'UTC';
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
-const { mkdtempSync, readFileSync, rmSync, createWriteStream } = require('node:fs');
+const { mkdtempSync, readFileSync, rmSync, openSync, closeSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
@@ -93,7 +93,8 @@ async function main() {
     } catch (error) { errors.push(error.message); return json({ code: 'FIXTURE_ASSERTION_FAILED' }, 400); }
   });
   await new Promise(done => server.listen(4290, '127.0.0.1', done));
-  frontendLog = createWriteStream(join(fixtureRoot, 'frontend.log'));
+  // spawn requires an already-open descriptor; WriteStream opens asynchronously.
+  frontendLog = openSync(join(fixtureRoot, 'frontend.log'), 'w');
   frontend = spawn(process.execPath, [require.resolve('next/dist/bin/next'), 'start', '-p', '4291', '--hostname', '127.0.0.1'], { cwd: resolve('apps/frontend'), windowsHide: true, env: { ...process.env, FRONTEND_URL: origin, NEXT_PUBLIC_BACKEND_URL: origin + '/api', NOT_SECURED: '1', STORAGE_PROVIDER: 'local', NEXT_TELEMETRY_DISABLED: '1' }, stdio: ['ignore', frontendLog, frontendLog] });
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ timezoneId: 'Asia/Tokyo' });
@@ -141,16 +142,39 @@ async function main() {
   assert.equal(await prisma.snsContent.count(), 0); assert.equal(await prisma.snsDelivery.count(), 0);
   assert.equal(await prisma.post.count({ where: { state: { not: 'DRAFT' } } }), 0);
   assert.equal(process.env.THREADS_BROWSER_ALLOW_REAL_POST, 'false'); assert.equal(writes, 2); assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', realProductionEditor: true, samePostIdAcrossSaveAndReload: true, accountIsolation: true, organizationIsolation: true, jstToUtc: true, mediaAttachRemoveAndPreview: true, draftWrites: writes, realSnsPosts: 0, reservations: 0, providerCalls: 0 }));
+  return { result: 'PASS', realProductionEditor: true, samePostIdAcrossSaveAndReload: true, accountIsolation: true, organizationIsolation: true, jstToUtc: true, mediaAttachRemoveAndPreview: true, draftWrites: writes, realSnsPosts: 0, reservations: 0, providerCalls: 0 };
 }
-main().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(async () => {
+let report;
+main().then(result => { report = result; }).catch(async error => {
+  console.error(error.stack);
+  const page = browser?.contexts()[0]?.pages()[0];
+  if (page) {
+    // Only the synthetic, loopback fixture is opened by this browser context.
+    const text = await page.locator('body').innerText({ timeout: 2000 }).catch(() => 'Fixture document unavailable');
+    console.error('Visible fixture diagnostics:', text.slice(0, 2000));
+  }
+  process.exitCode = 1;
+}).finally(async () => {
   if (browser) await browser.close();
   if (frontend && frontend.exitCode === null) { frontend.kill(); await new Promise(done => frontend.once('exit', done)); }
-  if (frontendLog) frontendLog.end();
+  if (frontendLog !== undefined) closeSync(frontendLog);
   if (server) await new Promise(done => server.close(done));
-  await prisma.organization.deleteMany({ where: { id: { in: orgs } } });
+  // Media's ownership FK is restrictive. Delete ONLY this run's fixture rows
+  // in dependency order; never rely on a cascade for synthetic media cleanup.
+  const owned = { organizationId: { in: orgs } };
+  await prisma.$transaction([
+    prisma.post.deleteMany({ where: owned }),
+    prisma.media.deleteMany({ where: owned }),
+    prisma.integration.deleteMany({ where: owned }),
+    prisma.organization.deleteMany({ where: { id: { in: orgs } } }),
+  ]);
+  assert.equal(await prisma.organization.count(), 0);
+  assert.equal(await prisma.post.count(), 0);
+  assert.equal(await prisma.media.count(), 0);
+  assert.equal(await prisma.integration.count(), 0);
   await prisma.$disconnect();
   // Only the unique fixture folder created above is eligible for cleanup.
   assert(fixtureRoot.startsWith(join(tmpdir(), 'sns-threads-inline-')));
   rmSync(fixtureRoot, { recursive: true, force: true });
-});
+  if (report && process.exitCode !== 1) console.log(JSON.stringify({ ...report, cleanupVerified: true }));
+}).catch(error => { console.error('Fixture cleanup failed:', error.message); process.exitCode = 1; });
