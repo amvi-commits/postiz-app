@@ -19,6 +19,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      CIRCLE_NODE_TOTAL: '3'
     
 
     strategy:
