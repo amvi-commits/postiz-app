@@ -109,7 +109,7 @@ jobs:
           THREADS_BROWSER_ALLOW_REAL_POST: 'false'
         run: |
           node -e 'const u=new URL(process.env.DATABASE_URL); if(u.hostname!=="localhost"||u.port!=="5549"||u.pathname!=="/sns_studio_threads_inline_e2e") throw Error("Unrecognized disposable Threads DB");'
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright install --with-deps chrome
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
           node .github/scripts/threads-inline-browser-e2e.cjs
