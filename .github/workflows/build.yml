@@ -19,6 +19,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sns_studio_threads_inline_e2e
+        ports: ['5549:5432']
+        options: --health-cmd "pg_isready -U postgres -d sns_studio_threads_inline_e2e" --health-interval 5s --health-retries 10
+    env:
+      NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:4290/api
+      FRONTEND_URL: http://127.0.0.1:4290
+      STORAGE_PROVIDER: local
+      NEXT_TELEMETRY_DISABLED: '1'
+      OTEL_ENABLED: 'false'
     
 
     strategy:
@@ -85,3 +100,14 @@ jobs:
         run: |
           pnpm exec tsc --noEmit -p apps/backend/tsconfig.json
           pnpm exec tsc --noEmit -p apps/frontend/tsconfig.json
+
+      - name: Isolated Threads editor browser and draft persistence regression
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5549/sns_studio_threads_inline_e2e?schema=public
+          THREADS_BROWSER_ALLOW_REAL_POST: 'false'
+        run: |
+          node -e 'const u=new URL(process.env.DATABASE_URL); if(u.hostname!=="localhost"||u.port!=="5549"||u.pathname!=="/sns_studio_threads_inline_e2e") throw Error("Unrecognized disposable Threads DB");'
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
+          node .github/scripts/threads-inline-browser-e2e.cjs
