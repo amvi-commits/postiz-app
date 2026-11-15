@@ -34,6 +34,8 @@ jobs:
       STORAGE_PROVIDER: local
       NEXT_TELEMETRY_DISABLED: '1'
       OTEL_ENABLED: 'false'
+      NODE_OPTIONS: --max-old-space-size=6144
+      CIRCLE_NODE_TOTAL: '3'
     
 
     strategy:
