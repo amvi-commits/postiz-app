@@ -1,5 +1,7 @@
 // Real production frontend + real Postiz repository + disposable PostgreSQL.
 // API/account/transport fixtures are synthetic. No provider executor is loaded.
+// Match the production Linux server; the browser explicitly uses Asia/Tokyo.
+process.env.TZ = 'UTC';
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
@@ -106,18 +108,29 @@ async function main() {
   await selection.selectOption(accounts[0].id);
   const editor = page.locator('[contenteditable=true]').first();
   await editor.fill('Inline browser draft one');
+  await page.getByText('Insert Media', { exact: true }).click();
+  const mediaDialog = page.getByRole('dialog');
+  await mediaDialog.locator('video').first().click({ position: { x: 15, y: 15 } });
+  await mediaDialog.getByRole('button', { name: 'Add selected media', exact: true }).click();
+  const preview = page.locator('[aria-label="Threads 投稿作成"] aside video').first();
+  await preview.waitFor();
+  await preview.evaluate(async element => { element.currentTime = 0; await element.play(); });
+  await page.waitForFunction(() => document.querySelector('[aria-label="Threads 投稿作成"] aside video')?.ended === true);
   assert(await page.getByRole('note').filter({ hasText: 'Browser投稿ロック' }).isVisible());
   await page.getByLabel('予約日時（日本時間）').fill('2027-01-15T12:30');
   await page.getByRole('button', { name: '下書き保存', exact: true }).click();
   await page.getByText('下書きを保存しました。同じ下書きを続けて編集できます。', { exact: true }).waitFor();
   const first = await prisma.post.findFirstOrThrow({ where: { organizationId: orgs[0], integrationId: accounts[0].id, deletedAt: null } });
   assert.equal(first.state, 'DRAFT'); assert.equal(first.publishDate.toISOString(), '2027-01-15T03:30:00.000Z');
+  assert.equal(JSON.parse(first.image)[0].id, media.id);
+  await page.locator('[aria-label="Threads 投稿作成"] #social-content svg[class*="-end-[4px]"][class*="-top-[4px]"]').click();
+  await preview.waitFor({ state: 'hidden' });
   await editor.fill('Inline browser draft two');
   const savedAgain = page.waitForResponse(r => new URL(r.url()).pathname === '/api/posts' && r.request().method() === 'POST');
   await page.getByRole('button', { name: '下書き保存', exact: true }).click(); assert((await savedAgain).ok());
   await page.getByText('下書きを保存しました。同じ下書きを続けて編集できます。', { exact: true }).waitFor();
   assert.equal(await prisma.post.count({ where: { organizationId: orgs[0], integrationId: accounts[0].id, deletedAt: null } }), 1);
-  const reloaded = await prisma.post.findUniqueOrThrow({ where: { id: first.id } }); assert(reloaded.content.includes('Inline browser draft two'));
+  const reloaded = await prisma.post.findUniqueOrThrow({ where: { id: first.id } }); assert(reloaded.content.includes('Inline browser draft two')); assert.deepEqual(JSON.parse(reloaded.image), []);
   await page.reload(); await openThreads(); await editor.waitFor(); assert((await editor.innerText()).includes('Inline browser draft two'));
   await selection.selectOption(accounts[1].id); await editor.waitFor(); assert(!(await editor.innerText()).includes('Inline browser draft two'));
   await editor.fill('Unsaved account B text');
@@ -128,7 +141,7 @@ async function main() {
   assert.equal(await prisma.snsContent.count(), 0); assert.equal(await prisma.snsDelivery.count(), 0);
   assert.equal(await prisma.post.count({ where: { state: { not: 'DRAFT' } } }), 0);
   assert.equal(process.env.THREADS_BROWSER_ALLOW_REAL_POST, 'false'); assert.equal(writes, 2); assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'PASS', realProductionEditor: true, samePostIdAcrossSaveAndReload: true, accountIsolation: true, organizationIsolation: true, jstToUtc: true, draftWrites: writes, posts: 0, reservations: 0, providerCalls: 0, mediaBrowserCoverage: 'not yet exercised by this script; component coverage separate' }));
+  console.log(JSON.stringify({ result: 'PASS', realProductionEditor: true, samePostIdAcrossSaveAndReload: true, accountIsolation: true, organizationIsolation: true, jstToUtc: true, mediaAttachRemoveAndPreview: true, draftWrites: writes, realSnsPosts: 0, reservations: 0, providerCalls: 0 }));
 }
 main().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(async () => {
   if (browser) await browser.close();
