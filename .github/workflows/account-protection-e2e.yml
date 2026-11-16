@@ -86,7 +86,7 @@ jobs:
       - name: Validate Prisma schema and prepare the empty disposable database
         run: |
           pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
-          pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
+          node .github/scripts/prepare-disposable-schema.cjs
 
       - name: Verify empty baseline tables and zero data
         run: |

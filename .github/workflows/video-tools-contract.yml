@@ -70,7 +70,7 @@ jobs:
           docker run --rm --network none -v /bmode-fixtures:/fixture bmode-colab-contract-ci ffmpeg -v error -y -f lavfi -i testsrc2=size=480x848:rate=16 -frames:v 49 -c:v libx264 -pix_fmt yuv420p /fixture/contract-video.mp4
           docker run -d --name bmode-contract-validator -p 127.0.0.1:18117:8001 -e MEDIA_ROOT=/bmode-uploads -e SNS_STUDIO_SERVICE_TOKEN=isolated-fixture-token -v /bmode-uploads:/bmode-uploads bmode-media-ci
           pnpm exec prisma validate --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma
-          pnpm exec prisma db push --schema libraries/nestjs-libraries/src/database/prisma/schema.prisma --skip-generate
+          node .github/scripts/prepare-disposable-schema.cjs
       - name: Run transaction, approval, preview, input and handoff contracts
         run: |
           pnpm exec jest --runInBand --runTestsByPath apps/backend/src/services/sns-studio/generation-jobs.db-e2e.spec.ts
