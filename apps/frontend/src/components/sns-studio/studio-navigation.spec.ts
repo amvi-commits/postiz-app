@@ -7,10 +7,11 @@ describe('SNS Studio integration navigation', () => {
   });
 
   it('keeps every existing Integration workspace reachable', () => {
-    const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Common Queue', 'Common History', 'Common Analytics', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings'];
+    const tabs: Tab[] = ['Dashboard', 'Accounts', 'Content Inbox', 'Create', 'Publish', 'Threads', 'Common Queue', 'Common History', 'Common Analytics', 'Story Pools', 'Automation Recipes', 'Queue', 'Analytics', 'Settings', 'Video Tools'];
     for (const tab of tabs) expect(navigationForTab(tab, 'common')).toBeDefined();
     expect(navigationForTab('Publish', 'threads')).toEqual({ platform: 'common', section: 'Cross Post' });
     expect(navigationForTab('Threads', 'common')).toEqual({ platform: 'threads', section: 'Workspace' });
+    expect(navigationForTab('Video Tools', 'common')).toEqual({ platform: 'common', section: 'Video Tools' });
   });
 
   it('retains shared publishing and account routes for TikTok and Instagram', () => {

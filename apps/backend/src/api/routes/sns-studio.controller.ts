@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { Organization, Prisma } from '@prisma/client';
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { createReadStream, existsSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { Readable } from 'stream';
@@ -38,6 +38,8 @@ import { uploadStreamToStorage } from '@gitroom/nestjs-libraries/upload/custom.u
 import { TikTokPublishAdapter } from '@gitroom/backend/services/sns-studio/tiktok-publish.adapter';
 import { TikTokAnalyticsAdapter } from '@gitroom/backend/services/sns-studio/tiktok-analytics.adapter';
 import { TikTokStatusAdapter } from '@gitroom/backend/services/sns-studio/tiktok-status.adapter';
+import { registerVideoInput } from '@gitroom/backend/services/sns-studio/video-input';
+import { GenerationJobs } from '@gitroom/backend/services/sns-studio/generation-jobs';
 
 class InstagramLoginDto {
   @IsString() @MinLength(1) @MaxLength(100) username!: string;
@@ -178,6 +180,57 @@ class RenderDto {
   @IsOptional() @IsNumber() @Min(0) @Max(1) textY?: number;
   @IsOptional() @IsNumber() @Min(18) @Max(160) textFontSize?: number;
 }
+
+class VideoToolsAnalyzeDto {
+  @IsOptional() @IsString() @MaxLength(2048) mediaPath?: string;
+  @IsOptional() @IsString() @MaxLength(2048) videoPath?: string;
+}
+
+class VideoToolsEditPlanDto {
+  @IsOptional() @IsString() @MaxLength(2048) referenceVideoPath?: string;
+  @IsOptional() @IsString() @MaxLength(2048) sourcePath?: string;
+  @IsOptional() @IsString() @MaxLength(2048) sourceVideoPath?: string;
+  @IsOptional() referenceAnalysis?: Record<string, unknown>;
+  @IsOptional() @IsString() @MaxLength(2000) instructionPrompt?: string;
+  @IsOptional() @IsString() @MaxLength(2000) instructions?: string;
+  @IsOptional() @IsString() @MaxLength(100) presetId?: string;
+  @IsOptional() @IsNumber() targetDurationSeconds?: number;
+  @IsOptional() @IsString() @MaxLength(20) aspectRatio?: string;
+  @IsOptional() @IsString() @MaxLength(20) targetAspectRatio?: string;
+}
+
+class VideoToolsRenderPlanDto {
+  @IsString() @MinLength(1) @MaxLength(2048) sourcePath!: string;
+  @IsOptional() @IsString() @MaxLength(100) outputName?: string;
+  @IsOptional() @IsArray() segments?: Array<{
+    sourcePath?: string;
+    trimStartSeconds: number;
+    trimEndSeconds?: number;
+    playbackSpeed: number;
+    order: number;
+  }>;
+  @IsOptional() @IsNumber() width?: number;
+  @IsOptional() @IsNumber() height?: number;
+  @IsOptional() @IsNumber() fps?: number;
+  @IsOptional() @IsNumber() cropPercent?: number;
+  @IsOptional() @IsNumber() playbackSpeed?: number;
+  @IsOptional() @IsNumber() sourceAudioVolume?: number;
+  @IsOptional() @IsString() @MaxLength(2048) bgmPath?: string;
+  @IsOptional() @IsNumber() bgmVolume?: number;
+  @IsOptional() @IsString() @MaxLength(2048) subtitlesPath?: string;
+  @IsOptional() @IsNumber() subtitleFontSize?: number;
+  @IsOptional() @IsArray() textOverlays?: Array<{
+    text: string;
+    x: number;
+    y: number;
+    fontSize: number;
+    startTime: number;
+    endTime?: number;
+  }>;
+  @IsOptional() @IsString() @MaxLength(5000) narrationText?: string;
+  @IsOptional() @IsNumber() narrationSpeakerId?: number;
+}
+
 
 class EditingPresetDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
@@ -737,77 +790,33 @@ export class SnsStudioController {
     return report;
   }
 
+  private get generationJobsService() {
+    return new GenerationJobs(this.prisma, this.googleDrive, this.generationProvider, path => this.mediaWorker('/generation/validate-video', 'POST', { path }));
+  }
+
   @Get('/generation/jobs')
   generationJobs(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsGenerationJob.findMany({ where: { organizationId: org.id }, orderBy: { createdAt: 'desc' }, take: 100 });
+    return this.generationJobsService.list(org.id);
   }
 
   @Post('/generation/jobs')
-  async createGenerationJob(@GetOrgFromRequest() org: Organization, @Body() body: { input: Record<string, unknown> }) {
-    if (!body.input || typeof body.input !== 'object' || Array.isArray(body.input)) {
-      throw new HttpException({ code: 'GENERATION_INPUT_INVALID' }, HttpStatus.BAD_REQUEST);
-    }
-    const folder = await this.googleDrive.selectedFolder(org.id);
-    if (!folder?.id) throw new HttpException({ code: 'GOOGLE_DRIVE_FOLDER_REQUIRED' }, HttpStatus.BAD_REQUEST);
-    const job = await this.prisma.snsGenerationJob.create({ data: { organizationId: org.id, status: 'SUBMITTING', inputManifest: body.input as any } });
-    try {
-      const queued = await this.generationProvider.submit({
-        jobId: job.id,
-        organizationId: org.id,
-        createdAt: job.createdAt.toISOString(),
-        input: { ...body.input, outputFolderId: folder.id },
-        resultFilePrefix: `sns-studio-result-${job.id}`,
-      });
-      return this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'QUEUED', queuePath: queued.queuePath, submittedAt: new Date() } });
-    } catch {
-      await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'FAILED', errorCode: 'GENERATION_QUEUE_UPLOAD_FAILED', errorMessage: 'Google Drive could not store the job manifest.' } });
-      throw new ServiceUnavailableException({ code: 'GENERATION_QUEUE_UPLOAD_FAILED' });
-    }
+  createGenerationJob(@GetOrgFromRequest() org: Organization, @Body() body: { input: Record<string, unknown> }) {
+    return this.generationJobsService.create(org.id, body?.input);
   }
 
   @Post('/generation/jobs/sync')
-  async syncGenerationResults(@GetOrgFromRequest() org: Organization) {
-    const resultFiles = await this.googleDrive.listGenerationResults(org.id);
-    const report = { completed: 0, imported: 0, skipped: 0, failed: 0 };
-    const uploadRoot = resolve(process.env.UPLOAD_DIRECTORY || './uploads');
-    for (const resultFile of resultFiles) {
-      if (!resultFile.id) continue;
-      try {
-        const manifest = await this.googleDrive.readJson(org.id, resultFile.id);
-        const jobId = typeof manifest.jobId === 'string' ? manifest.jobId : '';
-        const job = jobId ? await this.prisma.snsGenerationJob.findFirst({ where: { id: jobId, organizationId: org.id } }) : null;
-        if (!job || job.status === 'COMPLETE') { report.skipped += 1; continue; }
-        if (manifest.status === 'FAILED') {
-          await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'FAILED', errorCode: String(manifest.errorCode || 'GENERATION_FAILED'), errorMessage: String(manifest.errorMessage || 'Colab generation failed.').slice(0, 500), resultManifest: manifest as any, completedAt: new Date() } });
-          report.failed += 1;
-          continue;
-        }
-        const outputs = Array.isArray(manifest.outputs) ? manifest.outputs : [];
-        if (!outputs.length) { report.skipped += 1; continue; }
-        const imported = [];
-        for (const output of outputs) {
-          if (!output || typeof output.fileId !== 'string') continue;
-          const file = await this.googleDrive.fileMetadata(org.id, output.fileId);
-          if (!file.id || !file.name || !(file.mimeType?.startsWith('image/') || file.mimeType?.startsWith('video/'))) continue;
-          const cleanName = file.name.replace(/[^\p{L}\p{N}._() -]/gu, '_').slice(0, 120) || 'generated-media';
-          const extension = extname(cleanName).replace(/[^.A-Za-z0-9]/g, '').slice(0, 12);
-          const diskPath = resolve(uploadRoot, 'sns-studio', 'generated', job.id, `${randomUUID()}${extension}`);
-          const storageKey = `/uploads/sns-studio/generated/${job.id}/${diskPath.split(/[\\/]/).pop()}`;
-          await this.googleDrive.download(org.id, file.id, diskPath);
-          const sizeBytes = file.size && /^\d+$/.test(file.size) ? BigInt(file.size) : null;
-          const media = await this.prisma.snsMediaAsset.create({ data: { organizationId: org.id, source: 'AI_GENERATION', storageKey, fileName: cleanName, mimeType: file.mimeType, sizeBytes, isOriginal: false, metadata: { generationJobId: job.id, driveFileId: file.id } as any } });
-          const inboxItem = await this.prisma.snsContentInboxItem.create({ data: { organizationId: org.id, driveFileId: null, fileName: cleanName, mediaType: file.mimeType.startsWith('video/') ? 'video' : 'image', sizeBytes, sourceCreatedAt: file.createdTime ? new Date(file.createdTime) : null, status: 'READY_FOR_REVIEW', previewUrl: file.webViewLink || null, mediaAssetId: media.id, metadata: { generationJobId: job.id } as any } });
-          imported.push({ mediaAssetId: media.id, inboxItemId: inboxItem.id, name: cleanName, storageKey });
-        }
-        if (!imported.length) { report.skipped += 1; continue; }
-        await this.prisma.snsGenerationJob.update({ where: { id: job.id }, data: { status: 'COMPLETE', resultManifest: { resultFileId: resultFile.id, outputs: imported } as any, completedAt: new Date() } });
-        report.completed += 1;
-        report.imported += imported.length;
-      } catch {
-        report.failed += 1;
-      }
-    }
-    return report;
+  syncGenerationResults(@GetOrgFromRequest() org: Organization) {
+    return this.generationJobsService.sync(org.id);
+  }
+
+  @Post('/generation/jobs/:id/cancel')
+  cancelGenerationJob(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    return this.generationJobsService.cancel(org.id, id);
+  }
+
+  @Post('/generation/jobs/:id/retry')
+  retryGenerationJob(@GetOrgFromRequest() org: Organization, @Param('id') id: string) {
+    return this.generationJobsService.retry(org.id, id);
   }
 
   @Post('/proxy/test')
@@ -818,7 +827,7 @@ export class SnsStudioController {
 
   @Get('/dashboard')
   async dashboard(@GetOrgFromRequest() org: Organization) {
-    await this.cleanupExpiredMedia(org.id);
+    if (process.env.SNS_STUDIO_READ_ONLY !== '1') await this.cleanupExpiredMedia(org.id);
     const [accounts, inbox, queue, recent, cleanup] = await Promise.all([
       this.prisma.snsInstagramAccount.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
       this.prisma.snsContentInboxItem.groupBy({ by: ['status'], where: { organizationId: org.id }, _count: { _all: true } }),
@@ -1326,6 +1335,13 @@ export class SnsStudioController {
         ? (asset.metadata as Record<string, unknown>)
         : {};
 
+    if (asset.source === 'AI_GENERATION') {
+      const run = typeof metadata.pipelineRunId === 'string' ? await this.prisma.snsPipelineRun.findFirst({ where: { id: metadata.pipelineRunId, organizationId: org.id } }) : null;
+      if (!run || run.status !== 'APPROVED' || !run.approvedAt || (run.output as any)?.mediaAssetId !== asset.id) {
+        throw new HttpException({ code: 'GENERATION_APPROVAL_REQUIRED' }, HttpStatus.CONFLICT);
+      }
+    }
+
     const cachedMediaId =
       typeof metadata.postizMediaId === 'string' ? metadata.postizMediaId : undefined;
     if (cachedMediaId) {
@@ -1553,6 +1569,218 @@ export class SnsStudioController {
       },
     });
     return { ...result, mediaAssetId: saved.id };
+  }
+
+  @Post('/video-tools/analyze')
+  async videoToolsAnalyze(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsAnalyzeDto
+  ) {
+    const effectivePath = (body.mediaPath || body.videoPath || '').trim();
+    if (!effectivePath) {
+      throw new HttpException({ code: 'MEDIA_PATH_REQUIRED' }, HttpStatus.BAD_REQUEST);
+    }
+    const [asset, inboxItem] = await Promise.all([
+      this.prisma.snsMediaAsset.findFirst({
+        where: { organizationId: org.id, storageKey: effectivePath },
+      }),
+      this.prisma.snsContentInboxItem.findFirst({
+        where: {
+          organizationId: org.id,
+          mediaAsset: { storageKey: effectivePath },
+        },
+      }),
+    ]);
+    if (!asset && !inboxItem) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+    return this.mediaWorker('/analyze', 'POST', { path: effectivePath });
+  }
+
+  @Post('/video-tools/inputs/:mediaId')
+  async videoToolsRegisterInput(
+    @GetOrgFromRequest() org: Organization,
+    @Param('mediaId') mediaId: string,
+  ) {
+    return registerVideoInput(this.prisma, this.mediaService, org.id, mediaId,
+      (path) => this.mediaWorker('/probe', 'POST', { path }));
+  }
+
+  @Post('/video-tools/edit-plan')
+  async videoToolsGenerateEditPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsEditPlanDto
+  ) {
+    const effectiveSourcePath = (body.sourcePath || body.sourceVideoPath || '').trim();
+    if (!effectiveSourcePath) {
+      throw new HttpException({ code: 'SOURCE_PATH_REQUIRED' }, HttpStatus.BAD_REQUEST);
+    }
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { organizationId: org.id, storageKey: effectiveSourcePath },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    // A selected reference is checked against this organization and actually analyzed.
+    const ref = body.referenceVideoPath
+      ? await this.videoToolsAnalyze(org, { videoPath: body.referenceVideoPath }) as any
+      : (body.referenceAnalysis || {}) as any;
+    const targetAspect = body.aspectRatio || body.targetAspectRatio || ref.aspectRatio || '9:16';
+    const targetDuration = Math.min(body.targetDurationSeconds || ref.durationSeconds || 15,
+      asset.duration && asset.duration > 0 ? asset.duration : Infinity);
+    const tempo = ref.tempo || 'MEDIUM';
+    const instruction = (body.instructionPrompt || body.instructions || '').trim();
+
+    // 自然言語プロンプトの構造化解析 (Rule-based NLP Adapter)
+    let speed = 1.0;
+    if (tempo === 'FAST' || /高速|アップテンポ|早く|1\.2/i.test(instruction)) {
+      speed = 1.15;
+    } else if (tempo === 'SLOW' || /スロー|ゆったり|遅く|0\.9/i.test(instruction)) {
+      speed = 0.95;
+    }
+
+    // カット数の解釈（プロンプトに「3カット」「3分割」「3つのシーン」などがある場合）
+    let requestedCutCount = 0;
+    const cutMatch = instruction.match(/(\d+)\s*(?:カット|シーン|分割|scene|cut)/i);
+    if (cutMatch) {
+      requestedCutCount = Math.max(1, Math.min(10, parseInt(cutMatch[1], 10)));
+    }
+
+    const segments: Array<{ trimStartSeconds: number; trimEndSeconds?: number; playbackSpeed: number; order: number }> = [];
+    if (requestedCutCount > 1) {
+      const segDur = Number((targetDuration / requestedCutCount).toFixed(2));
+      for (let i = 0; i < requestedCutCount; i++) {
+        segments.push({
+          trimStartSeconds: Number((i * segDur).toFixed(2)),
+          trimEndSeconds: Number(((i + 1) * segDur).toFixed(2)),
+          playbackSpeed: speed,
+          order: i,
+        });
+      }
+    } else if (Array.isArray(ref.scenes) && ref.scenes.length > 1) {
+      let currentStart = 0;
+      for (let i = 0; i < ref.scenes.length; i++) {
+        const sc = ref.scenes[i];
+        const segDur = Number(sc.duration || 3.0);
+        segments.push({
+          trimStartSeconds: Number(currentStart.toFixed(2)),
+          trimEndSeconds: Number(Math.min(currentStart + segDur, targetDuration).toFixed(2)),
+          playbackSpeed: speed,
+          order: i,
+        });
+        currentStart += segDur;
+        if (currentStart >= targetDuration) break;
+      }
+    } else {
+      segments.push({
+        trimStartSeconds: 0,
+        trimEndSeconds: targetDuration,
+        playbackSpeed: speed,
+        order: 0,
+      });
+    }
+
+    const textOverlays = [];
+    if (instruction) {
+      const telopMatch = instruction.match(/(?:テロップ|文字|字幕)[:：]\s*([^\s,，。]+)/i);
+      const textToOverlay = telopMatch ? telopMatch[1] : instruction.slice(0, 50);
+      textOverlays.push({
+        text: textToOverlay,
+        x: 0.5,
+        y: 0.8,
+        fontSize: 54,
+        startTime: 0,
+        endTime: Math.min(5, targetDuration),
+      });
+    }
+
+    return {
+      sourcePath: effectiveSourcePath,
+      targetAspect,
+      targetDuration,
+      tempo,
+      segments,
+      playbackSpeed: speed,
+      cropPercent: 100,
+      textOverlays,
+      bgmVolume: ref.hasBgm ? 0.2 : 0.15,
+      sourceAudioVolume: 1.0,
+      recommendations: {
+        estimatedCuts: segments.length,
+        suggestedSpeed: speed,
+        orientation: targetAspect === '9:16' ? 'vertical' : 'horizontal',
+        tempoLabel: tempo === 'FAST' ? 'アップテンポ (短めカット推奨)' : tempo === 'SLOW' ? 'ゆったり (長めカット推奨)' : '標準テンポ',
+      },
+    };
+  }
+
+  @Post('/video-tools/render-plan')
+  async videoToolsRenderPlan(
+    @GetOrgFromRequest() org: Organization,
+    @Body() body: VideoToolsRenderPlanDto
+  ) {
+    const asset = await this.prisma.snsMediaAsset.findFirst({
+      where: { organizationId: org.id, storageKey: body.sourcePath },
+    });
+    if (!asset) {
+      throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+    }
+
+    if (body.segments && body.segments.length > 0) {
+      for (const seg of body.segments) {
+        if (seg.sourcePath && seg.sourcePath !== body.sourcePath) {
+          const segAsset = await this.prisma.snsMediaAsset.findFirst({
+            where: { organizationId: org.id, storageKey: seg.sourcePath },
+          });
+          if (!segAsset) {
+            throw new HttpException({ code: 'MEDIA_NOT_FOUND' }, HttpStatus.NOT_FOUND);
+          }
+        }
+      }
+    }
+
+    const result: any = await this.mediaWorker('/render-plan', 'POST', body);
+
+    const sizeBytes = result.sizeBytes && /^\d+$/.test(String(result.sizeBytes)) ? BigInt(result.sizeBytes) : null;
+    const saved = await this.prisma.snsMediaAsset.create({
+      data: {
+        organizationId: org.id,
+        source: 'AI_RE_EDIT',
+        storageKey: result.path,
+        fileName: result.fileName,
+        mimeType: 'video/mp4',
+        sizeBytes,
+        width: result.width,
+        height: result.height,
+        duration: result.durationSeconds,
+        isFinal: true,
+        metadata: {
+          sourcePath: body.sourcePath,
+          segmentCount: result.segmentCount || body.segments?.length || 1,
+          renderedAt: new Date().toISOString(),
+        } as any,
+      },
+    });
+
+    const inboxItem = await this.prisma.snsContentInboxItem.create({
+      data: {
+        organizationId: org.id,
+        fileName: result.fileName,
+        mediaType: 'video',
+        sizeBytes,
+        status: 'READY_FOR_REVIEW',
+        mediaAssetId: saved.id,
+        previewUrl: `/sns-studio/media/preview?path=${encodeURIComponent(result.path)}`,
+        metadata: { sourceAction: 'VIDEO_TOOLS_RE_EDIT', mediaAssetId: saved.id } as any,
+      },
+    });
+
+    return {
+      ...result,
+      mediaAssetId: saved.id,
+      inboxItemId: inboxItem.id,
+    };
   }
 
   @Post('/media/variants')
@@ -1859,7 +2087,12 @@ export class SnsStudioController {
 
   @Get('/content-inbox')
   listInbox(@GetOrgFromRequest() org: Organization) {
-    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true } } } }).then((rows) => rows.map((row) => ({ ...row, sizeBytes: row.sizeBytes?.toString() ?? null })));
+    const backendUrl = (process.env.NEXT_PUBLIC_BACKEND_URL || '/api').replace(/\/$/, '');
+    return this.prisma.snsContentInboxItem.findMany({ where: { organizationId: org.id }, orderBy: { updatedAt: 'desc' }, take: 100, include: { mediaAsset: { select: { id: true, storageKey: true, mimeType: true, width: true, height: true, duration: true, source: true, metadata: true } } } }).then((rows) => rows.map((row) => ({
+      ...row,
+      sizeBytes: row.sizeBytes?.toString() ?? null,
+      previewUrl: row.previewUrl?.startsWith('/sns-studio/media/preview?') ? `${backendUrl}${row.previewUrl}` : row.previewUrl,
+    })));
   }
 
   @Get('/recipes')
@@ -1875,7 +2108,7 @@ export class SnsStudioController {
   @Get('/queue')
   async queue(@GetOrgFromRequest() org: Organization) {
     const working = await this.prisma.snsPipelineRun.findMany({ where: { organizationId: org.id, status: { in: ['GENERATING', 'EDITING'] } }, select: { id: true, currentStep: true } });
-    const abandoned = working.filter((run) => !this.activePipelines.has(run.id));
+    const abandoned = process.env.SNS_STUDIO_READ_ONLY === '1' ? [] : working.filter((run) => !this.activePipelines.has(run.id));
     for (const run of abandoned) {
       const failedStep = run.currentStep || 'GENERATE';
       await this.prisma.$transaction([

@@ -20,6 +20,8 @@ const primaryButton =
 const secondaryButton =
   'rounded-lg border border-blockSeparator px-4 py-2 font-semibold text-newTextColor hover:bg-boxFocused disabled:opacity-50';
 
+const emptyIntegrations: Integrations[] = [];
+
 const supportedIdentifiers = new Set([
   'instagram',
   'instagram-standalone',
@@ -106,7 +108,7 @@ export const SnsStudioCommonPublisher = ({
   prefill?: CommonPublishPrefill | null;
 }) => {
   const fetch = useFetch();
-  const { data: integrationData = [], isLoading, error } = useIntegrationList();
+  const { data: integrationData = emptyIntegrations, isLoading, error } = useIntegrationList();
   const integrations: Integrations[] = integrationData;
   const [activePrefill, setActivePrefill] = useState<CommonPublishPrefill | null>(
     prefill || null
@@ -140,31 +142,40 @@ export const SnsStudioCommonPublisher = ({
   const localDate = (value?: string | null) =>
     value ? dayjs(value).format('YYYY-MM-DDTHH:mm') : '';
 
-  const destinations = integrations.filter(
-    (integration) =>
-      supportedIdentifiers.has(integration.identifier) &&
-      !integration.disabled &&
-      !integration.inBetweenSteps
+  const destinations = useMemo(
+    () => integrations.filter(
+      (integration) =>
+        supportedIdentifiers.has(integration.identifier) &&
+        !integration.disabled &&
+        !integration.inBetweenSteps
+    ),
+    [integrations]
   );
 
   useEffect(() => {
     if (!prefill) return;
     if (prefill.preferredPlatform || prefill.initialDestinationId) {
       setDeliveries((prev) => {
-        const next = { ...prev };
+        let next = prev;
         destinations.forEach((dest) => {
           if (
             (prefill.initialDestinationId && dest.id === prefill.initialDestinationId) ||
             (prefill.preferredPlatform && platformKey(dest.identifier) === prefill.preferredPlatform)
           ) {
-            next[dest.id] = {
-              selected: true,
-              content: '',
-              hashtags: '',
-              scheduledAt: '',
-              variantAssetId: '',
-              ...(next[dest.id] || {}),
-            };
+            // Preserve edits and deselections. A refetch must not trigger a
+            // fresh state update when this destination was already initialized.
+            if (!Object.prototype.hasOwnProperty.call(next, dest.id)) {
+              next = {
+                ...next,
+                [dest.id]: {
+                  selected: true,
+                  content: '',
+                  hashtags: '',
+                  scheduledAt: '',
+                  variantAssetId: '',
+                },
+              };
+            }
           }
         });
         return next;

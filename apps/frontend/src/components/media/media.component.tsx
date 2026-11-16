@@ -208,6 +208,7 @@ export const MediaBox: FC<{
   type?: 'image' | 'video';
   closeModal: () => void;
 }> = ({ type, standalone, setMedia }) => {
+  const mediaOrganizationId = useUser()?.orgId;
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebounce(search, 300);
@@ -225,7 +226,7 @@ export const MediaBox: FC<{
     return (await fetch(`/media?${params.toString()}`)).json();
   }, [page, debouncedSearch]);
   const { data, mutate, isLoading } = useSWR(
-    `get-media-${page}-${debouncedSearch}`,
+    `get-media-${mediaOrganizationId}-${page}-${debouncedSearch}`,
     loadMedia
   );
   const [selected, setSelected] = useState([]);

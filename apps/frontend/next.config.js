@@ -3,6 +3,7 @@ import { withSentryConfig } from '@sentry/nextjs';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ['isomorphic-dompurify'],
   experimental: {
     proxyTimeout: 90_000,
   },

@@ -24,3 +24,7 @@ reports
 .env
 .env.*
 !.env.example
+**/*.env
+.sns-studio-data
+.tt-playwright-profile
+work

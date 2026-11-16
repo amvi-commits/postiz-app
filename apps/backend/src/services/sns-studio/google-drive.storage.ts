@@ -4,7 +4,7 @@ import type { drive_v3 } from 'googleapis';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'crypto';
 import { createWriteStream, mkdirSync, chmodSync, openSync, closeSync, writeFileSync, readFileSync, renameSync, unlinkSync, copyFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'path';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
 import { SnsDriveFile, StorageProvider } from './storage-provider.interface';
@@ -21,6 +21,8 @@ export class GoogleDriveStorageProvider implements StorageProvider {
   private mockEnabled() {
     return ['1', 'true', 'yes'].includes((process.env.SNS_STUDIO_GOOGLE_DRIVE_MOCK || '').toLowerCase());
   }
+
+  realGenerationEnabled() { return !this.mockEnabled(); }
 
   private mockRoot() {
     return resolve(process.env.SNS_STUDIO_MOCK_DRIVE_DIRECTORY || join(process.env.UPLOAD_DIRECTORY || './uploads', 'sns-studio', 'mock-drive'));
@@ -276,10 +278,11 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     return files;
   }
 
-  async download(organizationId: string, fileId: string, destination: string) {
+  async download(organizationId: string, fileId: string, destination: string, maxBytes = Number.MAX_SAFE_INTEGER) {
     if (this.mockEnabled()) {
       const source = this.mockPath(fileId);
       if (!statSync(source, { throwIfNoEntry: false })?.isFile()) throw new ServiceUnavailableException({ code: 'GOOGLE_DRIVE_FILE_NOT_FOUND' });
+      if (statSync(source).size > maxBytes) throw new ServiceUnavailableException({ code: 'GOOGLE_DRIVE_FILE_TOO_LARGE' });
       mkdirSync(dirname(destination), { recursive: true });
       copyFileSync(source, destination);
       return;
@@ -289,7 +292,9 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     mkdirSync(dirname(destination), { recursive: true });
     const temporary = `${destination}.${randomUUID()}.part`;
     try {
-      await pipeline(response.data as NodeJS.ReadableStream, createWriteStream(temporary, { flags: 'wx' }));
+      let received = 0;
+      const limit = new Transform({ transform(chunk, _encoding, callback) { received += chunk.length; callback(received > maxBytes ? new Error('GOOGLE_DRIVE_FILE_TOO_LARGE') : null, chunk); } });
+      await pipeline(response.data as NodeJS.ReadableStream, limit, createWriteStream(temporary, { flags: 'wx' }));
       renameSync(temporary, destination);
     } catch (error) {
       try { unlinkSync(temporary); } catch { /* temporary file may not exist */ }
@@ -340,6 +345,26 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     return response.data;
   }
 
+  async reserveGenerationIds(organizationId: string) {
+    if (this.mockEnabled()) return [randomUUID(), randomUUID(), randomUUID()];
+    const drive = await this.drive(organizationId);
+    const response = await drive.files.generateIds({ count: 3, space: 'drive', type: 'files' });
+    if (response.data.ids?.length !== 3) throw new ServiceUnavailableException({ code: 'GOOGLE_DRIVE_IDS_REQUIRED' });
+    return response.data.ids;
+  }
+
+  async uploadGenerationImage(organizationId: string, folderId: string, data: Buffer, mimeType: string) {
+    if (this.mockEnabled()) throw new ServiceUnavailableException({ code: 'REAL_GENERATION_REQUIRES_REAL_DRIVE' });
+    const drive = await this.drive(organizationId);
+    return (await drive.files.create({ requestBody: { name: 'reference-image', mimeType, parents: [folderId] }, media: { mimeType, body: Readable.from([data]) }, fields: 'id,size,mimeType' })).data;
+  }
+
+  async updateGenerationControl(organizationId: string, fileId: string, data: unknown) {
+    if (this.mockEnabled()) throw new ServiceUnavailableException({ code: 'REAL_GENERATION_REQUIRES_REAL_DRIVE' });
+    const drive = await this.drive(organizationId);
+    await drive.files.update({ fileId, media: { mimeType: 'application/json', body: Readable.from([JSON.stringify(data)]) }, fields: 'id' });
+  }
+
   async listGenerationResults(organizationId: string) {
     const folder = await this.selectedFolder(organizationId);
     if (!folder?.id) throw new ServiceUnavailableException({ code: 'GOOGLE_DRIVE_FOLDER_REQUIRED' });
@@ -366,7 +391,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, any>;
     }
     const drive = await this.drive(organizationId);
-    const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'json' });
+    const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'json', maxContentLength: 1024 * 1024 });
     return response.data as Record<string, any>;
   }
 
@@ -382,10 +407,12 @@ export class GoogleDriveStorageProvider implements StorageProvider {
         size: String(details.size),
         createdTime: details.birthtime.toISOString(),
         webViewLink: null,
+        parents: [] as string[],
+        trashed: false,
       };
     }
     const drive = await this.drive(organizationId);
-    const response = await drive.files.get({ fileId, fields: 'id,name,mimeType,size,createdTime,webViewLink' });
+    const response = await drive.files.get({ fileId, fields: 'id,name,mimeType,size,createdTime,webViewLink,parents,trashed' });
     return response.data;
   }
 }

@@ -1,5 +1,5 @@
 export type Platform = 'common' | 'youtube' | 'instagram' | 'tiktok' | 'threads';
-export type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Publish' | 'Threads' | 'Common Queue' | 'Common History' | 'Common Analytics' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings' | 'Calendar' | 'YouTube Overview' | 'YouTube Video Composer' | 'Shorts Composer' | 'Channels' | 'Playlists' | 'Instagram Overview' | 'TikTok Overview' | 'Threads Overview';
+export type Tab = 'Dashboard' | 'Accounts' | 'Content Inbox' | 'Create' | 'Video Tools' | 'Publish' | 'Threads' | 'Common Queue' | 'Common History' | 'Common Analytics' | 'Story Pools' | 'Automation Recipes' | 'Queue' | 'Analytics' | 'Settings' | 'Calendar' | 'YouTube Overview' | 'YouTube Video Composer' | 'Shorts Composer' | 'Channels' | 'Playlists' | 'Instagram Overview' | 'TikTok Overview' | 'Threads Overview';
 
 export const platforms: Array<{ id: Platform; label: string }> = [
   { id: 'common', label: '共通機能' },
@@ -13,7 +13,7 @@ export const platformSections: Record<Platform, Array<{ label: string; tab: Tab 
   common: [
     { label: 'Dashboard', tab: 'Dashboard' },
     { label: 'Content Inbox', tab: 'Content Inbox' },
-    { label: 'Video Tools', tab: 'Create' },
+    { label: 'Video Tools', tab: 'Video Tools' },
     { label: 'Automation', tab: 'Automation Recipes' },
     { label: 'Queue', tab: 'Common Queue' },
     { label: 'Calendar', tab: 'Calendar' },
