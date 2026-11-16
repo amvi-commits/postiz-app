@@ -11,6 +11,15 @@ import { useExistingData } from '@gitroom/frontend/components/launches/helpers/u
 import { newDayjs } from '@gitroom/frontend/components/layout/set.timezone';
 
 export interface AddEditModalProps {
+  inline?: {
+    title: string;
+    blockedReason?: string | null;
+    submissionBlocked?: boolean;
+    onBusyChange?: (busy: boolean) => void;
+    onRequestStarted?: (data: any) => void;
+    onRequestRejected?: () => void;
+  };
+  onPreparePost?: (data: any) => Promise<string | void>;
   dummy?: boolean;
   date: dayjs.Dayjs;
   integrations: Integrations[];
@@ -45,6 +54,7 @@ export interface AddEditModalProps {
   onBeforePost?: (type: 'draft' | 'now' | 'schedule') => void | Promise<void>;
   onPosted?: (result: {
     type: 'draft' | 'now' | 'schedule' | 'update';
+    group?: string;
     items: Array<{
       postId: string;
       integration: string;

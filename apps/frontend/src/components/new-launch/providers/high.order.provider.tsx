@@ -11,7 +11,7 @@ import React, {
 import { useForm, FormProvider } from 'react-hook-form';
 import { IsOptional } from 'class-validator';
 import { classValidatorResolver } from '@hookform/resolvers/class-validator';
-import { useLaunchStore } from '@gitroom/frontend/components/new-launch/store';
+import { useLaunchStore, useLaunchScope, launchEditorTarget } from '@gitroom/frontend/components/new-launch/store';
 import { useShallow } from 'zustand/react/shallow';
 import { GeneralPreviewComponent } from '@gitroom/frontend/components/launches/general.preview.component';
 import { IntegrationContext } from '@gitroom/frontend/components/launches/helpers/use.integration';
@@ -59,6 +59,7 @@ export const withProvider = function <T extends object>(params: {
   } = params;
 
   const Wrapped = forwardRef((props: { id: string }, ref) => {
+    const scope = useLaunchScope();
     const t = useT();
     const fetch = useFetch();
     const {
@@ -290,7 +291,7 @@ export const withProvider = function <T extends object>(params: {
               createPortal(
                 <div data-id={props.id} className={isGlobal ? 'bg-newSettings pb-[12px] px-[12px]' : 'hidden bg-newSettings px-[12px] pb-[12px]'}>
                   {isGlobal && (
-                    <style>{`#wrapper-settings {display: flex !important} #social-empty {display: block !important;}`}</style>
+                    <style>{`${launchEditorTarget(scope, '#wrapper-settings')} {display: flex !important} ${launchEditorTarget(scope, '#social-empty')} {display: block !important;}`}</style>
                   )}
                   {isGlobal && (
                     <div className="flex py-[20px] items-center gap-[15px]">
@@ -318,14 +319,14 @@ export const withProvider = function <T extends object>(params: {
                     <InternalChannels plugs={data?.internalPlugs} />
                   )}
                 </div>,
-                document.querySelector('#social-settings') ||
+                document.querySelector(launchEditorTarget(scope, '#social-settings')) ||
                   document.createElement('div')
               )}
             {current &&
               !SettingsComponent &&
               createPortal(
-                <style>{`#wrapper-settings {display: none !important;} #social-empty {display: block !important;}`}</style>,
-                document.querySelector('#social-settings') ||
+                <style>{`${launchEditorTarget(scope, '#wrapper-settings')} {display: none !important;} ${launchEditorTarget(scope, '#social-empty')} {display: block !important;}`}</style>,
+                document.querySelector(launchEditorTarget(scope, '#social-settings')) ||
                   document.createElement('div')
               )}
           </div>

@@ -9,7 +9,9 @@ import type { Integrations } from '@gitroom/frontend/components/launches/calenda
 import { NewPost } from '@gitroom/frontend/components/launches/new.post';
 import { LoadingComponent } from '@gitroom/frontend/components/layout/loading';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { saveCommonContentPlan, preflightCommonContentPlan, linkCommonContentPosts } from './common-publish-api';
 import { CommonAccountPolicyPanel } from '@gitroom/frontend/components/sns-studio/common-account-policy';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 
 const card =
   'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
@@ -102,13 +104,20 @@ export type CommonPublishPrefill = {
   }>;
 };
 
-export const SnsStudioCommonPublisher = ({
+export const SnsStudioCommonPublisher = (props: { prefill?: CommonPublishPrefill | null }) => {
+  const user = useUser();
+  return <CommonPublisherForm key={user?.orgId || 'current'} {...props} organizationId={user?.orgId} />;
+};
+
+const CommonPublisherForm = ({
   prefill,
+  organizationId,
 }: {
   prefill?: CommonPublishPrefill | null;
+  organizationId?: string;
 }) => {
   const fetch = useFetch();
-  const { data: integrationData = emptyIntegrations, isLoading, error } = useIntegrationList();
+  const { data: integrationData = emptyIntegrations, isLoading, error } = useIntegrationList(organizationId);
   const integrations: Integrations[] = integrationData;
   const [activePrefill, setActivePrefill] = useState<CommonPublishPrefill | null>(
     prefill || null
@@ -130,12 +139,12 @@ export const SnsStudioCommonPublisher = ({
 
   const loadPlans = async (path: string) => {
     const response = await fetch(path);
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error('保存済み投稿内容を取得できませんでした。');
     return response.json();
   };
-  const { data: plans = [], mutate: refreshPlans } = useSWR<any[]>(
-    '/sns-studio/content-plans',
-    loadPlans,
+  const { data: plans = [], error: plansError, mutate: refreshPlans } = useSWR<any[]>(
+    organizationId ? [organizationId, '/sns-studio/content-plans'] : '/sns-studio/content-plans',
+    (key: string | [string, string]) => loadPlans(Array.isArray(key) ? key[1] : key),
     { revalidateOnFocus: false }
   );
 
@@ -159,8 +168,9 @@ export const SnsStudioCommonPublisher = ({
         let next = prev;
         destinations.forEach((dest) => {
           if (
-            (prefill.initialDestinationId && dest.id === prefill.initialDestinationId) ||
-            (prefill.preferredPlatform && platformKey(dest.identifier) === prefill.preferredPlatform)
+            (prefill.initialDestinationId
+              ? dest.id === prefill.initialDestinationId
+              : prefill.preferredPlatform && platformKey(dest.identifier) === prefill.preferredPlatform)
           ) {
             // Preserve edits and deselections. A refetch must not trigger a
             // fresh state update when this destination was already initialized.
@@ -363,33 +373,24 @@ export const SnsStudioCommonPublisher = ({
 
   const savePlan = async () => {
     if (!selectedDestinations.length) {
-      setMessage('投稿先アカウントを1つ以上選択してください。');
-      return;
+      throw new Error('投稿先アカウントを1つ以上選択してください。');
     }
     setSaving(true);
     setMessage('');
     try {
-      const response = await fetch(
-        planId ? `/sns-studio/content-plans/${planId}` : '/sns-studio/content-plans',
-        {
-          method: planId ? 'PUT' : 'POST',
-          body: JSON.stringify(planPayload),
-        }
-      );
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(result?.code || result?.message || '配信計画の保存に失敗しました。');
-      }
+      const result = await saveCommonContentPlan(fetch, planPayload, planId);
       setPlanId(result.id);
       setSavedSignature(signature);
       setMessage('配信計画を保存しました。');
       await refreshPlans();
+      return result.id as string;
     } catch (saveError) {
       setMessage(
         saveError instanceof Error
           ? saveError.message
           : '配信計画の保存に失敗しました。'
       );
+      throw saveError;
     } finally {
       setSaving(false);
     }
@@ -598,7 +599,7 @@ export const SnsStudioCommonPublisher = ({
       .filter(([, value]) => !!value)
   ) as Record<string, string>;
 
-  const onPosted = async (result: {
+  const onPostedForPlan = async (savedPlanId: string, result: {
     type: 'draft' | 'now' | 'schedule' | 'update';
     items: Array<{
       postId: string;
@@ -608,17 +609,7 @@ export const SnsStudioCommonPublisher = ({
       settings?: Record<string, any>;
     }>;
   }) => {
-    if (!planId) return;
-    const response = await fetch(
-      `/sns-studio/content-plans/${planId}/post-links`,
-      {
-        method: 'POST',
-        body: JSON.stringify(result),
-      }
-    );
-    if (!response.ok) {
-      throw new Error('SNS Studioの配信履歴更新に失敗しました。');
-    }
+    await linkCommonContentPosts(fetch, savedPlanId, result);
     await refreshPlans();
     setPlanId(null);
     setSavedSignature('');
@@ -631,38 +622,16 @@ export const SnsStudioCommonPublisher = ({
     );
   };
 
-  const beforePost = async (type: 'draft' | 'now' | 'schedule') => {
-    if (!planId) {
-      throw new Error('先に配信計画を保存してください。');
-    }
-    if (type === 'draft') return;
-    const response = await fetch(
-      `/sns-studio/common/content-plans/${planId}/preflight`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          type,
-          integrationIds: selectedDestinations.map(({ id }) => id),
-        }),
-      }
-    );
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const reasonText = Array.isArray(result?.blockedDeliveries)
-        ? result.blockedDeliveries
-            .flatMap((delivery: any) =>
-              (delivery.reasons || []).map((reason: any) => reason.message)
-            )
-            .filter(Boolean)
-            .join(' ')
-        : '';
-      throw new Error(
-        (typeof result?.message === 'string' && result.message) ||
-          reasonText ||
-          result?.code ||
-          '投稿Policyの確認に失敗しました。'
-      );
-    }
+  const preparePostEditor = async () => {
+    const savedPlanId = planId && !dirty ? planId : await savePlan();
+    const integrationIds = selectedDestinations.map(({ id }) => id);
+    return {
+      commonContentPlanId: savedPlanId,
+      onBeforePost: async (type: 'draft' | 'now' | 'schedule') => {
+        if (type !== 'draft') await preflightCommonContentPlan(fetch, savedPlanId, type, integrationIds);
+      },
+      onPosted: (result: Parameters<typeof onPostedForPlan>[1]) => onPostedForPlan(savedPlanId, result),
+    };
   };
 
   if (isLoading) {
@@ -677,7 +646,7 @@ export const SnsStudioCommonPublisher = ({
     <section className="grid gap-5">
       <div className={card}>
         <div className="flex flex-col gap-2">
-          <h2 className="text-xl font-bold">共通投稿・配信</h2>
+          <h2 className="text-xl font-bold">複数SNSに投稿</h2>
           <p className="text-sm text-textItemBlur">
             共通値を設定し、必要なSNS・アカウントだけ個別上書きします。実際の投稿処理とSNS固有設定は既存Postiz providerを再利用します。
           </p>
@@ -713,7 +682,8 @@ export const SnsStudioCommonPublisher = ({
           </button>
         </div>
         <div className="grid gap-2">
-          {plans.length === 0 && (
+          {plansError && <p role="alert" className="text-sm text-red-300">保存済み投稿内容を取得できませんでした。再読込してください。</p>}
+          {!plansError && plans.length === 0 && (
             <div className="text-sm text-textItemBlur">保存済み計画はありません。</div>
           )}
           {plans.slice(0, 12).map((plan: any) => (
@@ -781,7 +751,7 @@ export const SnsStudioCommonPublisher = ({
       </div>
 
       <div className={card}>
-        <h3 className="mb-1 font-semibold">2. SNS → アカウント上書き</h3>
+        <h3 className="mb-1 font-semibold">2. 投稿するSNS・アカウント</h3>
         <p className="mb-4 text-xs text-textItemBlur">
           空欄は上位設定を継承します。優先順位は「アカウント ＞ SNS ＞ 共通」です。
         </p>
@@ -811,7 +781,7 @@ export const SnsStudioCommonPublisher = ({
                 <div className="mb-3 font-semibold">
                   {platformName(platformAccounts[0].identifier)}
                 </div>
-                <div className="mb-4 grid gap-3 md:grid-cols-2">
+                <details className="mb-4"><summary className="cursor-pointer text-sm">SNSごとに内容を調整</summary><div className="mt-3 grid gap-3 md:grid-cols-2">
                   <label className="grid gap-1 text-xs md:col-span-2">
                     <span>SNS別投稿文（空欄=共通）</span>
                     <textarea
@@ -849,7 +819,7 @@ export const SnsStudioCommonPublisher = ({
                       }
                     />
                   </label>
-                </div>
+                </div></details>
 
                 <div className="grid gap-3">
                   {platformAccounts.map((integration) => {
@@ -878,7 +848,7 @@ export const SnsStudioCommonPublisher = ({
                           <span>{integration.name}</span>
                         </label>
                         {value.selected && (
-                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <details className="mt-3"><summary className="cursor-pointer text-sm">このアカウントの内容を調整</summary><div className="mt-3 grid gap-3 md:grid-cols-2">
                             {mediaOptions.length > 1 && (
                               <label className="grid gap-1 text-xs md:col-span-2">
                                 <span>加工バリエーション</span>
@@ -942,7 +912,7 @@ export const SnsStudioCommonPublisher = ({
                                 }
                               />
                             </label>
-                          </div>
+                          </div></details>
                         )}
                       </div>
                     );
@@ -955,21 +925,23 @@ export const SnsStudioCommonPublisher = ({
       </div>
 
       <div className={card}>
-        <h3 className="mb-3 font-semibold">3. 保存 → 投稿作成</h3>
+        <h3 className="mb-3 font-semibold">3. 内容の確認</h3>
         <div className="flex flex-wrap items-center gap-3">
           <button
             className={secondaryButton}
             disabled={saving || !selectedDestinations.length}
-            onClick={() => void savePlan()}
+            onClick={() => void savePlan().catch(() => undefined)}
           >
             {saving ? '保存中...' : planId ? '配信計画を更新' : '配信計画を保存'}
           </button>
 
-          {planId && !dirty && selectedDestinations.length > 0 && (
+          {selectedDestinations.length > 0 && (
             <CalendarWeekProvider integrations={destinations}>
               <div className="min-w-[260px]">
                 <NewPost
-                  label="この配信計画で投稿を作成"
+                  label="内容を確認して投稿へ"
+                  disabled={saving}
+                  beforeOpen={preparePostEditor}
                   selectedChannels={selectedChannels}
                   onlyValues={[
                     {
@@ -987,9 +959,6 @@ export const SnsStudioCommonPublisher = ({
                       ? dayjs(commonScheduledAt)
                       : undefined
                   }
-                  onPosted={onPosted}
-                  commonContentPlanId={planId}
-                  onBeforePost={beforePost}
                 />
               </div>
             </CalendarWeekProvider>
@@ -997,7 +966,7 @@ export const SnsStudioCommonPublisher = ({
         </div>
         {planId && dirty && (
           <p className="mt-3 text-xs text-amber-300">
-            設定が変更されています。投稿作成前に配信計画を保存してください。
+            変更内容は「内容を確認して投稿へ」で保存してから確認画面を開きます。
           </p>
         )}
         <p className="mt-3 text-xs text-textItemBlur">

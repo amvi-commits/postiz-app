@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import dayjs from 'dayjs';
 import { Integrations } from '@gitroom/frontend/components/launches/calendar.context';
-import { createRef, RefObject } from 'react';
+import { createRef, RefObject, createContext, createElement, ReactNode, useContext, useState, useId } from 'react';
 import { PostComment } from '@gitroom/frontend/components/new-launch/providers/post-comment.enum';
 import { newDayjs } from '@gitroom/frontend/components/layout/set.timezone';
 
@@ -157,7 +157,7 @@ const initialState = {
   chars: {},
 };
 
-export const useLaunchStore = create<StoreState>()((set) => ({
+const createLaunchStore = () => create<StoreState>()((set) => ({
   ...initialState,
   setCurrent: (current: string) =>
     set((state) => ({
@@ -652,3 +652,22 @@ export const useLaunchStore = create<StoreState>()((set) => ({
       ),
     })),
 }));
+
+const defaultLaunchStore = createLaunchStore();
+const LaunchStoreContext = createContext(defaultLaunchStore);
+const LaunchScopeContext = createContext('default');
+export const useLaunchScope = () => useContext(LaunchScopeContext);
+export const launchEditorTarget = (scope: string, target: string) => `[data-launch-editor-scope="${scope}"] ${target}`;
+
+// An embedded editor must not share mutable draft/account state with a modal
+// opened elsewhere in the app. Existing modal users retain their default store.
+export function LaunchStoreProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(createLaunchStore);
+  const scope = useId();
+  return createElement(LaunchScopeContext.Provider, { value: scope }, createElement(LaunchStoreContext.Provider, { value: store }, children));
+}
+
+export function useLaunchStore<T>(selector: (state: StoreState) => T): T {
+  const store = useContext(LaunchStoreContext);
+  return store(selector);
+}

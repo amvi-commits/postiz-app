@@ -22,6 +22,8 @@ import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import {
   SelectedIntegrations,
   useLaunchStore,
+  useLaunchScope,
+  launchEditorTarget,
 } from '@gitroom/frontend/components/new-launch/store';
 import { useShallow } from 'zustand/react/shallow';
 import { AddPostButton } from '@gitroom/frontend/components/new-launch/add.post.button';
@@ -101,7 +103,9 @@ const InterceptUnderlineShortcut = Extension.create({
 export const EditorWrapper: FC<{
   totalPosts: number;
   value: string;
-}> = () => {
+  singleAccount?: boolean;
+}> = ({ singleAccount = false }) => {
+  const scope = useLaunchScope();
   const t = useT();
   const {
     setGlobalValueText,
@@ -184,8 +188,10 @@ export const EditorWrapper: FC<{
   }, [loaded, loadedState]);
 
   const canEdit = useMemo(() => {
-    return current === 'global' || !!internal;
-  }, [current, internal]);
+    // A single-account view edits its sole content directly. The existing
+    // global/internal setters still choose the correct saved draft values.
+    return singleAccount || current === 'global' || !!internal;
+  }, [singleAccount, current, internal]);
 
   const items = useMemo(() => {
     if (internal) {
@@ -301,9 +307,8 @@ export const EditorWrapper: FC<{
     (index: number) => () => {
       setTimeout(() => {
         // scroll the the bottom
-        document.querySelector('#social-content').scrollTo({
-          top: document.querySelector('#social-content').scrollHeight,
-        });
+        const target = document.querySelector(launchEditorTarget(scope, '#social-content'));
+        target?.scrollTo({ top: target.scrollHeight });
       }, 20);
       if (internal) {
         return addInternalValue(index, current, [
@@ -465,7 +470,7 @@ export const EditorWrapper: FC<{
                             />
                           )}
                         </div>
-                        {!!internal && !existingData?.integration && (
+                        {!singleAccount && !!internal && !existingData?.integration && (
                           <div
                             className="mt-[12px] flex gap-[20px] items-center cursor-pointer select-none"
                             onClick={goBackToGlobal}

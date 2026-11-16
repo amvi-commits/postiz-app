@@ -618,7 +618,7 @@ export const SnsStudio = () => {
       {activeTab === 'Threads Overview' && <section className={card}>
         <h2 className="text-lg font-bold">Threads Overview</h2>
         <p className="mt-2 text-sm text-textItemBlur">Threadsの投稿、カレンダー、Inbox、リサーチ、分析、アカウント設定を開きます。</p>
-        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', 'Workspace')}>Threads Workspaceを開く</button>
+        <button type="button" className={`${primaryButton} mt-4`} onClick={() => activateSection('threads', '投稿作成')}>Threadsの投稿作成を開く</button>
       </section>}
 
       {activeTab === 'YouTube Overview' && <section className={card}>

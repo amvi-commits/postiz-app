@@ -247,6 +247,10 @@ export const ThreadsSettings: FC = () => {
     replyControl,
   ]);
 
+  if ((integrationContext?.integration as any)?.snsStudioTransport === 'browser') {
+    return <p className="text-sm text-textItemBlur">Browser接続では通常の本文・画像／動画を利用できます。Ghost・Pollなどの公式API専用設定は利用できません。</p>;
+  }
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-newTableBorder bg-newBgColorInner/60 p-4 mb-5">
       {/* Header with expand/collapse */}

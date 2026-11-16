@@ -17,7 +17,7 @@ import { EditorWrapper } from '@gitroom/frontend/components/new-launch/editor';
 import { SelectCurrent } from '@gitroom/frontend/components/new-launch/select.current';
 import { ShowAllProviders } from '@gitroom/frontend/components/new-launch/providers/show.all.providers';
 import { useExistingData } from '@gitroom/frontend/components/launches/helpers/use.existing.data';
-import { useLaunchStore } from '@gitroom/frontend/components/new-launch/store';
+import { useLaunchStore, useLaunchScope, launchEditorTarget } from '@gitroom/frontend/components/new-launch/store';
 import { DatePicker } from '@gitroom/frontend/components/launches/helpers/date.picker';
 import { useShallow } from 'zustand/react/shallow';
 import { RepeatComponent } from '@gitroom/frontend/components/launches/repeat.component';
@@ -43,8 +43,10 @@ import { useHasScroll } from '@gitroom/frontend/components/ui/is.scroll.hook';
 import { useShortlinkPreference } from '@gitroom/frontend/components/settings/shortlink-preference.component';
 import dayjs from 'dayjs';
 import { Button } from '@gitroom/react/form/button';
+import { InlinePostLayout } from './inline-post-layout';
 
 export const ManageModal: FC<AddEditModalProps> = (props) => {
+  const scope = useLaunchScope();
   const t = useT();
   const fetch = useFetch();
   const ref = useRef(null);
@@ -53,6 +55,14 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
   const toaster = useToaster();
   const modal = useModals();
   const [showSettings, setShowSettings] = useState(false);
+  const submitState = useRef<'idle' | 'running' | 'accepted' | 'uncertain'>('idle');
+  const requestStarted = useRef(false);
+  const [inlineStatus, setInlineStatus] = useState('');
+  const [confirmation, setConfirmation] = useState<any>(null);
+  const finishConfirmation = useRef<((accepted: boolean) => void) | null>(null);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; finishConfirmation.current?.(false); }; }, []);
+  useEffect(() => { props.inline?.onBusyChange?.(loading); }, [loading, props.inline?.onBusyChange]);
   const { data: shortlinkPreferenceData } = useShortlinkPreference();
 
   const { addEditSets, mutate, customClose, dummy } = props;
@@ -192,6 +202,14 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
 
   const schedule = useCallback(
     (type: 'draft' | 'now' | 'schedule' | 'update') => async () => {
+      if (props.inline && submitState.current !== 'idle') return;
+      if (props.inline) {
+        submitState.current = 'running';
+        requestStarted.current = false;
+        setLoading(true);
+        setInlineStatus('');
+      }
+      try {
       let republish = false;
       if (
         (type === 'now' || type === 'schedule') &&
@@ -372,6 +390,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         }
       }
 
+      if (props.inline && !active.current) return;
       const shortlinkPreference = shortlinkPreferenceData?.shortlink || 'ASK';
 
       let shortLink = false;
@@ -423,6 +442,19 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         posts,
       };
 
+      if (props.inline && (type === 'now' || type === 'schedule')) {
+        if (type === 'schedule' && (!date.isValid() || !date.isAfter(dayjs()))) {
+          setInlineStatus('予約日時は未来の日本時間を指定してください。');
+          return;
+        }
+        const accepted = await new Promise<boolean>(resolve => { finishConfirmation.current = resolve; setConfirmation({
+          type, posts, date: data.date,
+          accept: () => { finishConfirmation.current = null; setConfirmation(null); resolve(true); },
+          cancel: () => { finishConfirmation.current = null; setConfirmation(null); resolve(false); },
+        }); });
+        if (!accepted || props.inline.blockedReason) return;
+      }
+
       if (dummy) {
         modal.openModal({
           title: '',
@@ -443,6 +475,15 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
         if (addEditSets) {
           addEditSets(data);
         } else {
+          if (props.onPreparePost) {
+            try {
+              const contentPlanId = await props.onPreparePost(data);
+              if (contentPlanId) data.snsStudioContentPlanId = contentPlanId;
+            } catch (prepareError) {
+              setInlineStatus(prepareError instanceof Error ? prepareError.message : '保存に失敗しました。投稿は送信していません。');
+              return;
+            }
+          }
           const payloads: any[] =
             type === 'schedule' && props.scheduledAtByIntegration
               ? Array.from(
@@ -496,12 +537,18 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }> = [];
 
           for (const payload of payloads) {
+            if (props.inline && !active.current) return;
+            props.inline?.onRequestStarted?.(payload);
+            requestStarted.current = true;
             const response = await fetch('/posts', {
               method: 'POST',
               body: JSON.stringify(payload),
             });
             const created = await response.json().catch(() => []);
             if (!response.ok) {
+              if (props.inline && response.status >= 500) throw new Error('投稿登録の結果を確認できません。');
+              if (!postedItems.length) { requestStarted.current = false; props.inline?.onRequestRejected?.(); }
+              if (props.inline) setInlineStatus(typeof created?.message === 'string' ? created.message : '投稿登録を受け付けられませんでした。入力は保持しています。');
               if (postedItems.length && props.onPosted) {
                 try {
                   await props.onPosted({ type, items: postedItems });
@@ -544,12 +591,19 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                 })
               );
             }
+            if (props.inline && !created?.length) throw new Error('投稿登録の応答を確認できません。履歴を確認してください。');
           }
 
+          if (props.inline) submitState.current = 'accepted';
+
+          let trackingFailed = false;
+          if (props.inline && !active.current) return;
           if (props.onPosted) {
             try {
-              await props.onPosted({ type, items: postedItems });
+              await props.onPosted({ type, group, items: postedItems });
             } catch {
+              trackingFailed = true;
+              if (props.inline) setInlineStatus('投稿は受付済みです。履歴との紐付けを確認してください。再送はしません。');
               toaster.show(
                 t(
                   'sns_studio_tracking_update_failed',
@@ -561,7 +615,8 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }
 
           mutate();
-          toaster.show(
+          if (props.inline && !trackingFailed) setInlineStatus(type === 'draft' ? '下書きを保存しました。' : '投稿を受け付けました。公開結果は履歴で確認してください。');
+          if (!props.inline) toaster.show(
             !existingData.integration
               ? t('added_successfully', 'Added successfully')
               : t('updated_successfully', 'Updated successfully')
@@ -573,16 +628,44 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
           }, 2000);
         }
 
-        if (!addEditSets) {
+        if (!addEditSets && !props.inline) {
           modal.closeAll();
         }
       }
+      } catch (error) {
+        if (props.inline) {
+          if (requestStarted.current) submitState.current = 'uncertain';
+          setInlineStatus(requestStarted.current
+            ? '投稿登録の結果を確認できません。入力と関連IDを保持しました。履歴を確認し、再送しないでください。'
+            : error instanceof Error ? error.message : '処理に失敗しました。入力は保持しています。');
+        } else throw error;
+      } finally {
+        if (props.inline && submitState.current === 'running') submitState.current = 'idle';
+        if (props.inline) setLoading(false);
+      }
     },
-    [ref, repeater, tags, date, addEditSets, dummy, shortlinkPreferenceData]
+    [ref, repeater, tags, date, addEditSets, dummy, shortlinkPreferenceData, props, existingData, selectedIntegrations]
   );
 
+  if (props.inline) return <InlinePostLayout
+    scope={scope}
+    title={props.inline.title}
+    editor={!hide && <EditorWrapper totalPosts={1} value="" singleAccount />}
+    settings={<style>{`${launchEditorTarget(scope, '#social-settings')} [data-id="${current}"] {display: block !important;}`}</style>}
+    preview={<ShowAllProviders ref={ref} />}
+    busy={loading}
+    mediaProcessing={locked}
+    locked={locked || !!props.inline.submissionBlocked || !selectedIntegrations.length || ['accepted', 'uncertain'].includes(submitState.current)}
+    blockedReason={props.inline.blockedReason}
+    date={date} onDateChange={setDate}
+    onAction={type => void schedule(type)()}
+    confirmation={confirmation}
+    accountNames={Object.fromEntries(selectedIntegrations.map(item => [item.integration.id, item.integration.name]))}
+    status={inlineStatus}
+  />;
+
   return (
-    <div className="w-full h-full flex-1 p-[40px] flex relative">
+    <div data-launch-editor-scope={scope} className="w-full h-full flex-1 p-[40px] flex relative">
       <div className="flex flex-1 bg-newBgColorInner rounded-[20px] flex-col">
         <div className="flex-1 flex">
           <div className="flex flex-col flex-1 border-e border-newBorder">
@@ -669,7 +752,7 @@ export const ManageModal: FC<AddEditModalProps> = (props) => {
                     </div>
                   </div>
                   <style>
-                    {`#social-settings [data-id="${current}"] {display: block !important;}`}
+                    {`${launchEditorTarget(scope, '#social-settings')} [data-id="${current}"] {display: block !important;}`}
                   </style>
                 </div>
               </div>

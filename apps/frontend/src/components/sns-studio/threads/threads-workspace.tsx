@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import dayjs from 'dayjs';
 import clsx from 'clsx';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { ThreadsComposer } from './threads-composer';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import {
   THREADS_REPLY_CONTROL_OPTIONS,
@@ -29,7 +30,7 @@ type SubTab =
   | 'Settings';
 
 const subTabs: Array<{ id: SubTab; label: string; icon: string }> = [
-  { id: 'Publish', label: '投稿 (Publish)', icon: '📝' },
+  { id: 'Publish', label: '投稿作成', icon: '📝' },
   { id: 'Calendar', label: 'カレンダー (Ghost消滅)', icon: '📅' },
   { id: 'Inbox', label: 'Inbox & 返信', icon: '📥' },
   { id: 'Research', label: 'リサーチ (Search)', icon: '🔍' },
@@ -506,15 +507,15 @@ export const ThreadsWorkspace: FC<{
               <span className="text-2xl">🧵</span>
               <h1 className="text-xl font-bold text-textColor">Threads Studio</h1>
               <span className="rounded-full bg-[#5145ff]/20 px-2.5 py-0.5 text-xs font-semibold text-[#9e9aff]">
-                Meta Threads API v1.0
+                投稿・管理
               </span>
             </div>
             <p className="mt-1 text-xs text-textItemBlur">
-              Postiz公式基盤を活用し、Ghost Post（24h消滅）、Polls、Inbox、AI返信、公式リサーチを包括管理します。
+              Threadsへの投稿を作成し、下書きや公開結果を確認できます。
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          {activeSubTab !== 'Publish' && <div className="flex items-center gap-3">
             <span className="text-xs text-textItemBlur">対象アカウント:</span>
             <select
               className={clsx(field, 'w-auto min-w-[200px] text-xs font-semibold')}
@@ -531,7 +532,7 @@ export const ThreadsWorkspace: FC<{
                 <option value="">Threadsアカウント未接続</option>
               )}
             </select>
-          </div>
+          </div>}
         </div>
 
         {/* Global Notification Banner */}
@@ -572,60 +573,12 @@ export const ThreadsWorkspace: FC<{
 
       {/* 1. Sub-tab: Publish */}
       {activeSubTab === 'Publish' && (
-        <div className="grid gap-6 xl:grid-cols-2">
-          {/* Preset Launcher Card */}
-          <div className={card}>
-            <h2 className="text-base font-bold text-textColor flex items-center gap-2">
-              <span>🚀</span> 共通投稿画面でThreads投稿を作成
-            </h2>
-            <p className="mt-1 text-xs text-textItemBlur">
-              共通投稿基盤（Publish）をThreadsプリセットで開き、Ghost PostやPoll、Topic Tagなどの追加設定を編集して即時投稿・予約配信します。
-            </p>
-            <div className="mt-4 flex flex-col gap-3">
-              <button
-                type="button"
-                className={clsx(primaryButton, 'py-3 text-sm flex items-center justify-center gap-2')}
-                onClick={() => forwardToCommonPublisher('')}
-              >
-                <span>🧵</span> Threadsプリセットで共通投稿を開く
-              </button>
-            </div>
-
-            <div className="mt-6 border-t border-blockSeparator pt-4">
-              <h3 className="font-semibold text-xs text-textColor mb-2">
-                🌟 Threads公式API拡張機能一覧
-              </h3>
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-textItemBlur">
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">👻 Ghost Post</strong>
-                  <div className="mt-0.5">24時間で自動的にアーカイブ非公開化（テキスト専用）</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">📊 Poll (アンケート)</strong>
-                  <div className="mt-0.5">2〜4択・各25文字の公式アンケート投票</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">🏷️ Topic Tag</strong>
-                  <div className="mt-0.5">Threads公式トピック分類（#不要・最大50文字）</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">⚠️ Spoiler Warning</strong>
-                  <div className="mt-0.5">メディアぼかし＆本文テキストのネタバレ指定</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">📄 長文テキスト添付</strong>
-                  <div className="mt-0.5">最大10,000文字の長文解説テキスト添付</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">🛡️ Reply Approvals</strong>
-                  <div className="mt-0.5">届いた返信の手動事前承認制（炎上対策）</div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="grid gap-6">
+          <ThreadsComposer />
 
           {/* AI Post Generator Card */}
-          <div className={card}>
+          <details className={card}>
+            <summary className="cursor-pointer font-semibold">AIで投稿案を作成（任意）</summary>
             <h2 className="text-base font-bold text-textColor flex items-center gap-2">
               <span>🤖</span> Threads AI 投稿下書きジェネレーター
             </h2>
@@ -728,9 +681,9 @@ export const ThreadsWorkspace: FC<{
                     <button
                       type="button"
                       className="text-xs text-[#7774ff] hover:underline"
-                      onClick={() => forwardToCommonPublisher(generatedDraft)}
+                      onClick={() => void navigator.clipboard.writeText(generatedDraft).then(() => setMessage('投稿案をコピーしました。投稿本文に貼り付けて編集できます。')).catch(() => setMessage('コピーできませんでした。投稿案の本文を選択してコピーしてください。'))}
                     >
-                      共通投稿画面へ送る ➔
+                      投稿案をコピー
                     </button>
                   </div>
                   <textarea
@@ -742,7 +695,7 @@ export const ThreadsWorkspace: FC<{
                 </div>
               )}
             </div>
-          </div>
+          </details>
         </div>
       )}
 

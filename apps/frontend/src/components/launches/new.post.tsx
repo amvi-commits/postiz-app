@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useModals } from '@gitroom/frontend/components/layout/new-modal';
 import dayjs from 'dayjs';
 import { useCalendar } from '@gitroom/frontend/components/launches/calendar.context';
@@ -7,6 +7,7 @@ import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { SetSelectionModal } from '@gitroom/frontend/components/launches/calendar';
 import { AddEditModal } from '@gitroom/frontend/components/new-launch/add.edit.modal';
 import type { AddEditModalProps } from '@gitroom/frontend/components/new-launch/add.edit.modal';
+import { useToaster } from '@gitroom/react/toaster/toaster';
 import { ModalWrapperComponent } from '@gitroom/frontend/components/new-launch/modal.wrapper.component';
 
 export const NewPost = (props: {
@@ -20,18 +21,30 @@ export const NewPost = (props: {
   onPosted?: AddEditModalProps['onPosted'];
   date?: dayjs.Dayjs;
   label?: string;
+  disabled?: boolean;
+  beforeOpen?: () => Promise<Pick<AddEditModalProps, 'commonContentPlanId' | 'onBeforePost' | 'onPosted'>>;
 } = {}) => {
   const fetch = useFetch();
   const modal = useModals();
   const { integrations, reloadCalendarView, sets } = useCalendar();
   const t = useT();
+  const toaster = useToaster();
+  const opening = useRef(false);
+  const [isOpening, setIsOpening] = useState(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
 
   const createAPost = useCallback(async () => {
+    if (opening.current) return;
+    opening.current = true; setIsOpening(true);
+    try {
+    const configured = { ...props, ...(await props.beforeOpen?.()) };
+    if (!active.current) return;
     const date =
-      props.date ||
+      configured.date ||
       dayjs.utc((await (await fetch('/posts/find-slot')).json()).date).local();
 
-    const set: any = props.onlyValues?.length || !sets.length
+    const set: any = configured.onlyValues?.length || !sets.length
       ? undefined
       : await new Promise((resolve) => {
           modal.openModal({
@@ -59,7 +72,7 @@ export const NewPost = (props: {
           });
         });
 
-    if (set === 'exit') return;
+    if (set === 'exit' || !active.current) return;
 
     modal.openModal({
       id: 'add-edit-modal',
@@ -78,14 +91,14 @@ export const NewPost = (props: {
             ...p,
           }))}
           {...(set?.content ? { set: JSON.parse(set.content) } : {})}
-          {...(props.onlyValues ? { onlyValues: props.onlyValues } : {})}
-          {...(props.onlyValuesByIntegration ? { onlyValuesByIntegration: props.onlyValuesByIntegration } : {})}
-          {...(props.selectedChannels ? { selectedChannels: props.selectedChannels } : {})}
-          {...(props.selectedChannelSettings ? { selectedChannelSettings: props.selectedChannelSettings } : {})}
-          {...(props.scheduledAtByIntegration ? { scheduledAtByIntegration: props.scheduledAtByIntegration } : {})}
-          {...(props.commonContentPlanId ? { commonContentPlanId: props.commonContentPlanId } : {})}
-          {...(props.onBeforePost ? { onBeforePost: props.onBeforePost } : {})}
-          {...(props.onPosted ? { onPosted: props.onPosted } : {})}
+          {...(configured.onlyValues ? { onlyValues: configured.onlyValues } : {})}
+          {...(configured.onlyValuesByIntegration ? { onlyValuesByIntegration: configured.onlyValuesByIntegration } : {})}
+          {...(configured.selectedChannels ? { selectedChannels: configured.selectedChannels } : {})}
+          {...(configured.selectedChannelSettings ? { selectedChannelSettings: configured.selectedChannelSettings } : {})}
+          {...(configured.scheduledAtByIntegration ? { scheduledAtByIntegration: configured.scheduledAtByIntegration } : {})}
+          {...(configured.commonContentPlanId ? { commonContentPlanId: configured.commonContentPlanId } : {})}
+          {...(configured.onBeforePost ? { onBeforePost: configured.onBeforePost } : {})}
+          {...(configured.onPosted ? { onPosted: configured.onPosted } : {})}
           reopenModal={createAPost}
           mutate={reloadCalendarView}
           integrations={integrations}
@@ -95,6 +108,9 @@ export const NewPost = (props: {
       size: '80%',
       title: ``,
     });
+    } catch (error) {
+      if (active.current) toaster.show(error instanceof Error ? error.message : '投稿画面を準備できませんでした。', 'warning');
+    } finally { opening.current = false; if (active.current) setIsOpening(false); }
   }, [
     integrations,
     sets,
@@ -107,10 +123,12 @@ export const NewPost = (props: {
     props.onBeforePost,
     props.onPosted,
     props.date,
+    props.beforeOpen,
   ]);
   return (
     <button
       onClick={createAPost}
+      disabled={props.disabled || isOpening}
       className="text-white flex-1 pt-[12px] pb-[14px] ps-[16px] pe-[20px] group-[.sidebar]:p-0 min-h-[44px] max-h-[44px] rounded-md bg-btnPrimary flex justify-center items-center gap-[5px] outline-none"
     >
       <svg

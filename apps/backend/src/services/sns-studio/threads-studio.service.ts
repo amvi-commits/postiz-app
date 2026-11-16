@@ -50,6 +50,7 @@ export class ThreadsStudioService {
         id: true,
         name: true,
         profile: true,
+        internalId: true,
         picture: true,
         inBetweenSteps: true,
         refreshNeeded: true,
@@ -65,8 +66,29 @@ export class ThreadsStudioService {
 
     return integrations.map((integration) => {
       const setting = settingsMap.get(integration.id);
+      const configuredTransport = process.env.THREADS_PUBLISH_TRANSPORT === 'browser'
+        ? 'browser' : 'official';
+      const transport = integration.internalId?.startsWith('threads_browser_')
+        ? 'browser' : 'official';
+      // Browser profiles are stored by their Integration identity. A display
+      // name is neither a routing identifier nor a safe fallback.
+      const browserAccount = transport === 'browser'
+        ? /^threads_browser_([A-Za-z0-9_-]+)$/.exec(integration.internalId || '')?.[1] || null
+        : null;
+      const publishBlockedReason = integration.inBetweenSteps || integration.refreshNeeded
+        ? 'Threadsアカウントの認証を確認してください。'
+        : transport !== configuredTransport
+          ? 'このアカウントの接続方式は、現在の投稿経路と一致しません。'
+        : transport === 'browser' && !browserAccount
+          ? '保存済みIntegrationにBrowserアカウントの識別情報がありません。'
+          : transport === 'browser' && process.env.THREADS_BROWSER_ALLOW_REAL_POST !== 'true'
+            ? 'Browser接続の実投稿・予約は安全確認が完了するまでロックされています。下書きは保存できます。'
+            : null;
       return {
         ...integration,
+        transport,
+        browserAccount,
+        publishBlockedReason,
         threadsSettings: setting || {
           displayName: integration.name || integration.profile,
           autoPostEnabled: true,
