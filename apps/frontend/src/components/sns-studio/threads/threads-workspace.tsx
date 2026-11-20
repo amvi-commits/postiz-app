@@ -2,14 +2,21 @@
 
 import React, { FC, useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import dayjs from 'dayjs';
 import clsx from 'clsx';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
+import { InlinePublisher } from '../inline-publisher';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import {
   THREADS_REPLY_CONTROL_OPTIONS,
   ThreadsReplyControl,
 } from '@gitroom/nestjs-libraries/integrations/social/threads.capabilities';
+
+function useOrganizationSWR<Data = any>(key: string | null, load: (path: string) => Promise<any>, options?: any) {
+  const user = useUser();
+  return useSWR<Data>(key ? [key, user?.orgId] : null, ([path]) => load(path), options);
+}
 
 const card = 'rounded-xl border border-blockSeparator bg-newBgColorInner p-5';
 const field =
@@ -29,7 +36,7 @@ type SubTab =
   | 'Settings';
 
 const subTabs: Array<{ id: SubTab; label: string; icon: string }> = [
-  { id: 'Publish', label: '投稿 (Publish)', icon: '📝' },
+  { id: 'Publish', label: '投稿作成', icon: '📝' },
   { id: 'Calendar', label: 'カレンダー (Ghost消滅)', icon: '📅' },
   { id: 'Inbox', label: 'Inbox & 返信', icon: '📥' },
   { id: 'Research', label: 'リサーチ (Search)', icon: '🔍' },
@@ -198,7 +205,7 @@ export const ThreadsWorkspace: FC<{
   const load = useCallback((path: string) => request(path), [request]);
 
   // Data fetching
-  const { data: accountsData, mutate: refreshAccounts } = useSWR(
+  const { data: accountsData, mutate: refreshAccounts } = useOrganizationSWR(
     '/threads-studio/accounts',
     load
   );
@@ -210,9 +217,9 @@ export const ThreadsWorkspace: FC<{
     return selectedAccountId || accounts[0]?.id || '';
   }, [selectedAccountId, accounts]);
 
-  const { data: capabilitiesData } = useSWR('/threads-studio/capabilities', load);
+  const { data: capabilitiesData } = useOrganizationSWR('/threads-studio/capabilities', load);
 
-  const { data: quotaData } = useSWR(
+  const { data: quotaData } = useOrganizationSWR(
     effectiveAccountId && activeSubTab === 'Settings'
       ? `/threads-studio/accounts/${effectiveAccountId}/quota`
       : null,
@@ -226,13 +233,13 @@ export const ThreadsWorkspace: FC<{
     return `/threads-studio/calendar?from=${from}&to=${to}`;
   }, [activeSubTab]);
 
-  const { data: calendarData, mutate: refreshCalendar } = useSWR(
+  const { data: calendarData, mutate: refreshCalendar } = useOrganizationSWR(
     calendarKey,
     load
   );
 
   const [inboxStatusFilter, setInboxStatusFilter] = useState<string>('ALL');
-  const { data: inboxData, mutate: refreshInbox } = useSWR(
+  const { data: inboxData, mutate: refreshInbox } = useOrganizationSWR(
     activeSubTab === 'Inbox'
       ? `/threads-studio/inbox?${effectiveAccountId ? `integrationId=${effectiveAccountId}&` : ''}${inboxStatusFilter !== 'ALL' ? `status=${inboxStatusFilter}` : ''}`
       : null,
@@ -256,14 +263,14 @@ export const ThreadsWorkspace: FC<{
     return raw.map(normalizeThreadsInboxItem);
   }, [inboxData]);
 
-  const { data: referencePosts = [], mutate: refreshReferencePosts } = useSWR(
+  const { data: referencePosts = [], mutate: refreshReferencePosts } = useOrganizationSWR(
     activeSubTab === 'ReferencePosts' || activeSubTab === 'Publish'
       ? '/threads-studio/reference-posts'
       : null,
     load
   );
 
-  const { data: analyticsData, mutate: refreshAnalytics } = useSWR(
+  const { data: analyticsData, mutate: refreshAnalytics } = useOrganizationSWR(
     activeSubTab === 'Analytics'
       ? `/threads-studio/analytics?${effectiveAccountId ? `integrationId=${effectiveAccountId}` : ''}`
       : null,
@@ -312,14 +319,8 @@ export const ThreadsWorkspace: FC<{
     return result;
   };
 
-  const forwardToCommonPublisher = (content: string) => {
-    if (!onOpenPublish) return;
-    onOpenPublish({
-      preferredPlatform: 'threads',
-      initialDestinationId: effectiveAccountId || undefined,
-      content,
-    });
-  };
+  const [inlineDraft, setInlineDraft] = useState<CommonPublishPrefill | null>(null);
+  const forwardToCommonPublisher = (content: string) => setInlineDraft({ content });
 
   // 2. Inbox & AI Reply State
   const [activeInboxItem, setActiveInboxItem] =
@@ -572,60 +573,13 @@ export const ThreadsWorkspace: FC<{
 
       {/* 1. Sub-tab: Publish */}
       {activeSubTab === 'Publish' && (
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-6">
           {/* Preset Launcher Card */}
-          <div className={card}>
-            <h2 className="text-base font-bold text-textColor flex items-center gap-2">
-              <span>🚀</span> 共通投稿画面でThreads投稿を作成
-            </h2>
-            <p className="mt-1 text-xs text-textItemBlur">
-              共通投稿基盤（Publish）をThreadsプリセットで開き、Ghost PostやPoll、Topic Tagなどの追加設定を編集して即時投稿・予約配信します。
-            </p>
-            <div className="mt-4 flex flex-col gap-3">
-              <button
-                type="button"
-                className={clsx(primaryButton, 'py-3 text-sm flex items-center justify-center gap-2')}
-                onClick={() => forwardToCommonPublisher('')}
-              >
-                <span>🧵</span> Threadsプリセットで共通投稿を開く
-              </button>
-            </div>
-
-            <div className="mt-6 border-t border-blockSeparator pt-4">
-              <h3 className="font-semibold text-xs text-textColor mb-2">
-                🌟 Threads公式API拡張機能一覧
-              </h3>
-              <div className="grid grid-cols-2 gap-2 text-[11px] text-textItemBlur">
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">👻 Ghost Post</strong>
-                  <div className="mt-0.5">24時間で自動的にアーカイブ非公開化（テキスト専用）</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">📊 Poll (アンケート)</strong>
-                  <div className="mt-0.5">2〜4択・各25文字の公式アンケート投票</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">🏷️ Topic Tag</strong>
-                  <div className="mt-0.5">Threads公式トピック分類（#不要・最大50文字）</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">⚠️ Spoiler Warning</strong>
-                  <div className="mt-0.5">メディアぼかし＆本文テキストのネタバレ指定</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">📄 長文テキスト添付</strong>
-                  <div className="mt-0.5">最大10,000文字の長文解説テキスト添付</div>
-                </div>
-                <div className="rounded border border-blockSeparator p-2">
-                  <strong className="text-textColor">🛡️ Reply Approvals</strong>
-                  <div className="mt-0.5">届いた返信の手動事前承認制（炎上対策）</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <InlinePublisher threadsOnly prefill={inlineDraft} />
 
           {/* AI Post Generator Card */}
-          <div className={card}>
+          <details className={card}><summary>AIで投稿案を作成（任意）</summary>
+          <div>
             <h2 className="text-base font-bold text-textColor flex items-center gap-2">
               <span>🤖</span> Threads AI 投稿下書きジェネレーター
             </h2>
@@ -742,7 +696,7 @@ export const ThreadsWorkspace: FC<{
                 </div>
               )}
             </div>
-          </div>
+          </div></details>
         </div>
       )}
 

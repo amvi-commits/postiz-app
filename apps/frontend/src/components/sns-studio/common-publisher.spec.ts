@@ -77,4 +77,10 @@ describe('common publisher destination prefill', () => {
     expect(checkboxes().map((item) => item.checked)).toEqual([false, true]);
     expect(renders).toBeLessThan(10);
   });
+  it('gives the explicit account precedence when the Threads platform is also supplied', async () => {
+    accounts!.push({ id: 'threads-2', name: 'Threads two', identifier: 'threads' });
+    await mount({ initialDestinationId: 'threads-2', preferredPlatform: 'threads' });
+    expect(checkboxes().map(item => item.checked)).toEqual([false, true]);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });

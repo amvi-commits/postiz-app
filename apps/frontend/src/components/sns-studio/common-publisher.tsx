@@ -1,5 +1,6 @@
 'use client';
 
+import { initialDestinations } from './inline-publish-session';
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import dayjs from 'dayjs';
@@ -142,45 +143,21 @@ export const SnsStudioCommonPublisher = ({
   const localDate = (value?: string | null) =>
     value ? dayjs(value).format('YYYY-MM-DDTHH:mm') : '';
 
-  const destinations = useMemo(
-    () => integrations.filter(
-      (integration) =>
-        supportedIdentifiers.has(integration.identifier) &&
-        !integration.disabled &&
-        !integration.inBetweenSteps
-    ),
-    [integrations]
-  );
-
+  const destinations = useMemo(() => integrations.filter(integration =>
+    supportedIdentifiers.has(integration.identifier) && !integration.disabled && !integration.inBetweenSteps
+  ), [integrations]);
   useEffect(() => {
-    if (!prefill) return;
-    if (prefill.preferredPlatform || prefill.initialDestinationId) {
-      setDeliveries((prev) => {
-        let next = prev;
-        destinations.forEach((dest) => {
-          if (
-            (prefill.initialDestinationId && dest.id === prefill.initialDestinationId) ||
-            (prefill.preferredPlatform && platformKey(dest.identifier) === prefill.preferredPlatform)
-          ) {
-            // Preserve edits and deselections. A refetch must not trigger a
-            // fresh state update when this destination was already initialized.
-            if (!Object.prototype.hasOwnProperty.call(next, dest.id)) {
-              next = {
-                ...next,
-                [dest.id]: {
-                  selected: true,
-                  content: '',
-                  hashtags: '',
-                  scheduledAt: '',
-                  variantAssetId: '',
-                },
-              };
-            }
-          }
-        });
-        return next;
-      });
-    }
+    if (!prefill || (!prefill.preferredPlatform && !prefill.initialDestinationId)) return;
+    const ids = initialDestinations(destinations, prefill.initialDestinationId, prefill.preferredPlatform);
+    setDeliveries(previous => {
+      let next = previous;
+      for (const id of ids) {
+        if (!Object.prototype.hasOwnProperty.call(next, id)) next = {
+          ...next, [id]: { selected: true, content: '', hashtags: '', scheduledAt: '', variantAssetId: '' },
+        };
+      }
+      return next;
+    });
   }, [prefill, destinations]);
 
   const mediaOptions = useMemo(() => {

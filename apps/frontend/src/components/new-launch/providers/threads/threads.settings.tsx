@@ -20,7 +20,7 @@ import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 export const ThreadsSettings: FC = () => {
   const integrationContext = useIntegration();
   const { register, watch, setValue } = useSettings();
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   // Watch form fields
   const isGhostPost = watch('isGhostPost') || false;
@@ -247,6 +247,8 @@ export const ThreadsSettings: FC = () => {
     replyControl,
   ]);
 
+  const browser = integrationContext.integration?.transport && integrationContext.integration.transport !== 'official';
+  if (browser) return <p className="p-3 text-sm text-textItemBlur">Browser Transportまたは接続方式未確認：公式API専用の詳細設定（Ghost・Poll等）は利用できません。</p>;
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-newTableBorder bg-newBgColorInner/60 p-4 mb-5">
       {/* Header with expand/collapse */}
