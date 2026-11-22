@@ -9,6 +9,7 @@ import { CalendarWeekProvider } from '@gitroom/frontend/components/launches/cale
 import { ExistingDataContextProvider } from '@gitroom/frontend/components/launches/helpers/use.existing.data';
 import { AddEditModal } from '@gitroom/frontend/components/new-launch/add.edit.modal';
 import { LaunchStoreProvider } from '@gitroom/frontend/components/new-launch/store';
+import type { ThreadsCopyMedia } from '@gitroom/nestjs-libraries/integrations/social/threads-account-posts';
 import {
   linkCommonContentPosts,
   preflightCommonContentPlan,
@@ -24,16 +25,21 @@ const emptyPost = {
 const button =
   'rounded-lg border border-blockSeparator px-4 py-2 text-sm disabled:opacity-50';
 
-export function ThreadsComposer() {
+type CopiedPost = { content: string; media: ThreadsCopyMedia[] };
+
+export function ThreadsComposer({ copiedPost }: { copiedPost?: CopiedPost | null } = {}) {
   const user = useUser();
   return user?.orgId ? (
-    <OrganizationComposer key={user.orgId} organizationId={user.orgId} />
+    <OrganizationComposer key={user.orgId} organizationId={user.orgId} copiedPost={copiedPost} />
   ) : (
     <p role="status">Organizationを確認中です。</p>
   );
 }
 
-function OrganizationComposer({ organizationId }: { organizationId: string }) {
+function OrganizationComposer({ organizationId, copiedPost }: {
+  organizationId: string;
+  copiedPost?: CopiedPost | null;
+}) {
   const request = useFetch();
   const load = useCallback(
     async ([, path]: [string, string]) => {
@@ -58,8 +64,8 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
   const [accountId, setAccountId] = useState('');
   const selectionKey = `sns-studio:threads-composer:${organizationId}:selection`;
   useEffect(() => {
-    setAccountId(localStorage.getItem(selectionKey) || '');
-  }, [selectionKey]);
+    setAccountId(copiedPost ? '' : localStorage.getItem(selectionKey) || '');
+  }, [selectionKey, copiedPost]);
   const [editing, setEditing] = useState<any>(emptyPost);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -245,6 +251,16 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
     );
   return (
     <section className="grid gap-4">
+      {copiedPost && !accountId && (
+        <p role="status" className="text-sm">
+          コピーした本文と添付を使う投稿先アカウントを選んでください。
+        </p>
+      )}
+      {copiedPost && editing.integration && !pending && (
+        <p role="status" className="text-sm">
+          この投稿先の保存済み下書きを表示中です。「新しい投稿を作成」でコピーした内容を開けます。
+        </p>
+      )}
       <label className="grid max-w-md gap-2 text-sm">
         <span>投稿先アカウント</span>
         <select
@@ -338,6 +354,9 @@ function OrganizationComposer({ organizationId }: { organizationId: string }) {
               ]}
               integrations={[integration]}
               selectedChannels={editing.integration ? undefined : [accountId]}
+              onlyValuesByIntegration={copiedPost && !editing.integration && !pending
+                ? { [accountId]: [{ content: copiedPost.content, image: copiedPost.media }] }
+                : undefined}
               selectedChannelSettings={{
                 [accountId]:
                   selected.transport === 'browser' && selected.browserAccount

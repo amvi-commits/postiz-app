@@ -1165,6 +1165,30 @@ export class ThreadsProvider extends SocialAbstract implements SocialProvider {
     return res.json();
   }
 
+  async fetchPublicProfilePosts(
+    accessToken: string,
+    options: { username: string; after?: string; limit: number }
+  ): Promise<{ posts: import('./threads-account-posts').ThreadsGraphPost[]; nextCursor: string | null }> {
+    const url = new URL(`${THREADS_BASE_GRAPH_URL}/profile_posts`);
+    url.searchParams.set('fields', 'id,text,username,timestamp,permalink,media_type,media_url,children{id,media_type,media_url}');
+    url.searchParams.set('limit', String(options.limit));
+    url.searchParams.set('username', options.username);
+    if (options.after) url.searchParams.set('after', options.after);
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(15_000),
+      redirect: 'error',
+    });
+    if (!response.ok) throw new Error('Threads read request failed');
+    const data = await response.json();
+    if (!Array.isArray(data?.data)) throw new Error('Invalid Threads posts response');
+    return {
+      posts: data.data.filter((post: { id?: unknown }) => typeof post?.id === 'string').slice(0, options.limit),
+      nextCursor: data.paging?.next && typeof data.paging?.cursors?.after === 'string' ? data.paging.cursors.after : null,
+    };
+  }
+
   async keywordSearch(
     accessToken: string,
     query: string,

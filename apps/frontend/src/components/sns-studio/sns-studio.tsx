@@ -858,6 +858,7 @@ export const SnsStudio = () => {
 
       {activeTab === 'Threads' && (
         <ThreadsWorkspace
+          key={user?.orgId}
           onOpenPublish={(prefill) => {
             setCommonPostPrefill(prefill);
             setActiveTab('Publish');

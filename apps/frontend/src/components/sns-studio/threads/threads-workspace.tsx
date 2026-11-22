@@ -2,10 +2,14 @@
 
 import React, { FC, useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import dayjs from 'dayjs';
 import clsx from 'clsx';
 import { useFetch } from '@gitroom/helpers/utils/custom.fetch';
 import { ThreadsComposer } from './threads-composer';
+import { ThreadsAccountPosts } from './threads-account-posts';
+import { threadsCopyTextToHtml } from './threads-copy-text';
+import type { ThreadsCopyMedia } from '@gitroom/nestjs-libraries/integrations/social/threads-account-posts';
 import type { CommonPublishPrefill } from '@gitroom/frontend/components/sns-studio/common-publisher';
 import {
   THREADS_REPLY_CONTROL_OPTIONS,
@@ -22,6 +26,7 @@ const secondaryButton =
 
 type SubTab =
   | 'Publish'
+  | 'AccountPosts'
   | 'Calendar'
   | 'Inbox'
   | 'Research'
@@ -31,6 +36,7 @@ type SubTab =
 
 const subTabs: Array<{ id: SubTab; label: string; icon: string }> = [
   { id: 'Publish', label: '投稿作成', icon: '📝' },
+  { id: 'AccountPosts', label: '投稿取得・コピー', icon: '📋' },
   { id: 'Calendar', label: 'カレンダー (Ghost消滅)', icon: '📅' },
   { id: 'Inbox', label: 'Inbox & 返信', icon: '📥' },
   { id: 'Research', label: 'リサーチ (Search)', icon: '🔍' },
@@ -172,10 +178,12 @@ export const ThreadsWorkspace: FC<{
   onOpenPublish?: (prefill: CommonPublishPrefill) => void;
 }> = ({ onOpenPublish }) => {
   const fetch = useFetch();
+  const user = useUser();
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('Publish');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [copiedPost, setCopiedPost] = useState<{ content: string; media: ThreadsCopyMedia[] } | null>(null);
 
   // SWR request helper
   const request = useCallback(
@@ -199,13 +207,22 @@ export const ThreadsWorkspace: FC<{
   const load = useCallback((path: string) => request(path), [request]);
 
   // Data fetching
-  const { data: accountsData, mutate: refreshAccounts } = useSWR(
-    '/threads-studio/accounts',
-    load
+  const {
+    data: accountsData,
+    error: accountsError,
+    isLoading: accountsLoading,
+    mutate: refreshAccounts,
+  } = useSWR(
+    user?.orgId ? ['/threads-studio/accounts', user.orgId] : null,
+    ([path]) => load(path)
   );
   const accounts: any[] = Array.isArray(accountsData)
     ? accountsData
     : (accountsData?.accounts || []);
+  const readAccounts = accounts.filter(account =>
+    !account.isBrowser && account.transport !== 'browser' &&
+    !account.inBetweenSteps && !account.refreshNeeded
+  );
 
   const effectiveAccountId = useMemo(() => {
     return selectedAccountId || accounts[0]?.id || '';
@@ -515,7 +532,7 @@ export const ThreadsWorkspace: FC<{
             </p>
           </div>
 
-          {activeSubTab !== 'Publish' && <div className="flex items-center gap-3">
+          {activeSubTab !== 'Publish' && activeSubTab !== 'AccountPosts' && <div className="flex items-center gap-3">
             <span className="text-xs text-textItemBlur">対象アカウント:</span>
             <select
               className={clsx(field, 'w-auto min-w-[200px] text-xs font-semibold')}
@@ -574,7 +591,7 @@ export const ThreadsWorkspace: FC<{
       {/* 1. Sub-tab: Publish */}
       {activeSubTab === 'Publish' && (
         <div className="grid gap-6">
-          <ThreadsComposer />
+          <ThreadsComposer copiedPost={copiedPost} />
 
           {/* AI Post Generator Card */}
           <details className={card}>
@@ -697,6 +714,20 @@ export const ThreadsWorkspace: FC<{
             </div>
           </details>
         </div>
+      )}
+
+      {activeSubTab === 'AccountPosts' && (
+        <ThreadsAccountPosts
+          accounts={readAccounts}
+          accountsError={Boolean(accountsError)}
+          accountsLoading={accountsLoading}
+          initialAccountId={readAccounts.some(account => account.id === effectiveAccountId) ? effectiveAccountId : ''}
+          request={request}
+          onCopy={({ text, media }) => {
+            setCopiedPost({ content: threadsCopyTextToHtml(text), media });
+            setActiveSubTab('Publish');
+          }}
+        />
       )}
 
       {/* 2. Sub-tab: Calendar (Ghost Post Visualization) */}
