@@ -129,10 +129,11 @@ export class MediaService {
   // Streams the remote body straight into storage: only the sniffing prefix
   // and a few upload parts are ever in memory, so a 1 GB video does not cost
   // 1 GB of heap
-  async uploadFromUrl(org: string, url: string) {
+  async uploadFromUrl(org: string, url: string, options?: Pick<RequestInit, 'signal' | 'redirect'>) {
     let response: globalThis.Response;
     try {
       response = await fetch(url, {
+        ...options,
         // @ts-ignore — undici option, not in lib.dom fetch types
         dispatcher: ssrfSafeDispatcher,
       });

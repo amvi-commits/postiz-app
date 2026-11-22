@@ -12,6 +12,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { Organization } from '@prisma/client';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
 import { ThreadsStudioService } from '@gitroom/backend/services/sns-studio/threads-studio.service';
+import { ThreadsPostReuseService } from '@gitroom/backend/services/sns-studio/threads-post-reuse.service';
 import {
   IsArray,
   IsBoolean,
@@ -19,6 +20,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   MinLength,
 } from 'class-validator';
 
@@ -90,10 +92,20 @@ class SyncInboxDto {
   @IsOptional() @IsString() integrationId?: string;
 }
 
+class ImportThreadsMediaDto {
+  @IsOptional() @IsString() @MaxLength(512) username?: string;
+  @IsOptional() @IsString() @MaxLength(2048) cursor?: string;
+  @IsString() @MinLength(1) @MaxLength(128) postId!: string;
+  @IsBoolean() confirmedRights!: boolean;
+}
+
 @ApiTags('Threads Studio')
 @Controller('/threads-studio')
 export class ThreadsStudioController {
-  constructor(private readonly threadsStudioService: ThreadsStudioService) {}
+  constructor(
+    private readonly threadsStudioService: ThreadsStudioService,
+    private readonly postReuse: ThreadsPostReuseService,
+  ) {}
 
   @Get('/capabilities')
   getCapabilities() {
@@ -103,6 +115,25 @@ export class ThreadsStudioController {
   @Get('/accounts')
   getAccounts(@GetOrgFromRequest() org: Organization) {
     return this.threadsStudioService.getAccounts(org);
+  }
+
+  @Get('/accounts/:integrationId/posts')
+  getAccountPosts(
+    @GetOrgFromRequest() org: Organization,
+    @Param('integrationId') integrationId: string,
+    @Query('username') username?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.postReuse.list(org.id, integrationId, username, cursor);
+  }
+
+  @Post('/accounts/:integrationId/import-post-media')
+  importAccountPostMedia(
+    @GetOrgFromRequest() org: Organization,
+    @Param('integrationId') integrationId: string,
+    @Body() body: ImportThreadsMediaDto,
+  ) {
+    return this.postReuse.importMedia(org.id, integrationId, body);
   }
 
   @Put('/accounts/:integrationId/settings')

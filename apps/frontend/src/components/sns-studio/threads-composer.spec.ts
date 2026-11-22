@@ -53,6 +53,40 @@ describe('Threads inline wrapper / existing draft references', () => {
     expect(mockComposerProps.selectedChannels).toBeUndefined();
     expect(mockComposerProps.inline.blockedReason).toBe('Real post locked');
   });
+  it('opens a public copy with both media items after selecting a destination', async () => {
+    localStorage.setItem(selectionKey, selected);
+    const copiedPost = {
+      content: '<p>確認してみてください。</p>',
+      media: [{ id: 'image', path: '/uploads/photo.jpg' }, { id: 'video', path: '/uploads/clip.mp4' }],
+    };
+    await act(async () => root.render(React.createElement(ThreadsComposer, { copiedPost })));
+    const picker = container.querySelector('select')!;
+    expect(picker.value).toBe('');
+    await act(async () => {
+      picker.value = selected;
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(mockComposerProps.onlyValuesByIntegration).toEqual({
+      [selected]: [{ content: copiedPost.content, image: copiedPost.media }],
+    });
+    expect(mockComposerProps.inline.blockedReason).toBe('Real post locked');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+  it('does not put copied content in the editor of a recovered draft', async () => {
+    localStorage.setItem(journalKey, JSON.stringify({ state: 'draft', group: 'saved-group' }));
+    await act(async () => root.render(React.createElement(ThreadsComposer, {
+      copiedPost: { content: '<p>Different copy</p>', media: [] },
+    })));
+    const picker = container.querySelector('select')!;
+    await act(async () => {
+      picker.value = selected;
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(mockExisting).toEqual(savedDraft);
+    expect(mockComposerProps.onlyValuesByIntegration).toBeUndefined();
+    expect(container.textContent).toContain('保存済み下書きを表示中');
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual(['/posts/group/saved-group']);
+  });
   it('keeps drafts in existing /posts and only prepares a plan for execution', async () => {
     localStorage.setItem(selectionKey, selected); await mount();
     await mockComposerProps.onPreparePost({ type: 'draft', posts: [{ integration: { id: selected } }] });
